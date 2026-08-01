@@ -17,6 +17,20 @@ another module and extending it through its public contract without editing it. 
 unavailable to a Core-tier company while everything else keeps working. That is the second of the
 two shapes the platform must never harden away from.
 
+**Account recovery rides along here.** Ticket 02 shipped sign-up with no way back in: the company
+creator is the first and only user, so forgetting their password locks them out of a company
+nobody else can reach. The criterion below — *the company creator always retains full access and
+cannot be locked out* — is not met until that is fixed, so this is the ticket that owes it rather
+than a separate one.
+
+It belongs here rather than earlier because this is where the machinery first exists. Inviting a
+colleague already needs email delivery and a single-use, expiring token that establishes a
+password; a reset needs the same two things. Building them together is the cheaper half of the
+work, and it follows the standing rule that infrastructure attaches to the first visible feature
+that genuinely needs it. Note that the spec's "email and notifications" deferral is explicitly
+*"beyond what authentication requires"* — recovery is what authentication requires, so it is in
+scope, and it is the only email this ticket may introduce.
+
 **Blocked by:** 06 — Products and units of measure (Core), and the module generator
 
 **Status:** ready-for-agent
@@ -31,6 +45,14 @@ two shapes the platform must never harden away from.
 - [ ] A role can be denied a whole module, not just individual actions
 - [ ] The HRM stub's sensitive field is visible only to roles granted it
 - [ ] The company creator always retains full access and cannot be locked out
+- [ ] I can ask for a password reset from the sign-in screen and receive a link by email
+- [ ] The reset link is single-use and expires, and using it ends my other sessions
+- [ ] Asking to reset an address that has no account says the same thing as one that does, so the
+      form cannot be used to discover who has an account
+- [ ] An invitation and a reset deliver through one email seam, which is faked in tests and in
+      development rather than sending anything
+- [ ] Sign-up's confirm-password field is reconsidered once recovery exists — it was added only
+      because a typo was unrecoverable, and a reveal toggle otherwise makes it redundant
 - [ ] A role in use cannot be deleted without reassigning the people holding it
 - [ ] A company has a tier, and the tier determines which modules are available to it
 - [ ] Navigation shows only modules the tier allows and the user may access
@@ -43,4 +65,7 @@ two shapes the platform must never harden away from.
 - [ ] The add-on stub is unavailable at Core tier and available at Custom tier
 - [ ] Backend tests cover per-endpoint refusal, module-level denial, restricted fields, tier-based
       refusal and dependency-driven unavailability
+- [ ] Backend tests cover reset: the link works once, an expired or reused link is refused, and an
+      unknown address is answered identically to a known one
 - [ ] Frontend tests cover role management, invitations, and navigation differing by tier and role
+- [ ] Frontend tests cover requesting a reset and setting a new password from the link

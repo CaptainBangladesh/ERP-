@@ -164,7 +164,10 @@ export function SignUpPage() {
           they typed — and worth keeping anyway while there is no password reset. This is
           the first and only user of a brand-new company, so a typo locks them out of
           something they have just created, with no reset link and no colleague to let them
-          back in. Revisit when reset exists.
+          back in.
+
+          Ticket 07 adds recovery alongside colleague invitations, and is the point at which
+          this field should be reconsidered rather than kept out of habit.
         */}
         <Field
           id="confirmPassword"

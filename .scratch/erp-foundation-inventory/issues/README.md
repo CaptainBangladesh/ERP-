@@ -34,7 +34,7 @@ entry needs and emit events, but no accounting module exists and inventory never
 | 04 | API conventions, data table, exact numbers      | 03         | list/error shapes, money, table   | yes       |
 | 05 | Parties (Core), and boundary enforcement        | 04         | boundary rules, conformance pack  | yes       |
 | 06 | Products and UoM (Core), and the generator      | 05         | module generator                  | yes       |
-| 07 | Roles, permissions, tiers, and the add-on stub  | 06         | tier enablement, add-on stub      | yes       |
+| 07 | Roles, permissions, tiers, and the add-on stub  | 06         | tier enablement, add-on stub, email seam and account recovery | yes |
 | 08 | Inventory: locations                            | 07         | —                                 | yes       |
 | 09 | Stock movements: receipt and issue              | 08         | accounting seam                   | yes       |
 | 10 | Adjustments and transfers                       | 09         | —                                 | yes       |
@@ -57,6 +57,10 @@ also makes it better machinery:
 - **The generator** is extracted from three working modules (06), so it encodes what turned out to be
   needed rather than what was guessed. Products is the first module it produces.
 - **Tier enablement** is built against a real Custom-tier module (07) rather than a hypothetical one.
+- **The email seam** arrives with colleague invitations (07), the first feature that has to reach
+  somebody who is not looking at the screen. Password reset — an open hole since 02, where the
+  company creator can lock themselves out of a company nobody else can reach — rides along with it,
+  because a reset and an invitation are the same single-use expiring token delivered the same way.
 
 The cost is a short cleanup pass in ticket 05, bringing the two modules that predate the boundary
 rules into compliance.
