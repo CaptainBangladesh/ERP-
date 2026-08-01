@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -c core.quotepath=false ls-files)",
+      "Bash(docker exec *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\ishfa\\Pictures\\New appilication\\packages\\dist"
+    ]
+  }
+}

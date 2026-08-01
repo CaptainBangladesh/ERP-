@@ -1,0 +1,26 @@
+// Prisma schema.
+//
+// Ticket 06 splits this per module so each module owns its own models and migrations.
+// Until the module system exists (ticket 02), the skeleton's single model lives here.
+//
+// Migrations create schema only. They never insert rows — the running application seeds
+// no data, ever.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// TEMPORARY — see packages/src/skeleton/probe.ts.
+/// Proves the read and write paths through every layer without seeding.
+/// Deleted by ticket 02, along with its endpoints and its table.
+model SkeletonProbe {
+  id        String   @id @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("skeleton_probe")
+}

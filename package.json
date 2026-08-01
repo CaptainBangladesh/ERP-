@@ -1,0 +1,32 @@
+{
+  "name": "erp",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages",
+    "backend",
+    "application"
+  ],
+  "scripts": {
+    "predev": "npm run build --workspace packages",
+    "dev": "concurrently -n backend,app -c blue,magenta \"npm:dev:backend\" \"npm:dev:app\"",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:app": "npm run dev --workspace application",
+    "build": "npm run build --workspace packages && npm run build --workspace backend && npm run build --workspace application",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:backend": "npm run test --workspace backend",
+    "test:app": "npm run test --workspace application",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:migrate": "npm run db:migrate --workspace backend",
+    "db:reset": "npm run db:reset --workspace backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

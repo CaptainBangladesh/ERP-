@@ -1,0 +1,29 @@
+# Local PostgreSQL for development and tests.
+#
+# Port 55432 rather than 5432 so it never collides with a PostgreSQL already installed on
+# the host. Credentials are deliberately throwaway and local-only.
+#
+# Two databases: erp_dev for the running application, erp_test for the suite. The test
+# harness truncates every table between tests, so they must never be the same database.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: erp-postgres
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp_local_dev
+      POSTGRES_DB: erp_dev
+    ports:
+      - '55432:5432'
+    volumes:
+      - erp-postgres-data:/var/lib/postgresql/data
+      - ./scripts/create-test-database.sql:/docker-entrypoint-initdb.d/10-create-test-database.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U erp -d erp_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  erp-postgres-data:
