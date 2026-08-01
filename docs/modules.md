@@ -16,6 +16,11 @@ silently does not load.
 Copy `backend/src/modules/identity`. It is the worked example, and it is a real module rather
 than a template kept alive alongside real ones.
 
+`backend/src/modules/hrm` is the other one worth reading, and for the opposite reason: it is
+the shape stub, deliberately unlike inventory, and it is the module that shows what
+company-owned tables, a restricted field, and records that cannot be edited look like from
+inside a module. Note what is *not* in it — there is no company filter anywhere.
+
 ```
 backend/src/modules/<name>/
   <name>.manifest.ts     what the module declares about itself
@@ -31,9 +36,12 @@ application/src/modules/<name>/
 Then:
 
 1. Add your models to `backend/prisma/schema.prisma` under a heading naming your module.
-2. Generate the migration, and declare its directory name in the manifest's `migrations`.
-3. Run `npm run check:modules`. It will tell you what is wrong with the manifest, by name.
-4. Write the tests: HTTP-level in `backend/test/`, screen-level beside the page component.
+2. Classify each new model in `backend/src/platform/tenancy/company-owned.ts` — company-owned
+   or explicitly not, with a reason. See [tenancy.md](tenancy.md). The application refuses to
+   boot until you have, so this is not a step you can skip by forgetting it.
+3. Generate the migration, and declare its directory name in the manifest's `migrations`.
+4. Run `npm run check:modules`. It will tell you what is wrong with the manifest, by name.
+5. Write the tests: HTTP-level in `backend/test/`, screen-level beside the page component.
 
 ## The backend manifest
 
@@ -130,6 +138,11 @@ right failure for a system with no way to tell who anyone is.
   response shapes only, so that an API change breaks the build in both workspaces rather
   than the user's screen.
 - Insert a row outside a user's action. The running application seeds nothing, ever.
+- Write a company filter. Scoping is the platform's, applied to every query — a module that
+  wrote `where: { companyId }` by hand would be a module that could forget to. See
+  [tenancy.md](tenancy.md).
+- Use `$queryRaw` or `$executeRaw`. Raw SQL bypasses tenant scoping entirely, so
+  `npm run check:tenancy` fails the build on it outside the test harness.
 
 ## Known exception
 

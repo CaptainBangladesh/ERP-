@@ -34,6 +34,7 @@ create a company, and you become its owner by having created it.
 | `npm test` | Both suites — backend against real PostgreSQL, frontend with the network intercepted. Migrates the test database first, so it works on a fresh clone |
 | `npm run typecheck` | All three workspaces |
 | `npm run check:modules` | Assembles the module graph and refuses a broken one. No database needed |
+| `npm run check:tenancy` | Refuses raw SQL, which bypasses tenant scoping. No database needed |
 | `npm run build` | Shared package, backend, frontend |
 | `npm run db:up` / `db:down` | Start / stop the PostgreSQL container |
 | `npm run db:migrate` | Apply migrations to the development database |
@@ -61,6 +62,13 @@ edits no existing file. See [`docs/modules.md`](docs/modules.md) and
 The build refuses a graph it cannot assemble — a cycle, a missing dependency, a Core module
 reaching up a tier, two modules claiming one route — and names the modules involved.
 
+**Module code never writes a company filter.** Every business row belongs to a company, and
+scoping is applied to every query by the platform — so forgetting a `where: { companyId }` is
+not a mistake that can be made rather than one that is discouraged. A query with no company
+throws; a table that belongs to no company has to say so and say why, or the application
+refuses to boot. See [`docs/tenancy.md`](docs/tenancy.md) and
+[ADR 0003](docs/adr/0003-tenant-scoping-by-prisma-client-extension.md).
+
 **No seed data, ever.** The running application inserts nothing — not at startup, not in
 migrations. Migrations create schema only. The first company in the database is the one
 somebody typed into the sign-up form, and they are its owner because they created it, not
@@ -81,13 +89,21 @@ so the guard protects every module without the platform knowing any module exist
 - *Frontend*: page components rendered with the network intercepted, asserting on what a user
   sees and does. Never on hooks or component state. See `application/src/test/`.
 
-No unit tests on services, repositories, or components. The one exception is
-`module-contract.spec.ts`, and it earns it: the assembler's deliverable is its refusals, and
-an application that refuses to assemble never starts to be driven over HTTP.
+No unit tests on services, repositories, or components. There are two exceptions, and both
+earn it the same way — their subject is a *refusal*, and a refusal that stops a request being
+made at all is not observable from a request:
+
+- `module-contract.spec.ts` — the assembler's deliverable is its refusals, and an application
+  that refuses to assemble never starts to be driven over HTTP.
+- The parts of `tenancy.spec.ts` that drive the scoped Prisma client directly. "A query with
+  no company throws" and "an immutable row cannot be updated" describe queries no endpoint
+  offers, because the endpoint that offered them would be the bug. Everything about tenancy
+  that *is* reachable over HTTP — and that is most of it, including the whole of the
+  two-company isolation suite — is asserted over HTTP.
 
 Both suites run in CI (`.github/workflows/ci.yml`) against a real PostgreSQL service, along
-with typecheck, the module contract check, and build. Module boundary enforcement joins them
-in ticket 05 — it is a static check, not a runtime test.
+with typecheck, the module contract check, the tenancy check, and build. Module boundary
+enforcement joins them in ticket 05 — it is a static check, not a runtime test.
 
 **Errors name themselves.** Throw `ApiException` with an explicit machine-readable code
 wherever a caller might branch on *which* failure occurred. Deriving the code from the HTTP

@@ -79,3 +79,79 @@ model Session {
   @@index([userId])
   @@map("sessions")
 }
+
+// ─── hrm ────────────────────────────────────────────────────────────────────────────
+// Owned by the hrm module. See backend/src/modules/hrm.
+//
+// The shape stub. It is here to stop the foundation hardening around inventory: it is
+// shaped like payroll rather than like stock — a periodic calculation over a date range
+// instead of a reaction to an event, a sensitive personal field, and records that can
+// never be edited once written.
+//
+// `companyId` is a plain column with no foreign key to `companies`. Foreign keys stay
+// inside a module; a key across the module boundary would make the data model disagree
+// with the module graph, and would tie hrm's schema to identity's. Scoping is enforced by
+// the tenancy extension, which reads the column and does not care whether it is a key —
+// see backend/src/platform/tenancy and ADR 0003.
+
+/// A person on the payroll. Deliberately hrm's own record rather than a reference to
+/// identity's `User`: not everybody paid is a system user, and the stub must not need a
+/// cross-module dependency to demonstrate the shape.
+model Employee {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  /// The sensitive personal field, and the reason the stub earns its place in ticket 03:
+  /// it is company-scoped *and* further restricted, which is a case inventory never
+  /// produces. Restricted by the `hrm:pay:read` grant — see platform/tenancy.
+  annualSalary Decimal @map("annual_salary") @db.Decimal(14, 2)
+  /// The restricted *record*, as against the restricted field above. An employee whose whole
+  /// file is confidential — a director's, typically — is filtered out of every query for a
+  /// caller without `hrm:employees:read-confidential`, so it is unreachable by its own
+  /// identifier rather than merely absent from a list. See platform/tenancy.
+  confidential Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  payRunLines PayRunLine[]
+
+  @@index([companyId])
+  @@map("employees")
+}
+
+/// A pay run: the calculation for one period, done once. Immutable — declared so in
+/// platform/tenancy/company-owned.ts, which refuses update and delete outright, because a
+/// payroll record that can be edited after the fact is not a payroll record.
+model PayRun {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  periodStart  DateTime @map("period_start") @db.Date
+  periodEnd    DateTime @map("period_end") @db.Date
+  calculatedAt DateTime @default(now()) @map("calculated_at")
+
+  lines PayRunLine[]
+
+  /// One run per period per company. A second attempt is a mistake, not a recalculation:
+  /// the first is immutable, so there would be two answers for one period.
+  @@unique([companyId, periodStart, periodEnd])
+  @@index([companyId])
+  @@map("pay_runs")
+}
+
+/// What one employee was paid for one period. Immutable for the same reason as its run.
+model PayRunLine {
+  id         String  @id @default(uuid()) @db.Uuid
+  companyId  String  @map("company_id") @db.Uuid
+  payRunId   String  @map("pay_run_id") @db.Uuid
+  employeeId String  @map("employee_id") @db.Uuid
+  /// Sensitive, like the salary it is derived from, and restricted by the same grant.
+  /// Numeric rather than a floating-point column: money is exact or it is wrong.
+  grossPay   Decimal @map("gross_pay") @db.Decimal(14, 2)
+
+  payRun   PayRun   @relation(fields: [payRunId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([payRunId, employeeId])
+  @@index([companyId])
+  @@map("pay_run_lines")
+}

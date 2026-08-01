@@ -60,5 +60,10 @@ jobs:
       # module graph that cannot be assembled should fail here rather than at deploy time.
       - run: npm run check:modules
 
+      # Likewise static: the tenancy extension cannot see raw SQL, so raw SQL outside the
+      # test harness is refused here rather than left to review. ADR 0003 chose the
+      # extension over row-level security on exactly this condition.
+      - run: npm run check:tenancy
+
       - run: npm run build
       - run: npm test

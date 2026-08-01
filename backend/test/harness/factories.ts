@@ -23,6 +23,23 @@ export interface Factories {
    * would exist only to serve the suite, and would eventually be set wrong in production.
    */
   expireSessions: (userId: string) => Promise<void>;
+
+  /**
+   * Puts a second person in a company, sharing the owner's password.
+   *
+   * There is no endpoint for this yet — inviting colleagues is user story 17 and arrives
+   * with roles in ticket 07 — and the state is needed now, because "the owner sees salaries
+   * and a colleague does not" cannot be asserted with only one user per company.
+   *
+   * The password is copied from the owner rather than hashed here on purpose: the harness
+   * has no business knowing how identity stores passwords, and copying a hash it never
+   * reads keeps that true. The colleague signs in with whatever the owner signed up with.
+   */
+  addColleague: (input: {
+    ownerUserId: string;
+    name: string;
+    email: string;
+  }) => Promise<{ id: string }>;
 }
 
 export function createFactories(prisma: PrismaClient): Factories {
@@ -31,6 +48,20 @@ export function createFactories(prisma: PrismaClient): Factories {
       await prisma.session.updateMany({
         where: { userId },
         data: { expiresAt: new Date(Date.now() - 1000) },
+      });
+    },
+
+    addColleague: async ({ ownerUserId, name, email }) => {
+      const owner = await prisma.user.findUniqueOrThrow({ where: { id: ownerUserId } });
+
+      return prisma.user.create({
+        data: {
+          companyId: owner.companyId,
+          name,
+          email,
+          passwordHash: owner.passwordHash,
+        },
+        select: { id: true },
       });
     },
   };

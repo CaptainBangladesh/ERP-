@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
-import type { ModuleTier } from '@erp/shared';
+import { HRM_PAY_GRANT, type ModuleTier } from '@erp/shared';
 import {
   assembleModules,
+  discoverManifests,
   ModuleContractError,
   type ModuleManifest,
 } from '../src/platform/modules';
+import { restrictedGrants } from '../src/platform/tenancy/company-owned';
 
 /**
  * The module contract, exercised directly.
@@ -237,5 +239,34 @@ describe('migration assembly', () => {
     const b = manifest('beta', { migrations: ['20260801000000_shared'] });
 
     expect(() => assembleModules([a, b])).toThrow(/20260801000000_shared.*alpha.*beta/is);
+  });
+});
+
+/**
+ * The two declarations that have to agree, and are written in different files by different
+ * people for different reasons.
+ *
+ * A restricted column names a grant; a module names its permissions. Neither imports the
+ * other — the platform has no business importing a module, and a module has no business
+ * knowing which columns the platform restricts — so the only thing keeping them in step is
+ * this. Without it, renaming a permission leaves a column restricted by a grant nobody can
+ * hold, and the field becomes invisible to everybody including the people who need it. That
+ * failure is silent, which is what earns it a test.
+ */
+describe('restricted fields and the permissions that read them', () => {
+  it('restricts fields only by grants some module actually declares', () => {
+    const declared = new Set(
+      assembleModules(discoverManifests()).permissions,
+    );
+
+    for (const grant of restrictedGrants()) {
+      expect([grant, declared.has(grant)]).toEqual([grant, true]);
+    }
+  });
+
+  it('has something to check', () => {
+    // The stub's sensitive field is the whole reason the restriction mechanism exists. If
+    // this is ever empty, the test above is passing vacuously.
+    expect(restrictedGrants()).toContain(HRM_PAY_GRANT);
   });
 });

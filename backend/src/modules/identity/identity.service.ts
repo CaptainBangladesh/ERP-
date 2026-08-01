@@ -12,11 +12,11 @@ import {
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
 import { FieldException } from '../../http/validation-exception';
-import { PrismaService } from '../../prisma/prisma.service';
+import { InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import { SessionAuthority, unauthenticated, type RequestSession } from '../../platform/auth';
 import { hashPassword, verifyPassword } from './passwords';
 import { sessionExpiry } from './session.config';
-import { normaliseEmail, validateSignIn, validateSignUp } from './validation';
+import { normaliseEmail, validateSignIn, validateSignUp, type ValidSignUp } from './validation';
 
 /** What a token carries. Everything else about the caller is read from the database. */
 interface TokenPayload {
@@ -31,11 +31,19 @@ interface TokenPayload {
  * Nothing here reads a seeded row, because there are none. The first company in the
  * database is the one a user typed into the sign-up form, and the fact that they typed it
  * is what makes them its owner.
+ *
+ * Identity is the one module that works outside company scope, and it is not an exemption
+ * it asked for: it is the module that *establishes* the tenant, so it necessarily runs
+ * before there is one. Sign-up creates the company. Sign-in has to find a user by email
+ * across every company, because until it has found them there is nothing to be scoped to.
+ * Every such place says so, in `withoutCompanyScope`, with the reason written out — see
+ * ADR 0003. No other module has any business doing this.
  */
 @Injectable()
 export class IdentityService implements SessionAuthority {
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectPrisma() private readonly prisma: ScopedPrisma,
+    private readonly tenancy: Tenancy,
     private readonly jwt: JwtService,
   ) {}
 
@@ -49,6 +57,14 @@ export class IdentityService implements SessionAuthority {
   async signUp(body: Partial<SignUpRequest> | undefined): Promise<AuthenticatedSession> {
     const input = validateSignUp(body);
 
+    return this.tenancy.withoutCompanyScope(
+      'Sign-up creates the company. There is no company to be scoped to until it exists, ' +
+        'and the email uniqueness check is deliberately across all of them.',
+      () => this.createCompanyAndOwner(input),
+    );
+  }
+
+  private async createCompanyAndOwner(input: ValidSignUp): Promise<AuthenticatedSession> {
     if (await this.prisma.user.findUnique({ where: { email: input.email } })) {
       throw emailAlreadyRegistered();
     }
@@ -95,10 +111,15 @@ export class IdentityService implements SessionAuthority {
   async signIn(body: Partial<SignInRequest> | undefined): Promise<AuthenticatedSession> {
     const input = validateSignIn(body);
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: normaliseEmail(input.email) },
-      include: { company: true },
-    });
+    const user = await this.tenancy.withoutCompanyScope(
+      'Sign-in is given an email and nothing else. Finding which company the address ' +
+        'belongs to is the whole job, so it cannot be scoped to one first.',
+      () =>
+        this.prisma.user.findUnique({
+          where: { email: normaliseEmail(input.email) },
+          include: { company: true },
+        }),
+    );
 
     // Hashing even when no user was found keeps a wrong address and a wrong password
     // costing the same amount of time, so the form cannot be used to discover who has an
