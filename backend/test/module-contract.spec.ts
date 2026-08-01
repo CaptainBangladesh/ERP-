@@ -234,6 +234,36 @@ describe('migration assembly', () => {
     );
   });
 
+  it('orders modules that depend on nothing by tier, then by name', () => {
+    // Neither depends on the other, so the graph has no opinion and something arbitrary
+    // decides. Alphabetically 'hrm' wins, which would put an Enterprise module ahead of a
+    // Core one for no better reason than its first letter.
+    const hrm = manifest('hrm', { tier: 'enterprise' });
+    const identity = manifest('identity', { tier: 'core' });
+
+    expect(assembleModules([hrm, identity]).manifests.map((m) => m.name)).toEqual([
+      'identity',
+      'hrm',
+    ]);
+  });
+
+  it('emits migrations in the order Prisma will apply them', () => {
+    const hrm = manifest('hrm', {
+      tier: 'enterprise',
+      migrations: ['20260801091203_hrm', '20260801094353_hrm_more'],
+    });
+    const identity = manifest('identity', { migrations: ['20260801000000_identity'] });
+
+    // Grouped by module this would read hrm-then-identity or identity-then-hrm depending on
+    // the tie-break, and neither is what Prisma does: it sorts directory names and ignores
+    // modules entirely. A list claiming to be apply order has to be the real one.
+    expect(assembleModules([hrm, identity]).migrations).toEqual([
+      '20260801000000_identity',
+      '20260801091203_hrm',
+      '20260801094353_hrm_more',
+    ]);
+  });
+
   it('refuses two modules claiming the same migration', () => {
     const a = manifest('alpha', { migrations: ['20260801000000_shared'] });
     const b = manifest('beta', { migrations: ['20260801000000_shared'] });

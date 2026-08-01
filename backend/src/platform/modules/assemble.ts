@@ -180,11 +180,17 @@ function checkEventsAreDeclared(
 }
 
 /**
- * Kahn's algorithm, with ties broken on name.
+ * Kahn's algorithm, with ties broken on tier and then on name.
  *
- * The tie-break is the point. Manifests arrive in filesystem order, which differs between
- * a developer's machine and CI, and an ordering that varied with it would make migration
- * order — and therefore a deployment — non-reproducible.
+ * That there *is* a tie-break is the first point. Manifests arrive in filesystem order,
+ * which differs between a developer's machine and CI, and an ordering that varied with it
+ * would make assembly — and therefore a deployment — non-reproducible.
+ *
+ * That it is tier before name is the second. Two modules with no dependency between them
+ * have no ordering the graph can insist on, so something arbitrary decides — and a purely
+ * alphabetical tie-break would put an Enterprise module ahead of a Core one for no better
+ * reason than the letter it starts with. Tier is the direction everything else in this
+ * contract runs in, so the arbitrary choice may as well agree with it.
  */
 function orderByDependency(byName: Map<string, ModuleManifest>): ModuleManifest[] {
   const remaining = new Map(
@@ -196,7 +202,7 @@ function orderByDependency(byName: Map<string, ModuleManifest>): ModuleManifest[
     const ready = [...remaining.entries()]
       .filter(([, dependencies]) => dependencies.size === 0)
       .map(([name]) => name)
-      .sort();
+      .sort(byTierThenName(byName));
 
     if (ready.length === 0) throw cycleError(remaining, byName);
 
@@ -212,6 +218,17 @@ function orderByDependency(byName: Map<string, ModuleManifest>): ModuleManifest[
   }
 
   return ordered;
+}
+
+function byTierThenName(
+  byName: Map<string, ModuleManifest>,
+): (a: string, b: string) => number {
+  const rank = (name: string): number => {
+    const tier = byName.get(name)?.tier;
+    return tier ? tierRank(tier) : 0;
+  };
+
+  return (a, b) => rank(a) - rank(b) || a.localeCompare(b);
 }
 
 /** Walks the unresolved remainder to find one concrete cycle worth printing. */
@@ -249,13 +266,20 @@ function cycleError(
 }
 
 /**
- * Migrations in dependency order, with the ordering checked against how Prisma will
- * actually apply them.
+ * Every migration, in the order Prisma will apply them, having checked that that order
+ * respects the module graph.
  *
  * Prisma applies migrations in directory-name order, which is timestamp order, and knows
- * nothing about modules. So dependency order is only real if the timestamps agree with it:
- * a module whose migration sorts ahead of its dependency's would reference a table that
- * does not exist yet. Checking it here turns a failed deploy into a failed build.
+ * nothing about modules. Two things follow, and they are easy to conflate.
+ *
+ * The *check* is that dependency order and timestamp order agree: a module whose migration
+ * sorts ahead of its dependency's would reference a table that does not exist yet, and
+ * catching it here turns a failed deploy into a failed build.
+ *
+ * The *list* is name order, not module order. Modules that depend on nothing have no
+ * ordering between them — `hrm` and `identity` are both roots of the graph — so emitting
+ * them grouped by module would describe an apply order Prisma has no intention of using.
+ * Anything reading this list wants what will actually happen.
  */
 function orderMigrations(
   ordered: readonly ModuleManifest[],
@@ -293,7 +317,7 @@ function orderMigrations(
     }
   }
 
-  return ordered.flatMap((m) => [...m.migrations].sort());
+  return ordered.flatMap((m) => [...m.migrations]).sort();
 }
 
 function transitiveDependencies(

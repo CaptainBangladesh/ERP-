@@ -65,9 +65,9 @@ export const manifest: ModuleManifest = {
 | `name` | Lowercase kebab-case, matching the directory. Also the permission namespace and event prefix. |
 | `tier` | `core`, `enterprise`, or `custom`. A module may depend on its own tier or lower, never higher. |
 | `dependsOn` | The modules it may reach. Injecting or listening to anything not named here is a lie the build cannot yet catch, but ticket 05's boundary lint will. |
-| `nestModule` | Composed into the application graph in dependency order. |
+| `nestModule` | Composed into the application graph in dependency order, ties broken by tier then name. |
 | `routes` | The API base paths it owns, no leading slash. Two modules claiming one path fails the build. Declared, not derived: the assembler checks routes against each other, not against the controller prefixes that actually mount them, so a manifest can still under- or over-claim. Ticket 05's boundary enforcement is where static verification of that lands. |
-| `migrations` | Prisma migration directories it owns. Must exist, must be owned by exactly one module, and must sort after every migration of everything it depends on. |
+| `migrations` | Prisma migration directories it owns. Must exist, must be owned by exactly one module, and must sort after every migration of everything it depends on. Prisma applies them in name order regardless of module, so that check is what makes dependency order real. |
 | `permissions` | `<name>:<resource>:<action>`, always in the module's own namespace. |
 | `navigation` | Menu entries, assembled and served by `GET /api/navigation`. |
 | `events` | What it emits and consumes. A consumed event must be emitted by a declared dependency. |

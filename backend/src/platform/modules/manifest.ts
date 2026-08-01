@@ -75,11 +75,18 @@ export interface AssembledNavigationEntry extends NavigationEntry {
 
 /** The application, derived entirely from manifests. */
 export interface AssembledModules {
-  /** Dependency order: every module appears after everything it depends on. */
+  /**
+   * Dependency order: every module appears after everything it depends on. Modules with no
+   * dependency between them are ordered by tier and then by name, so the order is the same
+   * on every machine.
+   */
   readonly manifests: readonly ModuleManifest[];
   /** The same order, ready to hand to Nest's `imports`. */
   readonly nestModules: readonly Type<unknown>[];
-  /** Dependency order, which for migrations is also apply order. */
+  /**
+   * Name order — which is the order Prisma applies them in, and deliberately not module
+   * order, because two modules that depend on nothing have no order between them.
+   */
   readonly migrations: readonly string[];
   readonly routes: readonly string[];
   readonly permissions: readonly string[];
