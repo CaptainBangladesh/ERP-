@@ -18,6 +18,28 @@ expensive to add to the mechanism after forty modules depend on it.
 
 **Status:** ready-for-agent
 
+## Open decision — settle this before writing code
+
+The spec marks tenancy as one of the two *"most consequential"* proposed defaults, *"worth
+deliberate confirmation before implementation begins, because both are cheap to choose now and
+expensive to change once several modules exist."* It is still unconfirmed. Three candidates:
+
+1. **Prisma client extension + async local storage** (the spec's proposed default). Company
+   context is injected into every query and the extension throws when it is missing. Enforcement
+   lives in one auditable place and no database roles are managed per request. Its hole is
+   `$queryRaw`, which bypasses the extension entirely and so becomes a rule to police.
+2. **Postgres row-level security.** Policies in the database, company set per transaction. Raw
+   SQL and a mistaken migration script are covered too, which is the guarantee a security reviewer
+   accepts. Costs more plumbing: a non-superuser role with `FORCE ROW LEVEL SECURITY`, and each
+   request's queries inside a transaction so `SET LOCAL` survives connection pooling.
+3. **Both, extension over RLS.** The extension fails loudly and early in development; RLS is the
+   backstop nothing escapes. A leak then needs two independent failures. Roughly half a ticket
+   more work, and the two mechanisms have to be kept in step.
+
+Whichever is chosen, module code must never write a company filter by hand, so the choice stays
+invisible above the foundation and option 2 can be layered under option 1 later without touching
+any module. Record the outcome as an ADR under `docs/adr/`.
+
 - [ ] Company context is derived from the session once per request and carried for its duration
 - [ ] Every query against a company-owned table is scoped automatically, with no per-call filter
 - [ ] A query against a company-owned table without company context throws immediately
