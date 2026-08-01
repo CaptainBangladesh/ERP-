@@ -1,10 +1,12 @@
 // Prisma schema.
 //
-// Ticket 06 splits this per module so each module owns its own models and migrations.
-// Until the module system exists (ticket 02), the skeleton's single model lives here.
+// Ticket 06 splits this per module so each module's models sit beside its code. Until then
+// the models are grouped by owning module here, and ownership is declared in the module's
+// manifest — which is what the build already checks migration order against.
 //
 // Migrations create schema only. They never insert rows — the running application seeds
-// no data, ever.
+// no data, ever. The first company and the first user are created through the sign-up
+// screen, and owner status is derived from that act rather than from a seeded role row.
 
 generator client {
   provider = "prisma-client-js"
@@ -15,12 +17,65 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// TEMPORARY — see packages/src/skeleton/probe.ts.
-/// Proves the read and write paths through every layer without seeding.
-/// Deleted by ticket 02, along with its endpoints and its table.
-model SkeletonProbe {
-  id        String   @id @default(uuid()) @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at")
+// ─── identity ───────────────────────────────────────────────────────────────────────
+// Owned by the identity module. See backend/src/modules/identity.
 
-  @@map("skeleton_probe")
+/// The tenant. Every business table in every later module carries a reference to one of
+/// these; ticket 03 makes that scoping automatic rather than remembered.
+model Company {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// The user who created the company, and therefore its owner. Nullable only because the
+  /// company row is written a moment before the user row inside the sign-up transaction —
+  /// there is no committed state in which a company has no owner. Storing the relationship
+  /// rather than a flag is what makes ownership derived from creation: it cannot be granted
+  /// by inserting a row, only by having been the one who signed up.
+  ownerUserId String? @unique @map("owner_user_id") @db.Uuid
+  owner       User?   @relation("CompanyOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  users User[] @relation("CompanyMembers")
+
+  @@map("companies")
+}
+
+/// A person, belonging to exactly one company. Access is bounded by employment, so there is
+/// no cross-company membership and no user without a company.
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  name         String
+  /// Unique across the system rather than per company: sign-in is an email and a password
+  /// with no company selector, so a shared address would make the account ambiguous.
+  email        String   @unique
+  /// scrypt, salted per user. The plaintext is never stored and never recoverable.
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company      Company  @relation("CompanyMembers", fields: [companyId], references: [id], onDelete: Cascade)
+  /// Back-reference for the ownership relation above. At most one company points here.
+  ownedCompany Company? @relation("CompanyOwner")
+  sessions     Session[]
+
+  @@index([companyId])
+  @@map("users")
+}
+
+/// A signed-in period. The token handed to the client names one of these, so signing out is
+/// a fact the server holds rather than a request the client is trusted to honour — a bare
+/// token could not be withdrawn before it expired.
+model Session {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
 }

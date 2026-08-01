@@ -12,3 +12,6 @@ npm-debug.log*
 .turbo/
 backend/prisma/generated/
 application/dist/
+
+# TypeScript incremental build state. A build artifact, not source.
+*.tsbuildinfo

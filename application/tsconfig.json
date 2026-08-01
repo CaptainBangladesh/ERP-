@@ -10,7 +10,9 @@
     "declaration": false,
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    // `vite/client` is what types `import.meta.glob`, which is how the module registry
+    // finds each module's manifest without a list to keep in step.
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
   "include": ["src", "vite.config.ts"]
 }

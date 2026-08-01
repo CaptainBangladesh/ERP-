@@ -14,6 +14,7 @@
     "dev:app": "npm run dev --workspace application",
     "build": "npm run build --workspace packages && npm run build --workspace backend && npm run build --workspace application",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "check:modules": "npm run check:modules --workspace backend",
     "test": "npm run test --workspaces --if-present",
     "test:backend": "npm run test --workspace backend",
     "test:app": "npm run test --workspace application",

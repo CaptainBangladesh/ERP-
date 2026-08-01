@@ -55,5 +55,10 @@ jobs:
       - run: npm run db:deploy --workspace backend
 
       - run: npm run typecheck
+
+      # A static check, not a test: it needs no database and no running application, and a
+      # module graph that cannot be assembled should fail here rather than at deploy time.
+      - run: npm run check:modules
+
       - run: npm run build
       - run: npm test

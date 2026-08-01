@@ -1,11 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
+import { SessionProvider } from '../session/SessionProvider';
 
 /**
  * Server state is owned by TanStack Query — caching, invalidation after mutations, and the
  * loading and error states every screen renders. React Context is reserved for genuine
- * client state (session, current company, navigation), which is small enough that Redux
- * never becomes necessary.
+ * client state, which so far is the session and nothing else: small enough that Redux never
+ * becomes necessary.
+ *
+ * `SessionProvider` sits inside the query client because it uses a query to find out what
+ * its token means, and clears the cache on sign-out.
  */
 export function createQueryClient(): QueryClient {
   return new QueryClient({
@@ -29,5 +33,9 @@ export function AppProviders({
   // leak state between cases.
   const [fallback] = useState(createQueryClient);
 
-  return <QueryClientProvider client={client ?? fallback}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client ?? fallback}>
+      <SessionProvider>{children}</SessionProvider>
+    </QueryClientProvider>
+  );
 }

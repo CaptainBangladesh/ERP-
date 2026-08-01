@@ -9,6 +9,7 @@ import {
 import type { Response } from 'express';
 import type { ApiError } from '@erp/shared';
 import { ApiException } from './api-exception';
+import { FieldException } from './validation-exception';
 
 /**
  * Every failure leaves the API as one shape: a stable `code` clients branch on, and a
@@ -18,7 +19,9 @@ import { ApiException } from './api-exception';
  * Anything else falls back to a code derived from the status, which is honest but coarse —
  * good enough for failures nobody branches on, such as a missing route.
  *
- * Ticket 04 extends this with the per-field validation breakdown that forms bind to.
+ * Validation adds a third element: the fields at fault, so a form can put each message
+ * beside the input it belongs to. Ticket 04 replaces the hand-written checks that raise it
+ * with a pipe, without changing what leaves the API.
  */
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
@@ -26,6 +29,15 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<Response>();
+
+    if (exception instanceof FieldException) {
+      response.status(exception.getStatus()).json({
+        code: exception.code,
+        message: exception.message,
+        fields: exception.fields,
+      } satisfies ApiError);
+      return;
+    }
 
     if (exception instanceof ApiException) {
       response.status(exception.getStatus()).json({

@@ -7,19 +7,30 @@ import type { PrismaClient } from '@prisma/client';
  * seeds nothing — not at startup, not in migrations — so factories exist purely to arrange
  * test state.
  *
- * Prefer arranging state through the API where the endpoint exists; reach for a factory only
- * when the setup is not itself the thing under test.
+ * Prefer arranging state through the API where the endpoint exists: a company and its owner
+ * come from `POST /api/auth/sign-up`, not from here, because a factory that built them
+ * would build them slightly differently from the way the application does and the tests
+ * would quietly stop describing the real system. Reach for a factory only for states the
+ * API deliberately offers no way to reach.
  */
 export interface Factories {
-  skeletonProbe: (count?: number) => Promise<void>;
+  /**
+   * Back-dates every session a user holds, so their next request arrives with an expired
+   * one.
+   *
+   * There is no endpoint for this and there should not be. The alternatives are waiting
+   * twelve hours, or making the session lifetime configurable — a production setting that
+   * would exist only to serve the suite, and would eventually be set wrong in production.
+   */
+  expireSessions: (userId: string) => Promise<void>;
 }
 
 export function createFactories(prisma: PrismaClient): Factories {
   return {
-    /** TEMPORARY — removed with the skeleton probe in ticket 02. */
-    skeletonProbe: async (count = 1) => {
-      await prisma.skeletonProbe.createMany({
-        data: Array.from({ length: count }, () => ({})),
+    expireSessions: async (userId: string) => {
+      await prisma.session.updateMany({
+        where: { userId },
+        data: { expiresAt: new Date(Date.now() - 1000) },
       });
     },
   };

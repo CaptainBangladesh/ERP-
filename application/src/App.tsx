@@ -1,14 +1,16 @@
 import { AppProviders } from './providers/AppProviders';
-import { SkeletonPage } from './pages/SkeletonPage';
+import { AppRoutes } from './app/AppRoutes';
 
 /**
- * Ticket 02 introduces sign-in and real navigation; ticket 07 filters that navigation by
- * permission and tier. For now there is one page.
+ * The application: providers, then whatever screen the modules declared for this path.
+ *
+ * There is no route table here and there will not be one. Modules declare their own
+ * screens; the registry finds them.
  */
 export function App() {
   return (
     <AppProviders>
-      <SkeletonPage />
+      <AppRoutes />
     </AppProviders>
   );
 }

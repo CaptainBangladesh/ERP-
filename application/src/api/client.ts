@@ -1,22 +1,57 @@
-import { isApiError, type ApiError } from '@erp/shared';
+import { isApiError, isAuthenticationFailure, AUTH_SCHEME, type ApiError } from '@erp/shared';
 
 /**
  * The one way the frontend talks to the API.
  *
- * Every failure arrives as an `ApiFailure` carrying the backend's stable `code` and a
- * message safe to show a user, so screens never parse raw responses. Ticket 04 extends this
- * with the per-field validation breakdown that forms bind to.
+ * Every failure arrives as an `ApiFailure` carrying the backend's stable `code`, a message
+ * safe to show a user, and — for validation failures — the fields at fault, so screens never
+ * parse raw responses and forms never guess which input a message belongs to.
  */
 export class ApiFailure extends Error {
   readonly code: string;
   readonly status: number;
+  /** Field name to message. Empty unless the failure named fields. */
+  readonly fields: Record<string, string>;
 
   constructor(status: number, error: ApiError) {
     super(error.message);
     this.name = 'ApiFailure';
     this.code = error.code;
     this.status = status;
+    this.fields = error.fields ?? {};
   }
+}
+
+/**
+ * The session token, held outside React.
+ *
+ * Every request needs it and no component should have to thread it through, so it lives
+ * here and `SessionProvider` is the only thing that writes it. Keeping it in one place is
+ * also what makes signing out complete: clearing it here means no later request can still
+ * be carrying it.
+ */
+let authToken: string | undefined;
+
+export function setAuthToken(token: string | undefined): void {
+  authToken = token;
+}
+
+/**
+ * Told whenever any request is refused because the session is no longer usable.
+ *
+ * It belongs here rather than on a screen because a session does not only fail when the
+ * application asks who you are — it fails on whatever request happens to be next after it
+ * runs out, which could be any screen's. Watching one query for it would leave a user
+ * clicking around a dead application, which is precisely the silent failure this is meant
+ * to rule out.
+ *
+ * Deliberately narrow: `invalid_credentials` is a failed sign-in attempt, not an ended
+ * session, and must not fire this.
+ */
+let onSessionUnusable: ((code: string) => void) | undefined;
+
+export function setSessionUnusableHandler(handler: ((code: string) => void) | undefined): void {
+  onSessionUnusable = handler;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -27,6 +62,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `${AUTH_SCHEME} ${authToken}` } : {}),
         ...init?.headers,
       },
     });
@@ -42,12 +78,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const body: unknown = await response.json().catch(() => undefined);
 
   if (!response.ok) {
-    throw new ApiFailure(
+    const failure = new ApiFailure(
       response.status,
       isApiError(body)
         ? body
         : { code: 'internal_error', message: 'Something went wrong. Please try again.' },
     );
+
+    if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code);
+
+    throw failure;
   }
 
   return body as T;

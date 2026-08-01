@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(git -c core.quotepath=false ls-files)",
-      "Bash(docker exec *)"
+      "Bash(docker exec *)",
+      "Bash(rm packages/src/skeleton/probe.ts)",
+      "Bash(rmdir packages/src/skeleton)",
+      "Bash(npx jest *)",
+      "Bash(node scripts/migrate-test-db.mjs)",
+      "Bash(npx ts-node *)",
+      "Bash(npm test *)",
+      "Bash(git add *)",
+      "Bash(grep -v \"^$\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\ishfa\\Pictures\\New appilication\\packages\\dist"

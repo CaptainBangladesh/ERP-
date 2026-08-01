@@ -1,19 +1,51 @@
 /**
  * The one error shape every endpoint returns.
  *
- * Ticket 04 formalises this across all modules and adds the per-field validation
- * breakdown. It lives here from ticket 01 so the skeleton's client already handles
- * errors the way every later screen will.
+ * Ticket 04 formalises this across all modules and replaces the hand-written validation in
+ * identity with a pipe that produces the same shape. The shape itself is settled here
+ * because sign-up already needs a form to bind messages to the offending inputs, and a
+ * screen written against a different shape would have to be rewritten later.
  */
 export interface ApiError {
   /** Machine-readable, stable across releases. Clients branch on this, never on `message`. */
   code: string;
   /** Human-readable. Safe to show a user. */
   message: string;
+  /**
+   * Present only on validation failures. Maps a request field name to the message that
+   * belongs beside that input. A form renders these against its fields; anything else
+   * ignores them and shows `message`.
+   */
+  fields?: Record<string, string>;
 }
 
 export function isApiError(value: unknown): value is ApiError {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Record<string, unknown>;
   return typeof candidate.code === 'string' && typeof candidate.message === 'string';
+}
+
+/**
+ * The error codes every module shares.
+ *
+ * Only codes the platform itself raises, on behalf of modules that do not exist yet. A
+ * module's own refusals — "that email is already registered", "that SKU exists" — belong in
+ * that module's contract, or this file becomes the dumping ground the shared package rule
+ * exists to prevent.
+ *
+ * `session_expired` is distinct from `unauthenticated` because the two mean different things
+ * to a user: one has been signed in and was timed out, the other never signed in, and only
+ * the first warrants telling them their session ended.
+ */
+export const ERROR_CODES = {
+  unauthenticated: 'unauthenticated',
+  sessionExpired: 'session_expired',
+  validationFailed: 'validation_failed',
+} as const;
+
+export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
+
+/** True for the two codes that mean "this session cannot be used", whatever the reason. */
+export function isAuthenticationFailure(code: string): boolean {
+  return code === ERROR_CODES.unauthenticated || code === ERROR_CODES.sessionExpired;
 }

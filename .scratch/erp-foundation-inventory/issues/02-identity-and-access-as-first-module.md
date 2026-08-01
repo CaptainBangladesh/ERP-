@@ -14,27 +14,27 @@ right while a real module is being fitted to it.
 
 **Blocked by:** 01 — Walking skeleton and test harnesses
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A module declares a manifest: name, tier, dependencies, routes, migrations, permissions,
+- [x] A module declares a manifest: name, tier, dependencies, routes, migrations, permissions,
       navigation, events
-- [ ] Routes, navigation and migrations are assembled from manifests with no central list to edit
-- [ ] Migration order across modules is derived from declared dependencies and is deterministic
-- [ ] A dependency cycle, a missing dependency, or a Core module depending on a higher tier all
+- [x] Routes, navigation and migrations are assembled from manifests with no central list to edit
+- [x] Migration order across modules is derived from declared dependencies and is deterministic
+- [x] A dependency cycle, a missing dependency, or a Core module depending on a higher tier all
       fail the build with a message naming the problem
-- [ ] The application boots with any subset of modules present
-- [ ] Identity and access is a Core module registered purely through its manifest
-- [ ] Sign-up creates a company and its first user in one step
-- [ ] The company creator is the owner; owner status derives from creation, not seeded data
-- [ ] Sign-in establishes a session carrying the user and their company
-- [ ] Home screen shows the signed-in user and company, with navigation and sign-out
-- [ ] Sign-out ends the session and returns to sign-in
-- [ ] Endpoints require a valid session by default; opting out is explicit and rare
-- [ ] Unauthenticated and expired requests are refused with a consistent, clear error
-- [ ] An expired session returns me to sign-in rather than failing silently
-- [ ] Passwords are stored hashed and are never recoverable
-- [ ] Sign-up validates inputs and shows errors against the offending fields
-- [ ] Duplicate email registration is refused clearly
-- [ ] The manifest format and how to add a module are documented
-- [ ] Backend tests cover sign-up, sign-in, and refusal of unauthenticated and expired requests
-- [ ] Frontend tests cover sign-up, sign-in, validation errors, and the signed-in home screen
+- [x] The application boots with any subset of modules present
+- [x] Identity and access is a Core module registered purely through its manifest
+- [x] Sign-up creates a company and its first user in one step
+- [x] The company creator is the owner; owner status derives from creation, not seeded data
+- [x] Sign-in establishes a session carrying the user and their company
+- [x] Home screen shows the signed-in user and company, with navigation and sign-out
+- [x] Sign-out ends the session and returns to sign-in
+- [x] Endpoints require a valid session by default; opting out is explicit and rare
+- [x] Unauthenticated and expired requests are refused with a consistent, clear error
+- [x] An expired session returns me to sign-in rather than failing silently
+- [x] Passwords are stored hashed and are never recoverable
+- [x] Sign-up validates inputs and shows errors against the offending fields
+- [x] Duplicate email registration is refused clearly
+- [x] The manifest format and how to add a module are documented
+- [x] Backend tests cover sign-up, sign-in, and refusal of unauthenticated and expired requests
+- [x] Frontend tests cover sign-up, sign-in, validation errors, and the signed-in home screen
