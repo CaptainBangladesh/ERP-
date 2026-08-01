@@ -40,8 +40,16 @@ export function Field({
   inputRef?: Ref<HTMLInputElement>;
 }) {
   const [revealed, setRevealed] = useState(false);
+  /**
+   * Caps Lock is the classic silent failure of a masked box: the password looks identical
+   * either way, so the only feedback is a refusal that blames the password. Only shown
+   * while the field has focus — a warning about a keyboard nobody is typing on is noise.
+   */
+  const [capsLock, setCapsLock] = useState(false);
+  const [focused, setFocused] = useState(false);
 
   const isPassword = type === 'password';
+  const warnAboutCapsLock = isPassword && focused && capsLock;
   const errorId = `${id}-error`;
   const hintId = `${id}-hint`;
   const describedBy = [error ? errorId : undefined, hint ? hintId : undefined]
@@ -71,7 +79,15 @@ export function Field({
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy || undefined}
           onChange={(event) => onChange(event.target.value)}
-          onBlur={onBlur}
+          // Read from the event rather than tracked as a keypress of its own, so it is
+          // right even when Caps Lock was already on before the field was reached.
+          onKeyDown={(event) => setCapsLock(event.getModifierState('CapsLock'))}
+          onKeyUp={(event) => setCapsLock(event.getModifierState('CapsLock'))}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
           className={`w-full rounded-md border py-2 pl-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-900/20 ${
             isPassword ? 'pr-11' : 'pr-3'
           } ${error ? 'border-red-500' : 'border-slate-300'}`}
@@ -94,6 +110,17 @@ export function Field({
           </button>
         )}
       </div>
+
+      {/*
+        A warning, not a validation failure — so no `aria-invalid`, no red, and no place in
+        `aria-describedby`. Nothing is wrong yet; something is about to go wrong.
+        `role="status"` announces it at the moment it starts mattering.
+      */}
+      {warnAboutCapsLock && (
+        <p role="status" className="text-xs text-amber-700">
+          Caps Lock is on.
+        </p>
+      )}
 
       {hint && !error && (
         <p id={hintId} className="text-xs text-slate-500">

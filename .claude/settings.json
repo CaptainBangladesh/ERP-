@@ -10,7 +10,9 @@
       "Bash(npx ts-node *)",
       "Bash(npm test *)",
       "Bash(git add *)",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(npx tsc *)",
+      "Bash(npx vitest *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\ishfa\\Pictures\\New appilication\\packages\\dist"

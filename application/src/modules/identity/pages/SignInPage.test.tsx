@@ -86,6 +86,36 @@ describe('SignInPage', () => {
     await waitFor(() => expect(password).toHaveAccessibleDescription(/enter your password/i));
   });
 
+  it('warns about Caps Lock, which a masked box would otherwise hide', async () => {
+    const { user } = renderPage(<SignInPage />, { path: '/sign-in' });
+
+    await user.click(screen.getByLabelText(/^password$/i));
+    expect(screen.queryByText(/caps lock/i)).not.toBeInTheDocument();
+
+    await user.keyboard('{CapsLock}CORRECT');
+
+    // Otherwise the only feedback is a refusal that blames the password, and the user
+    // retypes the same thing in the same state.
+    expect(await screen.findByText(/caps lock is on/i)).toBeInTheDocument();
+
+    await user.keyboard('{CapsLock}x');
+    await waitFor(() => expect(screen.queryByText(/caps lock/i)).not.toBeInTheDocument());
+  });
+
+  it('stops warning about Caps Lock once the field is left', async () => {
+    const { user } = renderPage(<SignInPage />, { path: '/sign-in' });
+
+    await user.click(screen.getByLabelText(/^password$/i));
+    await user.keyboard('{CapsLock}SECRET');
+    expect(await screen.findByText(/caps lock is on/i)).toBeInTheDocument();
+
+    // A warning about a keyboard nobody is typing on is noise.
+    await user.click(screen.getByLabelText(/email address/i));
+    await waitFor(() => expect(screen.queryByText(/caps lock/i)).not.toBeInTheDocument());
+
+    await user.keyboard('{CapsLock}');
+  });
+
   it('offers the way to create a company when there is no account yet', () => {
     renderPage(<SignInPage />, { path: '/sign-in' });
 

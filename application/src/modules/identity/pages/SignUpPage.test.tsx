@@ -115,6 +115,67 @@ describe('SignUpPage', () => {
     expect(confirmBox()).toHaveAttribute('type', 'password');
   });
 
+  describe('password strength', () => {
+    it('advises on the password being chosen without ever blocking it', async () => {
+      let submitted: unknown;
+      server.use(
+        http.post(AUTH_PATHS.signUp, async ({ request }) => {
+          submitted = await request.json();
+          return HttpResponse.json({}, { status: 201 });
+        }),
+        http.get(AUTH_PATHS.session, () => HttpResponse.json({})),
+      );
+
+      const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+
+      // Nothing typed, nothing to judge — a verdict on an empty box is just noise.
+      expect(screen.queryByText(/weak|fair|good|strong/i)).not.toBeInTheDocument();
+
+      // Sixteen characters long and one guess to break. Length cannot rescue it, so the
+      // repetition check overrides the length band rather than nudging it down one.
+      await user.type(passwordBox(), 'aaaaaaaaaaaaaaaa');
+      expect(await screen.findByText(/weak/i)).toBeInTheDocument();
+      expect(screen.getByText(/repeating one or two characters/i)).toBeInTheDocument();
+
+      // Weak is advice, not a rule. The server's length minimum is the only gate, so a
+      // password the meter dislikes still submits.
+      await user.type(confirmBox(), 'aaaaaaaaaaaaaaaa');
+      await user.type(screen.getByLabelText(/company name/i), 'Northwind Trading');
+      await user.type(screen.getByLabelText(/your name/i), 'Ada Okafor');
+      await user.type(screen.getByLabelText(/email address/i), 'ada@northwind.test');
+      await user.click(screen.getByRole('button', { name: /create company/i }));
+
+      await waitFor(() => expect(submitted).toBeTruthy());
+    });
+
+    it('rewards length rather than punctuation', async () => {
+      const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+
+      // Short-but-fussy is what composition rules produce. Upper, lower, digits, symbols,
+      // every box ticked — and it earns no more than Fair, because at twelve characters
+      // that is honestly what it is worth.
+      await user.type(passwordBox(), 'Pa$$w0rd!123');
+      expect(await screen.findByText(/fair/i)).toBeInTheDocument();
+
+      // Three ordinary words, not a symbol in sight, and far harder to guess. A meter that
+      // said otherwise would be teaching people the wrong lesson.
+      await user.clear(passwordBox());
+      await user.type(passwordBox(), 'marmalade harbour lantern');
+      expect(await screen.findByText(/strong/i)).toBeInTheDocument();
+    });
+
+    it('refuses to call a password strong when it is made of what they just typed', async () => {
+      const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+
+      await user.type(screen.getByLabelText(/company name/i), 'Northwind Trading');
+      await user.type(passwordBox(), 'northwind trading 2026');
+
+      // Long, mixed, and the first thing anybody who knows them would try.
+      expect(await screen.findByText(/weak/i)).toBeInTheDocument();
+      expect(screen.getByText(/avoid your name, your company/i)).toBeInTheDocument();
+    });
+  });
+
   it('catches a mistyped confirmation before troubling the server', async () => {
     let attempted = false;
     server.use(

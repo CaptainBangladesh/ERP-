@@ -12,6 +12,7 @@ import { useSession } from '../../../session/SessionProvider';
 import { linkProps, navigate } from '../../../app/location';
 import { Field } from '../components/Field';
 import { FormError } from '../components/FormError';
+import { PasswordStrength } from '../components/PasswordStrength';
 
 /**
  * The way into an empty system.
@@ -126,21 +127,37 @@ export function SignUpPage() {
           error={fields.email}
           onChange={(email) => setForm({ ...form, email })}
         />
-        <Field
-          id="password"
-          label="Password"
-          type="password"
-          autoComplete="new-password"
-          hint={`At least ${PASSWORD_MIN_LENGTH} characters.`}
-          value={form.password}
-          error={fields.password}
-          onChange={(password) => {
-            setForm({ ...form, password });
-            // Editing either box makes the old verdict stale. Leaving it up would accuse
-            // somebody of a mistake they are in the middle of fixing.
-            setMismatch(undefined);
-          }}
-        />
+        {/*
+          The hint gives way to the meter rather than sitting beside it. Two lines of advice
+          under one box is where people stop reading either.
+        */}
+        <div className="flex flex-col gap-1.5">
+          <Field
+            id="password"
+            label="Password"
+            type="password"
+            autoComplete="new-password"
+            hint={form.password ? undefined : `At least ${PASSWORD_MIN_LENGTH} characters.`}
+            value={form.password}
+            error={fields.password}
+            onChange={(password) => {
+              setForm({ ...form, password });
+              // Editing either box makes the old verdict stale. Leaving it up would accuse
+              // somebody of a mistake they are in the middle of fixing.
+              setMismatch(undefined);
+            }}
+          />
+
+          {!fields.password && (
+            <PasswordStrength
+              password={form.password}
+              // What they have already typed on this very form. A password built out of it
+              // scores well by every mechanical measure and is the first thing anybody who
+              // knows them would try.
+              context={[form.companyName, form.name, form.email]}
+            />
+          )}
+        </div>
 
         {/*
           Redundant on the face of it — the reveal toggle already lets somebody check what
