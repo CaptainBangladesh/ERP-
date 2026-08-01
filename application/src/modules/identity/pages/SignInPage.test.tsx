@@ -9,7 +9,7 @@ import { SignInPage } from './SignInPage';
 describe('SignInPage', () => {
   async function fillIn(user: ReturnType<typeof renderPage>['user']) {
     await user.type(screen.getByLabelText(/email address/i), 'ada@northwind.test');
-    await user.type(screen.getByLabelText(/password/i), 'correct-horse-battery');
+    await user.type(screen.getByLabelText(/^password$/i), 'correct-horse-battery');
   }
 
   it('signs in and goes to the home screen', async () => {
@@ -82,7 +82,7 @@ describe('SignInPage', () => {
     await user.type(screen.getByLabelText(/email address/i), 'ada@northwind.test');
     await user.click(screen.getByRole('button', { name: /^sign in$/i }));
 
-    const password = await screen.findByLabelText(/password/i);
+    const password = await screen.findByLabelText(/^password$/i);
     await waitFor(() => expect(password).toHaveAccessibleDescription(/enter your password/i));
   });
 

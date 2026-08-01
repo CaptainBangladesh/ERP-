@@ -11,11 +11,23 @@ import { SignUpPage } from './SignUpPage';
  * hooks or component state.
  */
 describe('SignUpPage', () => {
-  async function fillIn(user: ReturnType<typeof renderPage>['user']) {
+  // `^password$` because "Confirm password" also matches a loose /password/ — the exact
+  // ambiguity a user faces if the two boxes are not clearly distinct.
+  const passwordBox = () => screen.getByLabelText(/^password$/i);
+  const confirmBox = () => screen.getByLabelText(/confirm password/i);
+
+  async function fillIn(
+    user: ReturnType<typeof renderPage>['user'],
+    options: { password?: string; confirmation?: string } = {},
+  ) {
+    const password = options.password ?? 'correct-horse-battery';
+    const confirmation = options.confirmation ?? password;
+
     await user.type(screen.getByLabelText(/company name/i), 'Northwind Trading');
     await user.type(screen.getByLabelText(/your name/i), 'Ada Okafor');
     await user.type(screen.getByLabelText(/email address/i), 'ada@northwind.test');
-    await user.type(screen.getByLabelText(/password/i), 'correct-horse-battery');
+    await user.type(passwordBox(), password);
+    await user.type(confirmBox(), confirmation);
   }
 
   it('creates a company and its first user in one step', async () => {
@@ -81,9 +93,94 @@ describe('SignUpPage', () => {
     await waitFor(() => expect(email).toHaveAccessibleDescription(/valid email address/i));
     expect(email).toBeInvalid();
 
-    const password = screen.getByLabelText(/password/i);
+    const password = passwordBox();
     expect(password).toHaveAccessibleDescription(/at least 12 characters/i);
     expect(password).toBeInvalid();
+  });
+
+  it('lets somebody read the password they are choosing', async () => {
+    const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+
+    // Masked by default — revealing is a decision the user makes about their own
+    // surroundings, not one the form makes for them.
+    expect(passwordBox()).toHaveAttribute('type', 'password');
+
+    const toggles = screen.getAllByRole('button', { name: /show password/i });
+    await user.click(toggles[0]!);
+
+    expect(passwordBox()).toHaveAttribute('type', 'text');
+    expect(screen.getAllByRole('button', { name: /hide password/i })[0]).toBeInTheDocument();
+
+    // Each box reveals independently, so revealing one does not expose the other.
+    expect(confirmBox()).toHaveAttribute('type', 'password');
+  });
+
+  it('catches a mistyped confirmation before troubling the server', async () => {
+    let attempted = false;
+    server.use(
+      http.post(AUTH_PATHS.signUp, () => {
+        attempted = true;
+        return HttpResponse.json({}, { status: 201 });
+      }),
+    );
+
+    const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+    await fillIn(user, {
+      password: 'correct-horse-battery',
+      confirmation: 'correct-horse-bettery',
+    });
+    await user.click(screen.getByRole('button', { name: /create company/i }));
+
+    // The message belongs to the confirmation box, which is also where the cursor goes:
+    // a mismatch is not something to go hunting for.
+    await waitFor(() => expect(confirmBox()).toHaveAccessibleDescription(/does not match/i));
+    expect(confirmBox()).toHaveFocus();
+
+    // A round trip to be told the two boxes on this screen differ would be a round trip
+    // spent asking the server something only the screen knows.
+    expect(attempted).toBe(false);
+  });
+
+  it('clears the mismatch as soon as the user starts correcting it', async () => {
+    let submitted: unknown;
+    server.use(
+      http.post(AUTH_PATHS.signUp, async ({ request }) => {
+        submitted = await request.json();
+        return HttpResponse.json(
+          {
+            token: 'a-token',
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+            user: { id: 'u1', name: 'Ada Okafor', email: 'ada@northwind.test', isOwner: true },
+            company: { id: 'c1', name: 'Northwind Trading' },
+          },
+          { status: 201 },
+        );
+      }),
+      http.get(AUTH_PATHS.session, () => HttpResponse.json({})),
+    );
+
+    const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+    await fillIn(user, { password: 'correct-horse-battery', confirmation: 'wrong' });
+    await user.click(screen.getByRole('button', { name: /create company/i }));
+    await waitFor(() => expect(confirmBox()).toHaveAccessibleDescription(/does not match/i));
+
+    await user.clear(confirmBox());
+    // Standing accusation removed the moment they act on it, rather than left up while
+    // they fix it.
+    expect(confirmBox()).not.toBeInvalid();
+
+    await user.type(confirmBox(), 'correct-horse-battery');
+    await user.click(screen.getByRole('button', { name: /create company/i }));
+
+    // The confirmation is a question about this screen; it never crosses the network.
+    await waitFor(() => {
+      expect(submitted).toEqual({
+        companyName: 'Northwind Trading',
+        name: 'Ada Okafor',
+        email: 'ada@northwind.test',
+        password: 'correct-horse-battery',
+      });
+    });
   });
 
   it('refuses a duplicate email against the email field, and says to sign in instead', async () => {
