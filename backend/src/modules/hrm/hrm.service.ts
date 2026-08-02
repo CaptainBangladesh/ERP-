@@ -1,24 +1,33 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  Decimal,
   HRM_ERROR_CODES,
   HRM_PAY_GRANT,
-  type CalculatePayRunRequest,
-  type CreateEmployeeRequest,
+  MONEY_SCALE,
+  Money,
   type EmployeeListResponse,
   type EmployeeResponse,
   type PayRunListResponse,
   type PayRunResponse,
-  type UpdateEmployeeRequest,
+  type PayRunSummary,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
+import { listQuery } from '../../platform/list';
 import {
   companyApplied,
   InjectPrisma,
   Tenancy,
   type ScopedPrisma,
 } from '../../platform/tenancy';
-import { validateEmployee, validateEmployeeChange, validatePeriod } from './validation';
+import type { Valid } from '../../platform/validation';
+import {
+  CalculatePayRunBody,
+  CreateEmployeeBody,
+  EMPLOYEE_LIST,
+  PAY_RUN_LIST,
+  UpdateEmployeeBody,
+} from './schemas';
 
 /**
  * The shape stub, doing the three things it exists to do.
@@ -31,6 +40,10 @@ import { validateEmployee, validateEmployeeChange, validatePeriod } from './vali
  * There is not a company filter anywhere in this file, and that is the point. Employees,
  * pay runs and pay run lines are all company-owned; the platform scopes every query below,
  * so a second company's rows are not reachable from here even by trying.
+ *
+ * Ticket 04 took three more things out of it. Validation is a schema, paging and sorting and
+ * filtering are the platform's, and money is a type rather than a private helper — so what is
+ * left here is payroll behaviour and nothing else.
  */
 @Injectable()
 export class HrmService {
@@ -39,15 +52,11 @@ export class HrmService {
     private readonly tenancy: Tenancy,
   ) {}
 
-  async addEmployee(
-    body: Partial<CreateEmployeeRequest> | undefined,
-  ): Promise<EmployeeResponse> {
-    const input = validateEmployee(body);
-
+  async addEmployee(input: Valid<typeof CreateEmployeeBody>): Promise<EmployeeResponse> {
     const employee = await this.prisma.employee.create({
       data: companyApplied<Prisma.EmployeeUncheckedCreateInput>({
         name: input.name,
-        annualSalary: input.annualSalary,
+        annualSalary: input.annualSalary.amount.toString(),
         // Refused by the platform for a caller who could not then read the record back.
         ...(input.confidential ? { confidential: true } : {}),
       }),
@@ -57,16 +66,27 @@ export class HrmService {
   }
 
   /**
-   * Everybody on the payroll — with or without their salaries, depending on the caller.
+   * Everybody on the payroll — with or without their salaries, depending on the caller, and
+   * a page at a time.
    *
-   * Nothing here asks. The platform omits the restricted column for a caller who may not
-   * read it, so the list works for staff who need to know who their colleagues are and not
-   * what they earn, and the module does not have to hold two versions of one query.
+   * Nothing here asks about access and nothing here pages. The platform omits the restricted
+   * column for a caller who may not read it, so the list works for staff who need to know who
+   * their colleagues are and not what they earn; and `listQuery` has already turned the
+   * request's parameters into a checked slice, so this reads and returns the one envelope
+   * every list endpoint in every module returns.
+   *
+   * The total is its own query rather than the length of the rows, because the rows are one
+   * page of them. It carries the same filters and none of the paging.
    */
-  async listEmployees(): Promise<EmployeeListResponse> {
-    const employees = await this.prisma.employee.findMany({ orderBy: { name: 'asc' } });
+  async listEmployees(query: Record<string, unknown>): Promise<EmployeeListResponse> {
+    const slice = listQuery(query, EMPLOYEE_LIST);
 
-    return { employees: employees.map(describeEmployee) };
+    const [employees, total] = await Promise.all([
+      this.prisma.employee.findMany(slice.findMany<Prisma.EmployeeFindManyArgs>()),
+      this.prisma.employee.count(slice.count<Prisma.EmployeeCountArgs>()),
+    ]);
+
+    return slice.respond(employees.map(describeEmployee), total);
   }
 
   /**
@@ -79,12 +99,19 @@ export class HrmService {
    */
   async changeEmployee(
     id: string,
-    body: Partial<UpdateEmployeeRequest> | undefined,
+    input: Valid<typeof UpdateEmployeeBody>,
   ): Promise<EmployeeResponse> {
-    const change = validateEmployeeChange(body);
-
     const employee = await this.prisma.employee
-      .update({ where: { id }, data: change })
+      .update({
+        where: { id },
+        data: {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.annualSalary !== undefined
+            ? { annualSalary: input.annualSalary.amount.toString() }
+            : {}),
+          ...(input.confidential !== undefined ? { confidential: input.confidential } : {}),
+        },
+      })
       .catch(notFound);
 
     return describeEmployee(employee);
@@ -99,14 +126,12 @@ export class HrmService {
    * second opinion that could disagree with the first.
    */
   async removeEmployee(id: string): Promise<void> {
-    await this.prisma.employee
-      .delete({ where: { id } })
-      .catch((cause: unknown) => {
-        if (cause instanceof Prisma.PrismaClientKnownRequestError && cause.code === 'P2003') {
-          throw employeeHasPayHistory();
-        }
-        return notFound(cause);
-      });
+    await this.prisma.employee.delete({ where: { id } }).catch((cause: unknown) => {
+      if (cause instanceof Prisma.PrismaClientKnownRequestError && cause.code === 'P2003') {
+        throw employeeHasPayHistory();
+      }
+      return notFound(cause);
+    });
   }
 
   /**
@@ -118,10 +143,7 @@ export class HrmService {
    * a pay run of blank numbers is worse than a refusal. Ticket 07 makes it a permission on
    * the handler.
    */
-  async calculatePayRun(
-    body: Partial<CalculatePayRunRequest> | undefined,
-  ): Promise<PayRunResponse> {
-    const period = validatePeriod(body);
+  async calculatePayRun(period: Valid<typeof CalculatePayRunBody>): Promise<PayRunResponse> {
     if (!this.tenancy.holds(HRM_PAY_GRANT)) throw payRestricted();
 
     const employees = await this.prisma.employee.findMany({ orderBy: { name: 'asc' } });
@@ -144,7 +166,7 @@ export class HrmService {
             companyApplied<Prisma.PayRunLineUncheckedCreateInput>({
               payRunId: run.id,
               employeeId: employee.id,
-              grossPay: grossPay(employee.annualSalary, days),
+              grossPay: grossPay(employee.annualSalary, days).amount.toString(),
             }),
           ),
         });
@@ -161,12 +183,15 @@ export class HrmService {
     return this.payRun(payRun.id);
   }
 
-  async listPayRuns(): Promise<PayRunListResponse> {
-    const payRuns = await this.prisma.payRun.findMany({
-      orderBy: [{ periodStart: 'desc' }, { periodEnd: 'desc' }],
-    });
+  async listPayRuns(query: Record<string, unknown>): Promise<PayRunListResponse> {
+    const slice = listQuery(query, PAY_RUN_LIST);
 
-    return { payRuns: payRuns.map(describePayRun) };
+    const [payRuns, total] = await Promise.all([
+      this.prisma.payRun.findMany(slice.findMany<Prisma.PayRunFindManyArgs>()),
+      this.prisma.payRun.count(slice.count<Prisma.PayRunCountArgs>()),
+    ]);
+
+    return slice.respond(payRuns.map(describePayRun), total);
   }
 
   /**
@@ -193,7 +218,7 @@ export class HrmService {
         .map((line) => ({
           employeeId: line.employeeId,
           employeeName: nameOf.get(line.employeeId) ?? 'Unknown',
-          grossPay: money(line.grossPay),
+          grossPay: Money.wire(exactly(line.grossPay)),
         }))
         .sort((a, b) => a.employeeName.localeCompare(b.employeeName)),
     };
@@ -210,7 +235,7 @@ function describeEmployee(employee: {
     id: employee.id,
     name: employee.name,
     confidential: employee.confidential,
-    annualSalary: money(employee.annualSalary),
+    annualSalary: Money.wire(exactly(employee.annualSalary)),
   };
 }
 
@@ -219,7 +244,7 @@ function describePayRun(payRun: {
   periodStart: Date;
   periodEnd: Date;
   calculatedAt: Date;
-}): Omit<PayRunResponse, 'lines'> {
+}): PayRunSummary {
   return {
     id: payRun.id,
     periodStart: isoDay(payRun.periodStart),
@@ -229,17 +254,19 @@ function describePayRun(payRun: {
 }
 
 /**
- * A money column on its way out, or `null` where the platform withheld it.
+ * A `numeric` column as exact text, or nothing where the platform withheld it.
  *
- * The `null` branch is the one that matters and the type says it cannot happen: Prisma's
- * generated row type has the column, because as far as the schema is concerned it is
- * always there. When the caller lacks the grant it is genuinely absent from the object the
- * extension returns, and a module that trusted the type would put `undefined` on the wire.
- * That gap is the price of restricting a field at the client rather than in the database,
- * and it is written down here and in docs/tenancy.md rather than discovered.
+ * The absent case is the one that matters, and the type denies it: Prisma's generated row
+ * type has the column, because as far as the schema is concerned it is always there. When the
+ * caller lacks the grant it is genuinely absent from the object the extension returns. This
+ * only has to carry that absence one step without pretending it cannot happen; `Money.wire`
+ * turns it into the `null` the contract promises. See docs/tenancy.md.
+ *
+ * `toFixed()` with no argument rather than `toString()`, because decimal.js prints values
+ * past a certain size in exponential notation and `Decimal.parse` will not accept an exponent.
  */
-function money(value: Prisma.Decimal | null | undefined): string | null {
-  return value === null || value === undefined ? null : value.toFixed(2);
+function exactly(value: Prisma.Decimal | null | undefined): string | null | undefined {
+  return value === null || value === undefined ? value : value.toFixed();
 }
 
 /** A calendar day, without the midnight-UTC instant it is stored as. */
@@ -256,13 +283,16 @@ function daysInclusive(start: Date, end: Date): number {
 /**
  * Gross pay for a period: the annual figure, apportioned by days.
  *
- * Decimal arithmetic throughout, never a JavaScript number — `48000.10 / 365 * 30` in
- * floating point is not the figure anybody agreed to pay. Rounded once, explicitly, at the
- * end, because rounding at each step compounds. The rule is the spec's and this is the first
- * module with money in it, so it is the first to keep it.
+ * Exact arithmetic throughout, never a JavaScript number — `48000.10 / 365 * 30` in floating
+ * point is not the figure anybody agreed to pay. The multiplication keeps every digit; the
+ * division is the only step that cannot be exact, so it is the only step that rounds, and it
+ * has to say how. Half-even because a payroll rounds thousands of these and half-up would
+ * drift upward across all of them.
  */
-function grossPay(annualSalary: Prisma.Decimal, days: number): Prisma.Decimal {
-  return annualSalary.mul(days).div(DAYS_IN_YEAR).toDecimalPlaces(2);
+function grossPay(annualSalary: Prisma.Decimal, days: number): Money {
+  return Money.parse(annualSalary.toFixed())
+    .times(Decimal.fromInteger(days))
+    .dividedBy(DAYS_IN_YEAR, { scale: MONEY_SCALE, rounding: 'half-even' });
 }
 
 /**
@@ -270,7 +300,7 @@ function grossPay(annualSalary: Prisma.Decimal, days: number): Prisma.Decimal {
  * per employment contract; the stub picks one and says so, because its job is to exercise
  * the foundation's shape rather than to be correct about employment law.
  */
-const DAYS_IN_YEAR = 365;
+const DAYS_IN_YEAR = Decimal.fromInteger(365);
 
 /**
  * Prisma's "no row matched" for an update or a delete, as a 404.

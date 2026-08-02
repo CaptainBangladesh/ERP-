@@ -43,8 +43,9 @@ create a company, and you become its owner by having created it.
 
 ```
 packages/      @erp/shared — primitives, plus each module's wire contract
+  src/ui/        @erp/shared/ui — the data table and shared inputs. React lives only here
 backend/       @erp/backend — NestJS, Prisma, PostgreSQL
-  src/platform/  the module contract, the auth seam, navigation. Not a module
+  src/platform/  the module contract, the auth seam, navigation, lists, validation. Not a module
   src/modules/   the modules. Found by looking, never by a list
 application/   @erp/application — React, Tailwind, TanStack Query
   src/modules/   screens, mirroring the backend modules
@@ -89,9 +90,8 @@ so the guard protects every module without the platform knowing any module exist
 - *Frontend*: page components rendered with the network intercepted, asserting on what a user
   sees and does. Never on hooks or component state. See `application/src/test/`.
 
-No unit tests on services, repositories, or components. There are two exceptions, and both
-earn it the same way — their subject is a *refusal*, and a refusal that stops a request being
-made at all is not observable from a request:
+No unit tests on services, repositories, or components. There are three exceptions, and each
+earns it the same way — its subject is not observable from a request:
 
 - `module-contract.spec.ts` — the assembler's deliverable is its refusals, and an application
   that refuses to assemble never starts to be driven over HTTP.
@@ -100,6 +100,12 @@ made at all is not observable from a request:
   offers, because the endpoint that offered them would be the bug. Everything about tenancy
   that *is* reachable over HTTP — and that is most of it, including the whole of the
   two-company isolation suite — is asserted over HTTP.
+- `numeric.spec.ts`, on the exact-number primitives. There is no route that divides by zero,
+  none that adds pounds to dollars, and none that rounds a tie — and a rounding mode wrong in
+  one direction is the bug that costs a company money quietly over a year rather than loudly
+  on a Tuesday. What *is* observable at the seam is asserted there instead:
+  `api-conventions.spec.ts` covers the wire shape, the round trip through Postgres, and drift
+  across a year of pay runs.
 
 Both suites run in CI (`.github/workflows/ci.yml`) against a real PostgreSQL service, along
 with typecheck, the module contract check, the tenancy check, and build. Module boundary
@@ -112,12 +118,30 @@ tell "that SKU already exists" from "that product still has movement history". V
 failures additionally name the fields at fault, because a form can only put a message beside
 the right box if the response says which box.
 
+**One list shape, one way to ask for a slice of it.** Every list endpoint returns items plus
+a page, and accepts the same `page`, `pageSize`, `sort`, `search` and `filter.*` parameters. A
+module declares which of its fields participate and writes no paging, sorting or filtering
+code — which is what lets one shared table serve every screen. A field the caller may not read
+is a 403 naming it, never a silently dropped clause. See
+[`docs/api-conventions.md`](docs/api-conventions.md) and
+[ADR 0004](docs/adr/0004-list-envelope-sort-filter-and-exact-numbers.md).
+
+**Money and quantities are never a `number`.** Exact decimals over `bigint`, from the
+`numeric` column to the input box, with the currency carried alongside the amount and
+cross-currency arithmetic refused. Addition and multiplication are exact; division and
+rounding *demand* a scale and a rounding mode, so rounding only ever happens where somebody
+asked for it. Retrofitting this after a ledger has accumulated means rewriting history, which
+is why it lands before there is one.
+
 **The shared package holds primitives only.** Money, quantities, identifiers, pagination and
-error shapes — plus each module's wire contract under `modules/<name>/contract.ts`, which is
-request and response shapes and nothing else. Anything with rules, tables or screens is a
-module, including domain concepts like parties and products. A shared package that
-accumulates domain concepts becomes a second application that everything depends on and
-nobody owns.
+error shapes, the data table — plus each module's wire contract under
+`modules/<name>/contract.ts`, which is request and response shapes and nothing else. Anything
+with rules, tables or screens is a module, including domain concepts like parties and
+products. A shared package that accumulates domain concepts becomes a second application that
+everything depends on and nobody owns.
+
+Its React components live behind a second entry point, `@erp/shared/ui`, so the backend can
+import the contracts without acquiring React.
 
 **Frontend dependencies must render nothing.** Headless behaviour libraries are permitted
 (TanStack Query, TanStack Table); anything shipping DOM or CSS is not. Every component is

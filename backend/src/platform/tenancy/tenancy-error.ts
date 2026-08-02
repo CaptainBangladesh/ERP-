@@ -1,11 +1,18 @@
 /**
  * The refusals the tenancy mechanism raises.
  *
- * None of these are things a user can do. They are all programming errors — a query issued
- * with no company established, a write naming somebody else's company, a field read without
- * the access it requires — so they surface as unhandled failures and are logged in full,
- * rather than becoming an `ApiException` a client could branch on. There is no client
- * behaviour that would be correct in response to "the developer forgot".
+ * Most of these are not things a user can do. A query issued with no company established, a
+ * write naming somebody else's company, an update to an immutable table — all are programming
+ * errors, so they surface as unhandled failures and are logged in full rather than becoming
+ * something a client could branch on. There is no client behaviour that would be correct in
+ * response to "the developer forgot".
+ *
+ * The two restriction errors are the exception, and became one in ticket 04. Once a list
+ * endpoint takes a field name from a query string, `?sort=annualSalary` is a URL a user can
+ * type, and a 500 is the wrong answer to it — so `RestrictedFieldError` and
+ * `RestrictedRecordError` are translated at the API boundary into a 403 naming the field.
+ * They carry the model, the field and the grant as properties for that reason: the message
+ * below is for a developer, and the one a caller sees is built from the parts. See ADR 0004.
  *
  * The messages are written for the developer who is about to read them at three in the
  * morning: what was attempted, on what, and what would fix it.
@@ -84,9 +91,14 @@ export class ImmutableRecordError extends TenancyError {
  * failure the whole mechanism exists to prevent.
  */
 export class RestrictedRecordError extends TenancyError {
-  constructor(model: string, flag: string, grant: string) {
+  constructor(
+    readonly model: string,
+    /** The boolean column marking a row restricted. Named `field` so the two errors match. */
+    readonly field: string,
+    readonly grant: string,
+  ) {
     super(
-      `'${model}.${flag}' marks a record restricted beyond company scope and requires the ` +
+      `'${model}.${field}' marks a record restricted beyond company scope and requires the ` +
         `'${grant}' grant, which the caller does not hold. Restricted rows are filtered out ` +
         `of every query automatically; naming the flag is either an attempt to reach them ` +
         `or an attempt to create one, and neither is available without the grant.`,
@@ -96,7 +108,11 @@ export class RestrictedRecordError extends TenancyError {
 
 /** A restricted field named explicitly by a caller that does not hold its grant. */
 export class RestrictedFieldError extends TenancyError {
-  constructor(model: string, field: string, grant: string) {
+  constructor(
+    readonly model: string,
+    readonly field: string,
+    readonly grant: string,
+  ) {
     super(
       `'${model}.${field}' is restricted beyond company scope and requires the '${grant}' ` +
         `grant, which the caller does not hold. Reading it without naming it returns the ` +

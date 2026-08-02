@@ -8,18 +8,18 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   HRM_ROUTE,
-  type CalculatePayRunRequest,
-  type CreateEmployeeRequest,
   type EmployeeListResponse,
   type EmployeeResponse,
   type PayRunListResponse,
   type PayRunResponse,
-  type UpdateEmployeeRequest,
 } from '@erp/shared';
+import { validated, type Valid } from '../../platform/validation';
 import { HrmService } from './hrm.service';
+import { CalculatePayRunBody, CreateEmployeeBody, UpdateEmployeeBody } from './schemas';
 
 /**
  * The stub's surface.
@@ -28,6 +28,11 @@ import { HrmService } from './hrm.service';
  * deletes anything — a pay run is calculated once and then only read. The absence is the
  * design: immutability that depends on nobody adding a `PATCH` later is not immutability,
  * which is why the platform refuses the write as well.
+ *
+ * The two list endpoints hand their whole query object to the service, which reads it against
+ * the declaration in `schemas.ts`. Nothing here names a parameter: `page`, `sort`, `search`
+ * and the filters are the platform's convention, identical in every module, and a controller
+ * with an opinion about them would be a module inventing its own.
  */
 @Controller(HRM_ROUTE)
 export class HrmController {
@@ -36,20 +41,22 @@ export class HrmController {
   @Post('employees')
   @HttpCode(HttpStatus.CREATED)
   async addEmployee(
-    @Body() body: Partial<CreateEmployeeRequest>,
+    @Body(validated(CreateEmployeeBody)) body: Valid<typeof CreateEmployeeBody>,
   ): Promise<EmployeeResponse> {
     return this.hrm.addEmployee(body);
   }
 
   @Get('employees')
-  async listEmployees(): Promise<EmployeeListResponse> {
-    return this.hrm.listEmployees();
+  async listEmployees(
+    @Query() query: Record<string, unknown>,
+  ): Promise<EmployeeListResponse> {
+    return this.hrm.listEmployees(query);
   }
 
   @Patch('employees/:id')
   async changeEmployee(
     @Param('id') id: string,
-    @Body() body: Partial<UpdateEmployeeRequest>,
+    @Body(validated(UpdateEmployeeBody)) body: Valid<typeof UpdateEmployeeBody>,
   ): Promise<EmployeeResponse> {
     return this.hrm.changeEmployee(id, body);
   }
@@ -63,14 +70,14 @@ export class HrmController {
   @Post('pay-runs')
   @HttpCode(HttpStatus.CREATED)
   async calculatePayRun(
-    @Body() body: Partial<CalculatePayRunRequest>,
+    @Body(validated(CalculatePayRunBody)) body: Valid<typeof CalculatePayRunBody>,
   ): Promise<PayRunResponse> {
     return this.hrm.calculatePayRun(body);
   }
 
   @Get('pay-runs')
-  async listPayRuns(): Promise<PayRunListResponse> {
-    return this.hrm.listPayRuns();
+  async listPayRuns(@Query() query: Record<string, unknown>): Promise<PayRunListResponse> {
+    return this.hrm.listPayRuns(query);
   }
 
   @Get('pay-runs/:id')

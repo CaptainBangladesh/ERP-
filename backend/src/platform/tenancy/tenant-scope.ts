@@ -322,10 +322,31 @@ function hideRestrictedRows(
 
   if (!TAKES_WHERE.has(operation)) return;
 
+  // Naming the flag anywhere in the filter is refused by the same walk that refuses a
+  // restricted field, which has already run by the time we get here. All that is left is to
+  // apply the restriction.
   const where = isRecord(args.where) ? args.where : {};
-  if (where[flag] !== undefined) throw new RestrictedRecordError(scope.model, flag, grant);
-
   args.where = { ...where, [flag]: false };
+}
+
+/**
+ * The row-restriction flag this caller may not name, if this model has one.
+ *
+ * Shaped like `withheldFields` so the filter walk can ask both questions in one pass. The
+ * flag is not in `restricted` — it hides whole rows rather than one column — but from the
+ * point of view of "columns a caller may not mention", it belongs in the same list.
+ */
+function withheldRowFlag(
+  model: string,
+  classification: ModelTenancy,
+  context: TenantContext,
+): { flag: string; grant: string } | undefined {
+  if (classification.kind !== 'company-owned' || !classification.restrictedRows) {
+    return undefined;
+  }
+
+  const { flag, grant } = classification.restrictedRows;
+  return holdsGrant(context, grant) ? undefined : { flag, grant };
 }
 
 /** The restricted fields on this model that this caller does not hold the grant for. */
@@ -349,6 +370,11 @@ function withheldFields(
  * is a binary search. So the walk follows relation keys onto the model they point at, and
  * treats everything else — `AND`, `OR`, `NOT`, and the operator objects inside a condition —
  * as staying on the model it is already on.
+ *
+ * It checks the row-restriction flag on the way, for the same reason and with the same
+ * consequence if it does not: a flag named inside an `AND` that was only looked for at the
+ * top level slips through and then has the platform's own `flag: false` ANDed onto it, so the
+ * query comes back empty and looks like an answer to the question that was asked.
  */
 function refuseRestrictedFilter(
   filter: unknown,
@@ -361,12 +387,18 @@ function refuseRestrictedFilter(
   }
   if (!isRecord(filter)) return;
 
-  const withheld = withheldFields(model, tenancyOf(model), context);
+  const classification = tenancyOf(model);
+  const withheld = withheldFields(model, classification, context);
+  const hiddenRows = withheldRowFlag(model, classification, context);
   const relations = relationTargets(model);
 
   for (const [key, value] of Object.entries(filter)) {
     const restricted = withheld.find(([field]) => field === key);
     if (restricted) throw new RestrictedFieldError(model, restricted[0], restricted[1]);
+
+    if (hiddenRows && key === hiddenRows.flag) {
+      throw new RestrictedRecordError(model, hiddenRows.flag, hiddenRows.grant);
+    }
 
     refuseRestrictedFilter(value, relations[key] ?? model, context);
   }

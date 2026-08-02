@@ -7,16 +7,15 @@ import {
   IDENTITY_ERROR_CODES,
   type AuthenticatedSession,
   type Session,
-  type SignInRequest,
-  type SignUpRequest,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
 import { FieldException } from '../../http/validation-exception';
 import { InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import { SessionAuthority, unauthenticated, type RequestSession } from '../../platform/auth';
+import type { Valid } from '../../platform/validation';
 import { hashPassword, verifyPassword } from './passwords';
 import { sessionExpiry } from './session.config';
-import { normaliseEmail, validateSignIn, validateSignUp, type ValidSignUp } from './validation';
+import type { SignInBody, SignUpBody } from './schemas';
 
 /** What a token carries. Everything else about the caller is read from the database. */
 interface TokenPayload {
@@ -54,9 +53,7 @@ export class IdentityService implements SessionAuthority {
    * with nobody in it cannot be signed into, and a user with no company has nowhere to be.
    * The two rows are written in one transaction for the same reason.
    */
-  async signUp(body: Partial<SignUpRequest> | undefined): Promise<AuthenticatedSession> {
-    const input = validateSignUp(body);
-
+  async signUp(input: Valid<typeof SignUpBody>): Promise<AuthenticatedSession> {
     return this.tenancy.withoutCompanyScope(
       'Sign-up creates the company. There is no company to be scoped to until it exists, ' +
         'and the email uniqueness check is deliberately across all of them.',
@@ -64,7 +61,9 @@ export class IdentityService implements SessionAuthority {
     );
   }
 
-  private async createCompanyAndOwner(input: ValidSignUp): Promise<AuthenticatedSession> {
+  private async createCompanyAndOwner(
+    input: Valid<typeof SignUpBody>,
+  ): Promise<AuthenticatedSession> {
     if (await this.prisma.user.findUnique({ where: { email: input.email } })) {
       throw emailAlreadyRegistered();
     }
@@ -108,15 +107,15 @@ export class IdentityService implements SessionAuthority {
     return this.startSession(describe(user, company));
   }
 
-  async signIn(body: Partial<SignInRequest> | undefined): Promise<AuthenticatedSession> {
-    const input = validateSignIn(body);
-
+  async signIn(input: Valid<typeof SignInBody>): Promise<AuthenticatedSession> {
     const user = await this.tenancy.withoutCompanyScope(
       'Sign-in is given an email and nothing else. Finding which company the address ' +
         'belongs to is the whole job, so it cannot be scoped to one first.',
       () =>
+        // Already lower-cased and trimmed by the rule that read it, which is what makes the
+        // unique constraint on the column mean what it appears to mean.
         this.prisma.user.findUnique({
-          where: { email: normaliseEmail(input.email) },
+          where: { email: input.email },
           include: { company: true },
         }),
     );

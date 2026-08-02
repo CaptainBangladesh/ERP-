@@ -135,6 +135,14 @@ Where the value is the *point* of the request — calculating a pay run reads sa
 module refuses up front with a 403 rather than computing over omitted values. Use
 `Tenancy.holds(grant)` for that; ticket 07 turns it into a permission on the handler.
 
+**A caller can name a restricted field too**, since ticket 04 turned field names into
+query-string input: `?sort=annualSalary` is a URL a user can type. `RestrictedFieldError` and
+`RestrictedRecordError` are therefore the two tenancy refusals that reach a client as
+something other than a 500 — `ApiExceptionFilter` translates them into a **403** with the code
+`field_restricted`, naming the field. The developer-facing message is still logged in full.
+Nothing in the list convention duplicates the restriction table to do this; the extension
+refuses and the boundary translates. See ADR 0004 and [api-conventions.md](api-conventions.md).
+
 **Restriction governs reading.** Who may *write* a restricted field is authorization, and
 that is ticket 07's.
 
@@ -192,12 +200,12 @@ as their own query.
 **A withheld field's type lies.** Prisma's generated row type has the column, because as far
 as the schema is concerned it is always there; when the caller lacks the grant it is
 genuinely absent from the object. A module putting one on the wire must handle the absence
-even though the type says it cannot happen:
+even though the type says it cannot happen. Since ticket 04 that is handled once, in the
+shared money primitive, rather than remembered forty times:
 
 ```ts
-function money(value: Prisma.Decimal | null | undefined): string | null {
-  return value === null || value === undefined ? null : value.toFixed(2);
-}
+// Money.wire takes `string | null | undefined` and answers `MoneyValue | null`.
+annualSalary: Money.wire(exactly(employee.annualSalary)),
 ```
 
 ## Outside a request

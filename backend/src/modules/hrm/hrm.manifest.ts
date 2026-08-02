@@ -35,12 +35,16 @@ export const manifest: ModuleManifest = {
   routes: [HRM_ROUTE],
 
   /**
-   * Two, because the confidential-employee column was added after the tables were, and the
-   * first migration had already been applied. Folding them would rewrite a migration the
-   * databases have a checksum for, which is the one thing Prisma will not let you do quietly
-   * — and the manifest takes a list precisely so that a module's schema can grow.
+   * Three, because each was added after the previous had already been applied. Folding them
+   * would rewrite a migration the databases have a checksum for, which is the one thing
+   * Prisma will not let you do quietly — and the manifest takes a list precisely so that a
+   * module's schema can grow.
    */
-  migrations: ['20260801091203_hrm_shape_stub', '20260801094353_hrm_confidential_employees'],
+  migrations: [
+    '20260801091203_hrm_shape_stub',
+    '20260801094353_hrm_confidential_employees',
+    '20260802230657_hrm_employee_list_order',
+  ],
 
   /**
    * The last two are the ones that matter, and neither is only checked at an endpoint. The
@@ -60,11 +64,20 @@ export const manifest: ModuleManifest = {
   ],
 
   /**
-   * None. The stub is a shape, not a feature: it has no screens, so a menu entry would
-   * point at a route the frontend does not serve. It gains one when HRM becomes a real
-   * module, and the manifest is the only file that will change.
+   * One, added by ticket 04 — and this file is the only backend file that changed to add a
+   * screen, which is the claim the manifest exists to make.
+   *
+   * The stub grew a list because ticket 04's conventions need a real list to be proven
+   * against, and the payroll shape is the harder one to satisfy: its list has a column most
+   * callers may not read. A convention that worked on products and not on this would be
+   * inventory-shaped, which is what the stub is here to catch.
+   *
+   * The permission is declared now though nothing filters on it yet. Ticket 07 applies the
+   * filter; naming it here means the entries do not have to be revisited then.
    */
-  navigation: [],
+  navigation: [
+    { label: 'People', path: '/hrm/employees', order: 20, permission: 'hrm:employees:read' },
+  ],
 
   /**
    * Nothing, deliberately — a declared event is a promise the assembler enforces, and the

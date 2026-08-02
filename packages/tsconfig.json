@@ -3,7 +3,12 @@
   "compilerOptions": {
     "module": "CommonJS",
     "outDir": "dist/cjs",
-    "rootDir": "src"
+    "rootDir": "src",
+    // `src/ui` holds React components — the shared data table and the money and quantity
+    // inputs — reachable only through the `@erp/shared/ui` subpath. The root export stays
+    // free of React so the Nest backend can import the package without it. See src/ui/index.ts.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
   },
   "include": ["src/**/*"]
 }

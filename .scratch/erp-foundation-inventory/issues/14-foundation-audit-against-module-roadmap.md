@@ -32,3 +32,25 @@ follow-up tickets.
 - [ ] Every gap is recorded as a decision, with its cost if deferred
 - [ ] Gaps expensive to fix later are raised as follow-up tickets
 - [ ] A written conclusion states whether the foundation is ready for the second business module
+
+## Comments
+
+**2026-08-02 — one gap ticket 04 chose to leave, for this audit to price.**
+
+`Money` carries its currency everywhere it travels: it is on the wire on every monetary value,
+it is part of the type, and arithmetic between two currencies throws rather than producing a
+number. That is the expensive-to-retrofit half and it is done.
+
+What is *not* stored is where the currency comes from. A newly created value takes it from
+`DEFAULT_CURRENCY` in the shared package, so it is assumed at exactly one point — the moment a
+value is first made. Ticket 04's criterion said "carried rather than assumed", and this half
+meets it and half does not, deliberately: multi-currency is out of scope per the spec, and the
+alternative (a `currency` column on `companies`, set at sign-up, carried on the session) buys
+nothing today while adding a migration to identity's schema and a field to the session
+principal.
+
+The question for this audit is whether that stays true against the roadmap. Any module that
+prices in a supplier's currency — Purchase is the obvious one — makes it false, and the fix is
+a change to one constant's callers rather than to the type. Price it, and say so either way.
+
+See ADR 0004, and ticket 04's comments.

@@ -1,5 +1,6 @@
 import {
   AUTH_PATHS,
+  DEFAULT_CURRENCY,
   HRM_PATHS,
   HRM_ERROR_CODES,
   type AuthenticatedSession,
@@ -136,10 +137,10 @@ describe('tenant scoping', () => {
       const seenByA = await a.as(app.http.get(HRM_PATHS.employees)).expect(200);
       const seenByB = await b.as(app.http.get(HRM_PATHS.employees)).expect(200);
 
-      expect((seenByA.body as EmployeeListResponse).employees.map((e) => e.name)).toEqual([
+      expect((seenByA.body as EmployeeListResponse).items.map((e) => e.name)).toEqual([
         'Ada Okafor',
       ]);
-      expect((seenByB.body as EmployeeListResponse).employees.map((e) => e.name)).toEqual([
+      expect((seenByB.body as EmployeeListResponse).items.map((e) => e.name)).toEqual([
         'Bo Lindqvist',
       ]);
 
@@ -330,11 +331,14 @@ describe('tenant scoping', () => {
       const colleague = await asColleague(app.http.get(HRM_PATHS.employees)).expect(200);
 
       // Same company, same endpoint, same row — a different answer about one column.
-      expect((owner.body as EmployeeListResponse).employees[0]?.annualSalary).toBe('48000.00');
-      expect((colleague.body as EmployeeListResponse).employees[0]?.annualSalary).toBeNull();
+      expect((owner.body as EmployeeListResponse).items[0]?.annualSalary).toEqual({
+        amount: '48000.00',
+        currency: DEFAULT_CURRENCY,
+      });
+      expect((colleague.body as EmployeeListResponse).items[0]?.annualSalary).toBeNull();
       // The rest of the record is not sensitive and is not withheld: the list is still
       // useful to somebody who may know who their colleagues are but not what they earn.
-      expect((colleague.body as EmployeeListResponse).employees[0]?.name).toBe('Ada Okafor');
+      expect((colleague.body as EmployeeListResponse).items[0]?.name).toBe('Ada Okafor');
     });
 
     it('refuses outright where the value is the point of the request', async () => {
@@ -464,7 +468,7 @@ describe('tenant scoping', () => {
       const asColleague = await colleagueWithout(a);
 
       const listed = await asColleague(app.http.get(HRM_PATHS.employees)).expect(200);
-      expect((listed.body as EmployeeListResponse).employees.map((e) => e.name)).toEqual([
+      expect((listed.body as EmployeeListResponse).items.map((e) => e.name)).toEqual([
         'Bo Lindqvist',
       ]);
 
@@ -487,7 +491,7 @@ describe('tenant scoping', () => {
         .expect(201);
 
       const listed = await a.as(app.http.get(HRM_PATHS.employees)).expect(200);
-      const employees = (listed.body as EmployeeListResponse).employees;
+      const employees = (listed.body as EmployeeListResponse).items;
       expect(employees).toHaveLength(1);
       expect(employees[0]?.confidential).toBe(true);
     });
@@ -515,6 +519,42 @@ describe('tenant scoping', () => {
         ).rejects.toBeInstanceOf(RestrictedRecordError);
       });
     });
+
+    /**
+     * The same refusal, wherever in the filter the flag is named.
+     *
+     * A filter is a walk across models rather than a flat list of columns — that is why the
+     * restricted *field* check recurses — and the row flag has to be checked the same way.
+     * Looking only at the top level meant `{ AND: [{ confidential: true }, … ] }` slipped
+     * past and then had `confidential: false` ANDed onto it, so the query came back empty
+     * and looked like an answer. A silently different answer is the exact failure this
+     * mechanism exists to prevent.
+     */
+    it('refuses the flag nested inside a filter, not only at the top of one', async () => {
+      const a = await northwind();
+      const withoutTheGrant = { companyId: a.session.company.id, grants: new Set<string>() };
+
+      await app.tenancy.runInCompany(withoutTheGrant, async () => {
+        await expect(
+          app.scoped.employee.findMany({
+            where: { AND: [{ confidential: true }, { name: { contains: 'a' } }] },
+          }),
+        ).rejects.toBeInstanceOf(RestrictedRecordError);
+
+        await expect(
+          app.scoped.employee.findMany({
+            where: { OR: [{ name: 'Ada' }, { NOT: { confidential: false } }] },
+          }),
+        ).rejects.toBeInstanceOf(RestrictedRecordError);
+
+        // And through a relation, which reaches the same rows by a longer route.
+        await expect(
+          app.scoped.payRunLine.findMany({
+            where: { employee: { is: { confidential: true } } },
+          }),
+        ).rejects.toBeInstanceOf(RestrictedRecordError);
+      });
+    });
   });
 
   describe('the calculation the stub exists to have', () => {
@@ -526,7 +566,10 @@ describe('tenant scoping', () => {
 
       // 48000 × 31 ÷ 365, to the penny — arithmetic on decimals rather than on doubles,
       // which is the rule the spec sets for money and this is the first module to hold it.
-      expect(payRun.lines[0]?.grossPay).toBe('4076.71');
+      expect(payRun.lines[0]?.grossPay).toEqual({
+        amount: '4076.71',
+        currency: DEFAULT_CURRENCY,
+      });
       expect(payRun.periodStart).toBe('2026-07-01');
       expect(payRun.periodEnd).toBe('2026-07-31');
     });

@@ -1,13 +1,9 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
-import {
-  AUTH_ROUTE,
-  type AuthenticatedSession,
-  type Session,
-  type SignInRequest,
-  type SignUpRequest,
-} from '@erp/shared';
+import { AUTH_ROUTE, type AuthenticatedSession, type Session } from '@erp/shared';
 import { CurrentSession, Public, type RequestSession } from '../../platform/auth';
+import { validated, type Valid } from '../../platform/validation';
 import { IdentityService } from './identity.service';
+import { SignInBody, SignUpBody } from './schemas';
 
 /**
  * The four things a caller can do about who they are.
@@ -20,6 +16,10 @@ import { IdentityService } from './identity.service';
  * The path comes from the shared contract rather than being spelled out here, so the client
  * and the server cannot drift: changing it is a type error in both workspaces rather than a
  * 404 in production.
+ *
+ * What a body is allowed to be is declared on the parameter, in `schemas.ts`, and the service
+ * below is handed values that have already passed. It never sees a `Partial<…>` and has no
+ * branch for a field that might not be there.
  */
 @Controller(AUTH_ROUTE)
 export class IdentityController {
@@ -28,14 +28,18 @@ export class IdentityController {
   @Public()
   @Post('sign-up')
   @HttpCode(HttpStatus.CREATED)
-  async signUp(@Body() body: Partial<SignUpRequest>): Promise<AuthenticatedSession> {
+  async signUp(
+    @Body(validated(SignUpBody)) body: Valid<typeof SignUpBody>,
+  ): Promise<AuthenticatedSession> {
     return this.identity.signUp(body);
   }
 
   @Public()
   @Post('sign-in')
   @HttpCode(HttpStatus.OK)
-  async signIn(@Body() body: Partial<SignInRequest>): Promise<AuthenticatedSession> {
+  async signIn(
+    @Body(validated(SignInBody)) body: Valid<typeof SignInBody>,
+  ): Promise<AuthenticatedSession> {
     return this.identity.signIn(body);
   }
 

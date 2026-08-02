@@ -40,6 +40,19 @@ export interface Factories {
     name: string;
     email: string;
   }) => Promise<{ id: string }>;
+
+  /**
+   * Fills a company's payroll with however many people a test needs.
+   *
+   * There is no endpoint for this and there should not be: employees are added one at a
+   * time by somebody typing. The state is needed to assert that a list stays responsive
+   * with several thousand records, and reaching it through the API would mean several
+   * thousand HTTP round trips to set up one test.
+   *
+   * Names are zero-padded so alphabetical order and insertion order agree, which is what
+   * lets a test say what should be on page two hundred without reading the whole table.
+   */
+  fillPayroll: (input: { companyId: string; count: number }) => Promise<void>;
 }
 
 export function createFactories(prisma: PrismaClient): Factories {
@@ -62,6 +75,19 @@ export function createFactories(prisma: PrismaClient): Factories {
           passwordHash: owner.passwordHash,
         },
         select: { id: true },
+      });
+    },
+
+    fillPayroll: async ({ companyId, count }) => {
+      const width = String(count).length;
+
+      await prisma.employee.createMany({
+        data: Array.from({ length: count }, (_, index) => ({
+          companyId,
+          name: `Employee ${String(index + 1).padStart(width, '0')}`,
+          // Varied so a sort on the column has real work to do rather than a single value.
+          annualSalary: (30000 + (index % 5000)).toFixed(2),
+        })),
       });
     },
   };

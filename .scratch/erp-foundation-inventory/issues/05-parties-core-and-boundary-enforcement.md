@@ -45,3 +45,25 @@ against imagined modules — but expect a short cleanup pass over the two module
 - [ ] Adding a role does not require changing the Parties module
 - [ ] Backend tests cover creation, roles, search, deactivation, merging and isolation
 - [ ] Frontend tests cover the list, the forms, role management and the empty state
+
+## Comments
+
+**2026-08-02 — two things ticket 04 left for the conformance pack.**
+
+The pack is this ticket's, and ticket 04 produced the first two rules it should carry. Both
+are conventions today, enforced by nothing.
+
+- **Every list endpoint returns `ListResponse<T>` and accepts the platform's parameters.** A
+  module declares a `ListSpec` and calls `listQuery`; one that hand-rolled a `?limit=` would
+  compile and would break the shared table. `docs/api-conventions.md` describes the shape.
+- **Every handler taking a body declares its validator.** `@Body(validated(Schema))` is
+  per-parameter rather than a global pipe, because request shapes are interfaces in the shared
+  contract and do not survive to runtime — so a handler that forgets it gets an unchecked
+  body. It is the same bargain `@Public()` strikes, and it wants the same treatment: visible,
+  and checked by something.
+
+Ticket 04 also predates the boundary rules, so it is part of the cleanup pass this ticket
+already owns. Two things to look at when the rules land: `platform/list` and
+`platform/validation` are platform rather than module code and should be importable by any
+module, and `@erp/shared/ui` is a second entry point on the shared package that the backend
+must never import.

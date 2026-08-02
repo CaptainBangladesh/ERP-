@@ -1,3 +1,6 @@
+import type { ListResponse } from '../../http/list.js';
+import type { MoneyValue } from '../../numeric/money.js';
+
 /**
  * The hrm module's wire contract — the shape stub's paths, bodies, responses and refusals.
  *
@@ -5,10 +8,11 @@
  * shape is payroll's: a calculation run over a period rather than a reaction to an event, a
  * sensitive personal field, and records that are written once and never edited.
  *
- * Money crosses the wire as a decimal *string*. A JSON number is an IEEE 754 double and
- * cannot hold every value a `numeric` column can, so serialising a salary as one would lose
- * pennies somewhere between the database and the screen. The spec fixes this for stock
- * valuation too; the stub adopts it first because it is the first module with money in it.
+ * Money crosses the wire as a `MoneyValue` — a decimal *string* and the currency it is in.
+ * A JSON number is an IEEE 754 double and cannot hold every value a `numeric` column can, so
+ * serialising a salary as one would lose pennies somewhere between the database and the
+ * screen; and an amount without its currency is a number whose meaning depends on who is
+ * reading it. Ticket 04 made both rules the platform's rather than this module's.
  */
 
 export const HRM_MODULE = 'hrm';
@@ -40,10 +44,34 @@ export const HRM_PAY_GRANT = 'hrm:pay:read';
  */
 export const HRM_CONFIDENTIAL_GRANT = 'hrm:employees:read-confidential';
 
+/**
+ * The fields a caller may sort, filter or search the employee list by.
+ *
+ * Named here rather than as string literals on either side, because the backend's list
+ * declaration and the frontend's table columns have to agree on them: a rename should be a
+ * type error in both workspaces rather than a list that quietly stops sorting.
+ *
+ * `annualSalary` is on the list *and* is restricted. That is deliberate, and it is the case
+ * ticket 04 had to settle: it sorts for somebody holding `HRM_PAY_GRANT`, and answers 403
+ * with `field_restricted` for anybody else. See ADR 0004.
+ */
+export const EMPLOYEE_FIELDS = {
+  name: 'name',
+  annualSalary: 'annualSalary',
+  confidential: 'confidential',
+  createdAt: 'createdAt',
+} as const;
+
+export const PAY_RUN_FIELDS = {
+  periodStart: 'periodStart',
+  periodEnd: 'periodEnd',
+  calculatedAt: 'calculatedAt',
+} as const;
+
 export interface CreateEmployeeRequest {
   name: string;
-  /** A decimal string, e.g. `'48000.00'`. */
-  annualSalary: string;
+  /** A `MoneyValue`, or bare decimal text in the company's own currency. */
+  annualSalary: MoneyValue | string;
   /** Marks the whole record restricted. Requires `HRM_CONFIDENTIAL_GRANT` to set. */
   confidential?: boolean;
 }
@@ -57,7 +85,7 @@ export interface EmployeeResponse {
    * a list of colleagues is useful to somebody who may not see what they earn, and a client
    * that had to handle a missing key differently from a null would handle it wrong once.
    */
-  annualSalary: string | null;
+  annualSalary: MoneyValue | null;
 }
 
 /**
@@ -67,7 +95,7 @@ export interface EmployeeResponse {
  */
 export interface UpdateEmployeeRequest {
   name?: string;
-  annualSalary?: string;
+  annualSalary?: MoneyValue | string;
   confidential?: boolean;
 }
 
@@ -82,25 +110,28 @@ export interface PayRunLineResponse {
   employeeId: string;
   employeeName: string;
   /** `null` when the caller may not see pay, as with `EmployeeResponse.annualSalary`. */
-  grossPay: string | null;
+  grossPay: MoneyValue | null;
 }
 
-export interface PayRunResponse {
+/** A pay run without its lines, which is what a list of them carries. */
+export interface PayRunSummary {
   id: string;
   periodStart: string;
   periodEnd: string;
   calculatedAt: string;
+}
+
+export interface PayRunResponse extends PayRunSummary {
   lines: PayRunLineResponse[];
 }
 
-export interface PayRunListResponse {
-  /** Newest period first. Ticket 04 gives every list endpoint one pagination shape. */
-  payRuns: Omit<PayRunResponse, 'lines'>[];
-}
+/**
+ * Both lists are the one envelope, as every list endpoint in every module is. The named
+ * aliases exist so a screen can say what it expects; there is no second shape behind them.
+ */
+export type EmployeeListResponse = ListResponse<EmployeeResponse>;
 
-export interface EmployeeListResponse {
-  employees: EmployeeResponse[];
-}
+export type PayRunListResponse = ListResponse<PayRunSummary>;
 
 export const HRM_ERROR_CODES = {
   /** Calculating a pay run reads salaries, so it is refused outright without the grant. */

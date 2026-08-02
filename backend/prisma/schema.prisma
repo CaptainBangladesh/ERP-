@@ -116,6 +116,14 @@ model Employee {
   payRunLines PayRunLine[]
 
   @@index([companyId])
+  /// The employee list's default order, within a company.
+  ///
+  /// Paging is offset-based (ADR 0004), and an offset is only cheap when the sort it walks is
+  /// an index walk — otherwise the database sorts the whole company's rows to answer for
+  /// twenty-five of them. Every list endpoint's default sort wants one of these; this is the
+  /// first, and the pattern is `(company_id, <default sort column>)` because the company
+  /// filter is always present.
+  @@index([companyId, name])
   @@map("employees")
 }
 

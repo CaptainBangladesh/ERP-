@@ -15,28 +15,28 @@ shared package. Anything with rules, tables or screens is a module instead.
 
 **Blocked by:** 03 — Tenant scoping, and the HRM shape stub
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] One list response shape is used by all list endpoints, carrying items and paging information
-- [ ] One error response shape carries a machine-readable code and a human-readable message
-- [ ] Validation failures identify the offending fields
-- [ ] Search, filter, sort and pagination follow one convention across all modules
-- [ ] Request and response types live in the shared package and are used by both workspaces
-- [ ] A shared table component provides sorting, filtering and paging with hand-written markup
-- [ ] The table is built on headless logic only; nothing renders markup or CSS on our behalf
-- [ ] Server data is managed by a shared query layer providing caching and refresh after changes
-- [ ] Screens show distinct empty, loading and error states, with empty guiding the first action
-- [ ] The list stays responsive with several thousand records
-- [ ] Monetary values and quantities are stored and computed with exact precision, never floating
+- [x] One list response shape is used by all list endpoints, carrying items and paging information
+- [x] One error response shape carries a machine-readable code and a human-readable message
+- [x] Validation failures identify the offending fields
+- [x] Search, filter, sort and pagination follow one convention across all modules
+- [x] Request and response types live in the shared package and are used by both workspaces
+- [x] A shared table component provides sorting, filtering and paging with hand-written markup
+- [x] The table is built on headless logic only; nothing renders markup or CSS on our behalf
+- [x] Server data is managed by a shared query layer providing caching and refresh after changes
+- [x] Screens show distinct empty, loading and error states, with empty guiding the first action
+- [x] The list stays responsive with several thousand records
+- [x] Monetary values and quantities are stored and computed with exact precision, never floating
       point, and quantities support fractional amounts
-- [ ] Currency is carried with monetary values rather than assumed
-- [ ] Arithmetic across differing currencies is refused rather than silently wrong
-- [ ] Rounding happens only at explicit, defined points
-- [ ] Values survive database to API to browser and back without alteration
-- [ ] Shared input and display components format and validate these types consistently
-- [ ] Backend tests cover paging, filtering, sorting, the error shape, and precision across long
+- [x] Currency is carried with monetary values rather than assumed
+- [x] Arithmetic across differing currencies is refused rather than silently wrong
+- [x] Rounding happens only at explicit, defined points
+- [x] Values survive database to API to browser and back without alteration
+- [x] Shared input and display components format and validate these types consistently
+- [x] Backend tests cover paging, filtering, sorting, the error shape, and precision across long
       sequences of arithmetic
-- [ ] Frontend tests cover rendering, sorting, filtering, paging, and the three states
+- [x] Frontend tests cover rendering, sorting, filtering, paging, and the three states
 
 ## Comments
 
@@ -82,3 +82,92 @@ an archaeology exercise.
 withholds a restricted field, Prisma's generated row type still says the column is there, so
 the value is `undefined` at runtime against a non-optional type. Any shared serialiser for
 money has to survive that.
+
+**2026-08-02 — the four decisions this ticket had to make, and where they went.**
+
+All four are written up in `docs/adr/0004-list-envelope-sort-filter-and-exact-numbers.md`,
+with the alternatives and the triggers to revisit. In brief:
+
+- **A caller naming a restricted column gets a 403** with the code `field_restricted`, naming
+  the field — the question the comment above handed over. Not a 422, which would report a
+  refusal as a typo, and not a silent drop. Nothing in the list convention knows which fields
+  are restricted: the tenancy extension refuses and `ApiExceptionFilter` translates, so the
+  restriction table stays in one file. `RestrictedFieldError` and `RestrictedRecordError`
+  therefore became the only two tenancy refusals that are not a 500.
+- **Paging is offset-and-total, overturning the spec's proposed default of cursors.** The
+  deliverable is a table a user drives, and "page 3 of 12" and a row count are what it shows;
+  neither is expressible with a cursor. The revisit trigger is a list expected past roughly a
+  hundred thousand rows per company — the ledger in ticket 09 is the first candidate.
+- **Exact numbers are hand-rolled fixed point over `bigint`**, no dependency. `plus`, `minus`
+  and `times` are exact; `dividedBy` and `round` have no overload without a scale and a
+  rounding mode, so "rounding only at explicit points" is a signature rather than a comment.
+- **Currency comes from a constant**, not from a column. Recorded as a gap against ticket 14 —
+  see below.
+
+**2026-08-02 — what this ticket replaced, and what it moved.**
+
+The three things ticket 03 listed are gone: both hand-written `validation.ts` files, the two
+placeholder list shapes (`EmployeeListResponse` and `PayRunListResponse` are now
+`ListResponse<T>`), and `hrm.service.ts`'s private `money()` helper — replaced by `Money`,
+which handles the withheld-field edge that helper documented, in one place for every module.
+
+Two things moved rather than being written new. `Field` and `FormError` moved from
+`application/src/modules/identity/components/` into `@erp/shared/ui`, which ticket 03's own
+comment said would happen "when a second module needs a form" — `MoneyInput` is built on
+`Field` rather than beside it. And the hrm manifest gained its first navigation entry, so the
+stub now has a screen; it is the right one to prove the conventions against, because its list
+has a column most callers may not read.
+
+`@erp/shared/ui` is a second entry point on the shared package rather than a new workspace, so
+the backend keeps importing `@erp/shared` without acquiring React. `application`'s `pretest`
+now rebuilds the shared package, because the frontend suite runs against its compiled output.
+
+**2026-08-02 — deferred, and to where.**
+
+- **Currency is stored nowhere.** `Money` carries it on the wire, in the type, and refuses
+  cross-currency arithmetic — but a newly created value takes its currency from
+  `DEFAULT_CURRENCY` rather than from the company. Multi-currency is out of scope per the
+  spec, so the constant is honest rather than a shortcut, and moving the assumption to a
+  stored column is a change to one constant's callers rather than to the type. Recorded
+  against ticket 14.
+- **A handler that forgets `@Body(validated(…))` gets an unchecked body.** The pipe is
+  declared per parameter because request shapes are interfaces in the shared contract and do
+  not survive to runtime, so there is no class for a global pipe to read. The same bargain as
+  `@Public()`, and made in the same place — visible on the handler. Ticket 05's conformance
+  pack is where it becomes a test rather than a convention.
+- **`QuantityInput`, `QuantityText` and `formatQuantity` ship with no consumer.** The
+  criterion is "shared input and display components format and validate *these types*", and
+  quantities are one of the two; their first real caller is stock movements in ticket 09. They
+  are not untested machinery, though — `ExactField` underneath them is what `MoneyInput` uses
+  and is covered through it, and only the scale differs.
+
+**2026-08-02 — what `/code-review` found, and what changed because of it.**
+
+One real bug, in the tenancy platform rather than in this ticket's new code, and it
+contradicted this ticket's own ADR. `hideRestrictedRows` checked for the restricted-record
+flag only at the **top level** of a `where`. The list convention nests filters under an `AND`
+whenever a search is present, so `?filter.confidential=true&search=ada` slipped past the
+check, had the platform's own `confidential: false` ANDed onto it, and came back **200 with no
+rows** — the silent drop ADR 0004 rejects in as many words. It is now checked by the same walk
+that checks restricted *fields*, so it holds inside `AND`, `OR`, `NOT` and across a relation.
+Covered at both seams.
+
+The rest were smaller and are all fixed:
+
+- The employee list had no index behind its default sort, so the ADR's claim that "the indexes
+  that make the sort fast make the offset fast too" was unbacked — the 5,000-row test passed
+  by sorting in memory. Added `employees(company_id, name)`, and the ADR now states the
+  obligation rather than assuming it.
+- Frontend filtering was a `filters` slot with no consumer and no test, against two criteria
+  that name filtering. The screen now has an "Added since" control on
+  `filter.createdAt.gte`, with tests for it and for clearing it back to the empty state
+  rather than the no-matches one.
+- `SearchBox` hard-coded `id="list-search"`, so two tables on one screen would have shared a
+  DOM id and mislabelled one of them. Generated with `useId` now.
+- `README.md` still said there were two exceptions to the test-seam rule while this ticket
+  added a third (`numeric.spec.ts`); the `DataTable` example in `docs/api-conventions.md`
+  omitted two required props; and the doc and the component disagreed about three states
+  versus four. All three corrected.
+- Duplicated sort-order construction extracted; `emptyPage` given the call site it was written
+  for; `filterableFields` put to use, so a rejected filter now lists the ones that work, as a
+  rejected sort already did.

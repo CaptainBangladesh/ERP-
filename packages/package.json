@@ -14,15 +14,42 @@
         "types": "./dist/cjs/index.d.ts",
         "default": "./dist/cjs/index.js"
       }
+    },
+    "./ui": {
+      "import": {
+        "types": "./dist/esm/ui/index.d.ts",
+        "default": "./dist/esm/ui/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/ui/index.d.ts",
+        "default": "./dist/cjs/ui/index.js"
+      }
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.esm.json && node scripts/write-esm-marker.mjs",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "peerDependencies": {
+    "@tanstack/react-table": "^8.0.0",
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/react-table": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@tanstack/react-table": "^8.21.3",
+    "@types/react": "^19.0.7",
+    "react": "^19.0.0",
     "typescript": "^5.7.3"
   }
 }

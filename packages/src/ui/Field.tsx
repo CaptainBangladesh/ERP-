@@ -9,8 +9,9 @@ import { useState, type Ref } from 'react';
  * The accessibility wiring is the point of extracting it. `aria-invalid` and
  * `aria-describedby` are what make a validation message reach somebody using a screen
  * reader, and they are exactly the two attributes that get forgotten when every form writes
- * its own inputs. Ticket 04 moves this into the shared workspace when a second module needs
- * a form.
+ * its own inputs. Ticket 03 wrote it inside identity and said it would move here when a
+ * second module needed a form; ticket 04 is that move, and `MoneyInput` and `QuantityInput`
+ * are built on it rather than beside it.
  *
  * A `password` field gets its reveal toggle here rather than from whoever renders it, so
  * every password input in every later module has one by construction. A component that had
@@ -27,6 +28,8 @@ export function Field({
   type = 'text',
   autoComplete,
   inputRef,
+  prefix,
+  inputMode,
 }: {
   id: string;
   label: string;
@@ -38,6 +41,14 @@ export function Field({
   type?: 'text' | 'email' | 'password';
   autoComplete?: string;
   inputRef?: Ref<HTMLInputElement>;
+  /**
+   * Fixed text inside the box, ahead of what is typed — a currency symbol, and so far
+   * nothing else. `aria-hidden`, because it is part of the field's meaning rather than a
+   * second thing to announce, and the label already carries that meaning.
+   */
+  prefix?: string;
+  /** The keyboard a phone offers. `decimal` for an amount, so the point is reachable. */
+  inputMode?: 'decimal' | 'numeric';
 }) {
   const [revealed, setRevealed] = useState(false);
   /**
@@ -63,12 +74,22 @@ export function Field({
       </label>
 
       <div className="relative">
+        {prefix && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-slate-500"
+          >
+            {prefix}
+          </span>
+        )}
+
         <input
           id={id}
           name={id}
           ref={inputRef}
           type={isPassword && revealed ? 'text' : type}
           value={value}
+          inputMode={inputMode}
           autoComplete={autoComplete}
           // A revealed password is an ordinary text box as far as the browser is
           // concerned, so the helpfulness has to be switched off by hand — otherwise it
@@ -88,6 +109,10 @@ export function Field({
             setFocused(false);
             onBlur?.();
           }}
+          // The left padding clears the prefix when there is one. Measured in characters
+          // rather than pixels so a two-character code — `Kč`, or a bare `USD` where no
+          // narrow symbol exists — does not sit under the caret.
+          style={prefix ? { paddingLeft: `${prefix.length + 1.5}ch` } : undefined}
           className={`w-full rounded-md border py-2 pl-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-900/20 ${
             isPassword ? 'pr-11' : 'pr-3'
           } ${error ? 'border-red-500' : 'border-slate-300'}`}

@@ -41,6 +41,14 @@ export const ERROR_CODES = {
   unauthenticated: 'unauthenticated',
   sessionExpired: 'session_expired',
   validationFailed: 'validation_failed',
+  /**
+   * A caller named a field they may not read — in a sort, in a filter, or in a search.
+   *
+   * Distinct from `validation_failed` because the request was not malformed: the field is
+   * real and the endpoint does sort by it, for somebody with the grant. Telling this caller
+   * it was an invalid field name would be a refusal disguised as a typo. ADR 0004.
+   */
+  fieldRestricted: 'field_restricted',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

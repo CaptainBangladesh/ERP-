@@ -10,8 +10,7 @@ import {
 import { ApiFailure, api } from '../../../api/client';
 import { useSession } from '../../../session/SessionProvider';
 import { linkProps, navigate } from '../../../app/location';
-import { Field } from '../components/Field';
-import { FormError } from '../components/FormError';
+import { Field, FormError } from '@erp/shared/ui';
 import { PasswordStrength } from '../components/PasswordStrength';
 
 /**

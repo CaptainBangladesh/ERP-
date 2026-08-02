@@ -7,7 +7,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import type { ApiError } from '@erp/shared';
+import { ERROR_CODES, type ApiError } from '@erp/shared';
+import { RestrictedFieldError, RestrictedRecordError } from '../platform/tenancy';
 import { ApiException } from './api-exception';
 import { FieldException } from './validation-exception';
 
@@ -43,6 +44,31 @@ export class ApiExceptionFilter implements ExceptionFilter {
       response.status(exception.getStatus()).json({
         code: exception.code,
         message: exception.message,
+      } satisfies ApiError);
+      return;
+    }
+
+    /**
+     * A caller asked for a field they may not read.
+     *
+     * The only tenancy refusal that reaches a client as anything but a 500, and it became one
+     * the moment a list endpoint started taking field names from a query string:
+     * `?sort=annualSalary` is a URL a user can type, and an unhandled failure is the wrong
+     * answer to it. It is a 403 rather than a 422 because the request was not malformed —
+     * the field is real and the endpoint does sort by it, for somebody holding the grant.
+     *
+     * The developer-facing message is still logged in full below the response, because a
+     * module naming a restricted field in code that a caller never touched is a bug and the
+     * 403 alone would not say so. See ADR 0004.
+     */
+    if (
+      exception instanceof RestrictedFieldError ||
+      exception instanceof RestrictedRecordError
+    ) {
+      this.logger.warn(exception.message);
+      response.status(HttpStatus.FORBIDDEN).json({
+        code: ERROR_CODES.fieldRestricted,
+        message: `You do not have access to '${exception.field}'.`,
       } satisfies ApiError);
       return;
     }
