@@ -193,7 +193,14 @@ so every money serialiser goes through `Money.wire`, which handles that in one p
 ```
 
 `@erp/shared/ui` — a **separate entry point**, so the Nest backend can import `@erp/shared`
-without acquiring React. The table is TanStack Table's headless logic with hand-written
+without acquiring React.
+
+> **Tailwind cannot see it by default.** It skips `node_modules`, and this package resolves
+> through `node_modules` — so a class used *only* by a shared component is silently absent
+> from the stylesheet, and the component renders unstyled in exactly that one respect.
+> `application/src/index.css` carries `@source "../../packages/src/ui"` to fix it. Adding a
+> shared component needs nothing further; **deleting that line breaks every one of them**, and
+> no test catches it, because jsdom renders no CSS. The table is TanStack Table's headless logic with hand-written
 Tailwind markup; `manualSorting`, `manualFiltering` and `manualPagination` are all on, because
 a table that sorted its own page would sort the twenty-five rows it happens to be holding and
 call it a sort of a thousand.

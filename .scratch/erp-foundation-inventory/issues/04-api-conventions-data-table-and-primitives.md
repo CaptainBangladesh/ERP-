@@ -171,3 +171,27 @@ The rest were smaller and are all fixed:
 - Duplicated sort-order construction extracted; `emptyPage` given the call site it was written
   for; `filterableFields` put to use, so a rejected filter now lists the ones that work, as a
   rejected sort already did.
+
+**2026-08-02 — one bug only running the app could find, and it has no test.**
+
+Every check was green — typecheck, both suites, the build — and the screen was still visibly
+wrong: the table's `sr-only` caption rendered as a stray word above the header, the search box
+and its button overlapped, and the amounts lost `tabular-nums`.
+
+One cause. Tailwind scans the project for class names and deliberately skips `node_modules`,
+and `@erp/shared/ui` resolves through `node_modules` to the shared package's build output — so
+every class used *only* by a shared component was missing from the stylesheet. Classes that
+happen to be used in `application/` as well kept working, which is what made one cause look
+like three unrelated glitches. Fixed with `@source "../../packages/src/ui"` in
+`application/src/index.css`; the stylesheet went from 9.1 kB to 14.9 kB, which is the size of
+what had been silently dropped.
+
+**It is not covered by a test, and deliberately not.** The obvious assertion — that the
+caption carries `sr-only` — passes just as happily *before* the fix, because jsdom renders no
+real CSS and the class was always in the markup. A test that cannot fail for the reason it
+claims to exist is worse than none. What guards it is the comment in `index.css`, and the fact
+that this is now a known failure mode for the next module that adds a shared component.
+
+The general lesson for later tickets: **`@erp/shared/ui` is invisible to Tailwind by default.**
+Every new shared component's classes depend on that one `@source` line, and the failure is
+silent.

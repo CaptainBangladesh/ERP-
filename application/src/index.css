@@ -1,1 +1,17 @@
 @import 'tailwindcss';
+
+/*
+  The shared components' classes, which Tailwind would otherwise never see.
+
+  Tailwind scans the project for class names and deliberately skips `node_modules` — and
+  `@erp/shared/ui` resolves through `node_modules` to the shared package's build output. So
+  every class used *only* by a shared component is absent from the stylesheet: the data
+  table's `sr-only` caption renders visibly, its amounts lose `tabular-nums`, and the search
+  box loses its layout. Classes that happen to be used in this workspace as well keep
+  working, which is what makes the failure look like a handful of unrelated glitches rather
+  than one cause.
+
+  Pointed at the TypeScript source rather than the build output, so it holds before the
+  shared package has been built and picks up a class added to a component without a rebuild.
+*/
+@source "../../packages/src/ui";
