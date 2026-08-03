@@ -29,6 +29,20 @@ export interface ListField {
    * date column would return rows nobody can explain.
    */
   readonly searchable?: boolean;
+  /**
+   * The field lives on a related table rather than on this one, and a filter on it means
+   * "has at least one related row where…".
+   *
+   * `{ relation: 'roles', field: 'role' }` turns `?filter.role=customer` into
+   * `roles: { some: { role: { equals: 'customer' } } }`. Which table a value is stored in is
+   * not something the person operating a list screen should have to know: parties are
+   * filtered by role, and whether a role is a column or a row is the module's business.
+   *
+   * Filtering only. Sorting a list by a field that may occur several times per row has no
+   * single answer, and searching one would widen the search box's meaning to "anything
+   * related", so both are refused rather than guessed at.
+   */
+  readonly via?: { readonly relation: string; readonly field: string };
 }
 
 export interface ListSpec {
@@ -56,7 +70,7 @@ export const OPERATORS_BY_TYPE = {
 
 export function sortableFields(spec: ListSpec): string[] {
   return Object.entries(spec.fields)
-    .filter(([, field]) => field.sortable)
+    .filter(([, field]) => field.sortable && !field.via)
     .map(([name]) => name);
 }
 
@@ -68,6 +82,6 @@ export function filterableFields(spec: ListSpec): string[] {
 
 export function searchableFields(spec: ListSpec): string[] {
   return Object.entries(spec.fields)
-    .filter(([, field]) => field.searchable && field.type === 'text')
+    .filter(([, field]) => field.searchable && field.type === 'text' && !field.via)
     .map(([name]) => name);
 }

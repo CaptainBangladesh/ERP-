@@ -35,6 +35,7 @@ function manifest(
     nestModule: StubNestModule,
     routes: [`api/${name}`],
     migrations: [],
+    models: [],
     permissions: [],
     navigation: [],
     events: { emits: [], consumes: [] },

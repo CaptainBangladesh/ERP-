@@ -27,6 +27,16 @@ export interface TestApp {
    */
   scoped: ScopedPrisma;
   tenancy: Tenancy;
+  /**
+   * The running application, for resolving a module's *public surface*.
+   *
+   * The narrow and only legitimate use is a contract other modules consume — `PartyDirectory`
+   * — which cannot be driven over HTTP because there is no endpoint for it and the consumer
+   * is a module that does not exist yet. Resolve the abstract class a real consumer would
+   * inject, never a service: a test reaching for `PartiesService` here would be a test
+   * asserting against internals the boundary rules exist to keep unreachable.
+   */
+  nest: INestApplication;
   close: () => Promise<void>;
 }
 
@@ -60,6 +70,7 @@ export async function createTestApp(): Promise<TestApp> {
     prisma,
     scoped: app.get<ScopedPrisma>(SCOPED_PRISMA),
     tenancy: app.get(Tenancy),
+    nest: app,
     close: async () => {
       await app.close();
     },

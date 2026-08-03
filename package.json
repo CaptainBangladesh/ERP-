@@ -16,6 +16,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check:modules": "npm run check:modules --workspace backend",
     "check:tenancy": "npm run check:tenancy --workspace backend",
+    "check:conformance": "npm run check:conformance --workspace backend",
     "test": "npm run test --workspaces --if-present",
     "test:backend": "npm run test --workspace backend",
     "test:app": "npm run test --workspace application",

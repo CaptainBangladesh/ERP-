@@ -47,6 +47,13 @@ export const manifest: ModuleManifest = {
   ],
 
   /**
+   * The stub's three tables, and a claim as much as a declaration: nothing outside hrm may
+   * query them. An `Employee` here is not a `User` and not a `Party`, and a module wanting
+   * to know who somebody is asks parties rather than reading a payroll record.
+   */
+  models: ['Employee', 'PayRun', 'PayRunLine'],
+
+  /**
    * The last two are the ones that matter, and neither is only checked at an endpoint. The
    * platform holds them as grants in `platform/tenancy/company-owned.ts` — one on two
    * restricted columns, one on the column marking a whole employee record confidential — so

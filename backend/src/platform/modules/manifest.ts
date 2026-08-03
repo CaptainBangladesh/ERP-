@@ -44,6 +44,20 @@ export interface ModuleManifest {
    */
   readonly migrations: readonly string[];
 
+  /**
+   * The Prisma models this module owns, by their schema names — `Party`, not `parties`.
+   *
+   * Ownership of a *table* is a different claim from ownership of the migration that
+   * created it, and it is the one the boundary check needs: "a module may not query another
+   * module's tables" has no meaning until every table has exactly one owner. Declared here
+   * rather than inferred from the schema's section comments, because a comment is not
+   * something a build can refuse.
+   *
+   * Every model in `schema.prisma` must be claimed by exactly one module, and a module may
+   * not claim one that does not exist. Both are checked by `npm run check:modules`.
+   */
+  readonly models: readonly string[];
+
   /** Permissions the module introduces, each `<name>:<resource>:<action>`. */
   readonly permissions: readonly string[];
 
@@ -90,6 +104,8 @@ export interface AssembledModules {
   readonly migrations: readonly string[];
   readonly routes: readonly string[];
   readonly permissions: readonly string[];
+  /** Every model in the application, and the module that owns it. */
+  readonly modelOwners: Readonly<Record<string, string>>;
   readonly navigation: readonly AssembledNavigationEntry[];
   readonly events: {
     readonly emitted: readonly string[];

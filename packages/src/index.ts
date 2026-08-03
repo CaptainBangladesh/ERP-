@@ -25,3 +25,4 @@ export * from './modules/tier.js';
 export * from './modules/navigation.js';
 export * from './modules/identity/contract.js';
 export * from './modules/hrm/contract.js';
+export * from './modules/parties/contract.js';

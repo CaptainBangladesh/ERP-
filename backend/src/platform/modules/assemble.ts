@@ -8,6 +8,8 @@ import type {
 
 const MODULE_NAME = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const PERMISSION = /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/;
+/** A Prisma model name, as it is written in the schema. */
+const MODEL_NAME = /^[A-Z][A-Za-z0-9]*$/;
 
 /**
  * Turns a set of manifests into an application, or refuses to.
@@ -36,6 +38,7 @@ export function assembleModules(manifests: readonly ModuleManifest[]): Assembled
   checkEventsAreDeclared(ordered, byName);
 
   const migrations = orderMigrations(ordered, byName);
+  const modelOwners = ownersOfModels(ordered);
 
   return {
     manifests: ordered,
@@ -43,6 +46,7 @@ export function assembleModules(manifests: readonly ModuleManifest[]): Assembled
     migrations,
     routes: ordered.flatMap((m) => [...m.routes]),
     permissions: ordered.flatMap((m) => [...m.permissions]).sort(),
+    modelOwners,
     navigation: assembleNavigation(ordered),
     events: {
       emitted: unique(ordered.flatMap((m) => [...m.events.emits])).sort(),
@@ -139,6 +143,44 @@ function checkNavigation(manifest: ModuleManifest): void {
       );
     }
   }
+}
+
+/**
+ * Which module owns each table.
+ *
+ * The premise of "a module may not query another module's tables": until every table has
+ * exactly one owner, that rule has nothing to compare against. Two modules claiming one model
+ * is the failure worth catching here — it would make the boundary check answer differently
+ * depending on which manifest was read last.
+ *
+ * That every model in the schema is claimed by *somebody* is checked in `check.ts`, which is
+ * where the datamodel is available. This function only knows what the manifests say.
+ */
+function ownersOfModels(ordered: readonly ModuleManifest[]): Record<string, string> {
+  const owner: Record<string, string> = {};
+
+  for (const manifest of ordered) {
+    for (const model of manifest.models) {
+      if (!MODEL_NAME.test(model)) {
+        throw new ModuleContractError(
+          `Module '${manifest.name}' claims model '${model}', which is not a model name. ` +
+            `Use the name as it is written in schema.prisma — 'Party', not 'parties'.`,
+        );
+      }
+
+      const existing = owner[model];
+      if (existing) {
+        throw new ModuleContractError(
+          `Model '${model}' is claimed by both '${existing}' and '${manifest.name}'. One ` +
+            `module owns a table; the other reaches it through that module's public ` +
+            `surface, or listens for its events.`,
+        );
+      }
+      owner[model] = manifest.name;
+    }
+  }
+
+  return owner;
 }
 
 function checkRoutesAreUnique(ordered: readonly ModuleManifest[]): void {

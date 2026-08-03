@@ -88,6 +88,18 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
       'touches it.',
   },
 
+  // ─── parties ────────────────────────────────────────────────────────────────────────
+  // Ordinary company-owned tables, all three of them, and worth noting for that reason: the
+  // address book is the first module with real business data in it and it needed nothing
+  // from tenancy that was not already there. Nothing is restricted — a colleague who may see
+  // the customer list may see all of it — and nothing is immutable, because a party's
+  // details change and correcting a misspelled name is not an event worth preserving.
+  Party: { kind: 'company-owned' },
+
+  PartyRole: { kind: 'company-owned' },
+
+  PartyAddress: { kind: 'company-owned' },
+
   // ─── hrm ────────────────────────────────────────────────────────────────────────────
   Employee: {
     kind: 'company-owned',
@@ -176,6 +188,35 @@ export function restrictedGrants(): string[] {
   });
 
   return [...new Set(grants)].sort();
+}
+
+/** Every model this file has an opinion about, in the order it states them. */
+export function classifiedModels(): string[] {
+  return Object.keys(CLASSIFICATION);
+}
+
+/**
+ * The grants restricting each model, by model.
+ *
+ * `restrictedGrants()` answers the same question flattened, for the check that every grant is
+ * a permission *somebody* declares. This one keeps the model, because the conformance pack
+ * asks the sharper question: whether the grant is declared by the module that owns the table.
+ * A grant declared by a different module would pass the flat check and still leave the column
+ * restricted by something outside its owner's control.
+ */
+export function grantsByModel(): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(CLASSIFICATION).flatMap(([model, classification]) => {
+      if (classification.kind !== 'company-owned') return [];
+
+      const grants = [
+        ...Object.values(classification.restricted ?? {}),
+        ...(classification.restrictedRows ? [classification.restrictedRows.grant] : []),
+      ];
+
+      return grants.length === 0 ? [] : [[model, [...new Set(grants)].sort()] as const];
+    }),
+  );
 }
 
 /**

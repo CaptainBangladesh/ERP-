@@ -23,6 +23,7 @@ inside a module. Note what is *not* in it — there is no company filter anywher
 
 ```
 backend/src/modules/<name>/
+  index.ts               its public surface — the only file another module may import
   <name>.manifest.ts     what the module declares about itself
   <name>.module.ts       the Nest module
   <name>.controller.ts   its endpoints
@@ -35,13 +36,18 @@ application/src/modules/<name>/
 
 Then:
 
-1. Add your models to `backend/prisma/schema.prisma` under a heading naming your module.
+1. Add your models to `backend/prisma/schema.prisma` under a heading naming your module, and
+   list them in the manifest's `models`. Every model belongs to exactly one module, which is
+   what gives "a module may not query another module's tables" something to compare against.
 2. Classify each new model in `backend/src/platform/tenancy/company-owned.ts` — company-owned
    or explicitly not, with a reason. See [tenancy.md](tenancy.md). The application refuses to
    boot until you have, so this is not a step you can skip by forgetting it.
 3. Generate the migration, and declare its directory name in the manifest's `migrations`.
-4. Run `npm run check:modules`. It will tell you what is wrong with the manifest, by name.
-5. Write the tests: HTTP-level in `backend/test/`, screen-level beside the page component.
+4. Write `index.ts`, exporting what other modules may use — or `export {}` with a sentence
+   saying it offers nothing, which is what identity and hrm do.
+5. Run `npm run check:modules` and `npm run check:conformance`. Between them they will tell
+   you what is wrong, by name, without a database.
+6. Write the tests: HTTP-level in `backend/test/`, screen-level beside the page component.
 
 ## The backend manifest
 
@@ -53,6 +59,7 @@ export const manifest: ModuleManifest = {
   nestModule: ProductsModule,
   routes: ['api/products'],
   migrations: ['20260815120000_products'],
+  models: ['Product', 'ProductVariant'],
   permissions: ['products:products:read', 'products:products:write'],
   navigation: [{ label: 'Products', path: '/products', order: 10,
                  permission: 'products:products:read' }],
@@ -64,10 +71,11 @@ export const manifest: ModuleManifest = {
 | --- | --- |
 | `name` | Lowercase kebab-case, matching the directory. Also the permission namespace and event prefix. |
 | `tier` | `core`, `enterprise`, or `custom`. A module may depend on its own tier or lower, never higher. |
-| `dependsOn` | The modules it may reach. Injecting or listening to anything not named here is a lie the build cannot yet catch, but ticket 05's boundary lint will. |
+| `dependsOn` | The modules it may reach. Importing or listening to anything not named here fails `check:conformance`, naming both modules. |
 | `nestModule` | Composed into the application graph in dependency order, ties broken by tier then name. |
-| `routes` | The API base paths it owns, no leading slash. Two modules claiming one path fails the build. Declared, not derived: the assembler checks routes against each other, not against the controller prefixes that actually mount them, so a manifest can still under- or over-claim. Ticket 05's boundary enforcement is where static verification of that lands. |
+| `routes` | The API base paths it owns, no leading slash. Two modules claiming one path fails the build. Declared, not derived: the assembler checks routes against each other, not against the controller prefixes that actually mount them, so a manifest can still under- or over-claim. |
 | `migrations` | Prisma migration directories it owns. Must exist, must be owned by exactly one module, and must sort after every migration of everything it depends on. Prisma applies them in name order regardless of module, so that check is what makes dependency order real. |
+| `models` | The Prisma models it owns, by their schema names — `Party`, not `parties`. Every model in the schema must be claimed by exactly one module, and a module may not claim one that does not exist. This is what "a module may not query another module's tables" is checked against. |
 | `permissions` | `<name>:<resource>:<action>`, always in the module's own namespace. |
 | `navigation` | Menu entries, assembled and served by `GET /api/navigation`. |
 | `events` | What it emits and consumes. A consumed event must be emitted by a declared dependency. |
@@ -86,10 +94,58 @@ performs the same assembly at boot, so nothing can pass there and fail here.
 - A consumed event no declared dependency emits
 - A migration timestamped before one of its dependencies' migrations
 - A declared migration directory that does not exist
+- A model in `schema.prisma` that no module claims, or a claim on a model that is not there
 
 Every message names the modules involved and what would resolve it. At forty modules,
 "circular dependency detected" costs an afternoon and `identity → parties → identity` costs
 a minute.
+
+## The wall between modules
+
+`npm run check:conformance` runs beside it, also without a database. Where `check:modules`
+reads declarations, this reads source: it is what turns "a module may use another's public
+surface and nothing else" from a sentence here into something the build refuses. ADR 0005
+records why it is a text check rather than a lint plugin or a TypeScript project graph, and
+what would change that.
+
+A module's public surface is `backend/src/modules/<name>/index.ts`. Everything else in the
+directory is internal, including the service — `PartiesModule` exports `PartyDirectory` and
+not `PartiesService`, so there is no way to reach the implementation even with the dependency
+declared.
+
+The pack refuses:
+
+- **an import reaching past another module's `index.ts`** — and names the specifier to use
+  instead;
+- **an import of a module not in `dependsOn`** — an undeclared edge makes the migration
+  ordering and the deletion test describe something other than the code;
+- **a query against a table another module owns** — recognised by the Prisma delegate name;
+  ask that module's public surface, or listen for its events;
+- **a module reaching inside a platform area** — import `platform/tenancy`, not
+  `platform/tenancy/tenant-scope`, so ADR 0003's deferred row-level security can be layered
+  underneath without forty modules changing. (`src/http` and `src/prisma` are flat and have
+  no entry point to reach past.);
+- **the platform importing a module** — it declares a seam and a module binds to it;
+- **the backend importing `@erp/shared/ui`** — the two entry points exist so Nest never
+  acquires React;
+- **one frontend module's screens importing another's** — they share `@erp/shared/ui` or an
+  API, and nothing else;
+- **a domain concept in `@erp/shared`** — the areas are fixed, and a primitive may not import
+  a module's contract;
+- **`companyId` written by a module, or `PrismaService` named by one** — see
+  [tenancy.md](tenancy.md);
+- **an unclassified model, or a restricted column whose grant its own module never declares**;
+- **a named `@Query('…')`, a hand-written `skip`/`take`/`limit`/`offset`, or a
+  `*ListResponse` that is not `ListResponse<T>`** — see
+  [api-conventions.md](api-conventions.md);
+- **a Nest built-in exception or `@Res()`** — refusals are `ApiException` with the module's
+  own code;
+- **`@Body()` without `validated(…)`** — there is no global pipe to fall back on, so an
+  undeclared body is an unchecked one.
+
+Every message names both modules and states the permitted alternative. `backend/test/
+conformance.spec.ts` runs each rule against a module that deliberately breaks it, so the
+pack cannot pass by doing nothing.
 
 ## The subset rule
 
@@ -130,9 +186,11 @@ right failure for a system with no way to tell who anyone is.
 
 ## What a module may not do
 
-- Import another module's internals. Only its public surface, only if declared in
-  `dependsOn`. Ticket 05 makes this a lint failure rather than a convention.
-- Query another module's tables. Ask its public service, or listen for its events.
+All of these are refused by `npm run check:conformance`, described above.
+
+- Import another module's internals. Only its public surface — `index.ts` — and only if
+  declared in `dependsOn`.
+- Query another module's tables. Ask its public surface, or listen for its events.
 - Put a domain concept in `@erp/shared`. That package holds primitives with no business
   meaning, plus each module's wire contract under `modules/<name>/contract.ts` — request and
   response shapes only, so that an API change breaks the build in both workspaces rather

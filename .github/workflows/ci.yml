@@ -65,5 +65,12 @@ jobs:
       # extension over row-level security on exactly this condition.
       - run: npm run check:tenancy
 
+      # The module boundaries, and everything else a module can get wrong quietly: a
+      # cross-module import, a query against somebody else's table, an undeclared dependency,
+      # a hand-rolled list parameter, a body with no validator. Static, so it needs nothing —
+      # and here rather than only in an editor, because a rule enforced by whoever has the
+      # right extension installed is not a property of the codebase. See ADR 0005.
+      - run: npm run check:conformance
+
       - run: npm run build
       - run: npm test

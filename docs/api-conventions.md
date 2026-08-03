@@ -72,6 +72,28 @@ async listEmployees(query: Record<string, unknown>): Promise<EmployeeListRespons
 }
 ```
 
+A field does not have to be a column. `via` puts it on a related table:
+
+```ts
+export const PARTY_LIST: ListSpec = {
+  defaultSort: 'name',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    role: { type: 'text', filterable: true, via: { relation: 'roles', field: 'role' } },
+  },
+};
+```
+
+`?filter.role=customer` becomes `roles: { some: { role: { equals: 'customer' } } }`, and the
+module writes no join. Which table a value is stored in is not something the person operating
+a list screen should have to know — a party is filtered by role, and whether a role is a
+column or a row is the module's business.
+
+Filtering only. A party holds three roles and a list has one order, so sorting is refused
+rather than guessed at, and the refusal says what the list *can* be sorted by. Searching is
+refused for the same reason in reverse: a search box that also matched anything related would
+widen its meaning to something nobody could predict.
+
 Three things are worth noticing about that.
 
 - **`defaultSort` is required.** A list with no default order is a list whose contents shuffle

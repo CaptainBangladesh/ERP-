@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { Prisma } from '@prisma/client';
 import { assembleModules } from './assemble';
 import { discoverManifests } from './discover';
 import { ModuleContractError } from './module-contract-error';
@@ -20,6 +21,7 @@ export function checkModuleContract(): void {
   const assembled = assembleModules(manifests);
 
   checkMigrationsExist(assembled.migrations);
+  checkEveryModelIsOwned(assembled.modelOwners);
 
   const names = assembled.manifests.map((m) => `${m.name} (${m.tier})`);
   process.stdout.write(
@@ -45,6 +47,51 @@ function checkMigrationsExist(migrations: readonly string[]): void {
       );
     }
   }
+}
+
+/**
+ * Every table belongs to a module, and no manifest claims one that is not there.
+ *
+ * The same bargain `platform/tenancy/company-owned.ts` strikes with scoping, for the same
+ * reason: a table nobody owns is a table the boundary check has no opinion about, and a
+ * rule with a silent gap in it is worse than no rule, because people stop reading for the
+ * gap. It lives here rather than in the assembler because it needs the datamodel — which
+ * ships with the generated client and needs no database, so this still runs in CI on nothing.
+ *
+ * A module claiming a model that does not exist is caught with it. Otherwise a renamed model
+ * would leave an ownership claim behind, and the next module to introduce that name would
+ * find it already taken by somebody who no longer has it.
+ */
+function checkEveryModelIsOwned(owners: Readonly<Record<string, string>>): void {
+  const actual = new Set(Prisma.dmmf.datamodel.models.map((model) => model.name));
+
+  const unowned = [...actual].filter((model) => !(model in owners)).sort();
+  if (unowned.length > 0) {
+    throw new ModuleContractError(
+      `${unowned.map(quote).join(', ')} ${unowned.length === 1 ? 'is' : 'are'} in ` +
+        `schema.prisma but claimed by no module. Add ${
+          unowned.length === 1 ? 'it' : 'them'
+        } to the owning module's manifest under 'models' — a table nobody owns is a table ` +
+        `the boundary check cannot refuse a cross-module query against.`,
+    );
+  }
+
+  const absent = Object.entries(owners)
+    .filter(([model]) => !actual.has(model))
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const first = absent[0];
+  if (first) {
+    const [model, module] = first;
+    throw new ModuleContractError(
+      `Module '${module}' claims model '${model}', which is not in schema.prisma. Either ` +
+        `the model was renamed and the manifest was not, or the claim outlived the table.`,
+    );
+  }
+}
+
+function quote(value: string): string {
+  return `'${value}'`;
 }
 
 if (require.main === module) {

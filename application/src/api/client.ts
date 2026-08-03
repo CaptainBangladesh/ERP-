@@ -95,9 +95,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, payload?: unknown) =>
-    request<T>(path, {
-      method: 'POST',
-      body: payload === undefined ? undefined : JSON.stringify(payload),
-    }),
+  post: <T>(path: string, payload?: unknown) => send<T>('POST', path, payload),
+  /**
+   * A partial change. `PATCH` rather than `PUT` throughout, because a screen editing one
+   * field of a record should not have to send back every other field it happens to be
+   * holding — which is how a stale copy overwrites somebody else's edit.
+   */
+  patch: <T>(path: string, payload?: unknown) => send<T>('PATCH', path, payload),
+  /**
+   * Answers with whatever the endpoint answers with, which for this API is usually the
+   * record that was changed rather than nothing: removing one of a party's roles leaves the
+   * party, and a screen that had to re-fetch it would have two chances to disagree.
+   */
+  delete: <T>(path: string) => send<T>('DELETE', path),
 };
+
+function send<T>(method: string, path: string, payload?: unknown): Promise<T> {
+  return request<T>(path, {
+    method,
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+}

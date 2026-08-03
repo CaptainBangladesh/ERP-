@@ -34,6 +34,14 @@ export const manifest: ModuleManifest = {
   migrations: ['20260801000000_identity_companies_users_sessions'],
 
   /**
+   * The three tables identity owns. `Company` is the tenant root every other module's rows
+   * are scoped to, and it is still identity's: the module that creates the company is the
+   * module that owns the table, and everything else reaches a company through the scoping
+   * the platform applies rather than by querying it.
+   */
+  models: ['Company', 'User', 'Session'],
+
+  /**
    * Managing colleagues is user story 17 and arrives with roles in ticket 07. The
    * permission is declared now because the navigation entry that will be guarded by it is
    * declared now, and because declaring it is how the permission model grows without a

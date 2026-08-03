@@ -80,6 +80,124 @@ model Session {
   @@map("sessions")
 }
 
+// ─── parties ────────────────────────────────────────────────────────────────────────
+// Owned by the parties module. See backend/src/modules/parties.
+//
+// One address book for the whole system. The same record is a customer to Sales, a supplier
+// to Purchase and an employee contact to HRM, which is the whole reason it is one Core
+// module rather than four private address books that quietly disagree about an address.
+//
+// As with hrm, `companyId` is a plain column and there is no foreign key to `companies`:
+// keys stay inside a module, and scoping is the tenancy extension's rather than the
+// schema's. Every key below points at another parties table.
+
+/// A person or an organisation the business deals with.
+///
+/// Nothing here says what the party is *for*. That is what roles are, and they are a table
+/// of their own precisely so that a module introducing a role does not change this one.
+model Party {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  /// `person` or `organisation`. Not an enum, because the values are part of the wire
+  /// contract both workspaces bind to, and a Postgres enum would make adding one a
+  /// migration in a system whose whole point is that the set does not grow.
+  kind String
+  /// A person's full name or an organisation's registered name — one column, because a
+  /// search box searches for whatever the user calls them.
+  name  String
+  email String?
+  phone String?
+
+  /// `active`, `inactive` or `merged`. Deactivating rather than deleting is what keeps a
+  /// three-year-old order intelligible; `merged` is set by merging and never by a caller.
+  status String @default("active")
+
+  /// The organisation a person belongs to. Self-referential, and null for an organisation:
+  /// an organisation inside another is a group structure, which is not this ticket's.
+  organisationId String? @map("organisation_id") @db.Uuid
+
+  /// Set when this party turned out to be a duplicate of another.
+  ///
+  /// The row stays rather than being deleted, and this is what makes "history stays intact"
+  /// true rather than aspirational: an order in some later module still names this id, and
+  /// following the pointer answers with the party that survived instead of nothing at all.
+  mergedIntoId String? @map("merged_into_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organisation Party?  @relation("PartyMembership", fields: [organisationId], references: [id], onDelete: SetNull)
+  members      Party[] @relation("PartyMembership")
+  mergedInto   Party?  @relation("PartyMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom   Party[] @relation("PartyMerge")
+
+  roles     PartyRole[]
+  addresses PartyAddress[]
+
+  @@index([companyId])
+  /// The list's default order, within a company — the `(company_id, <default sort>)` shape
+  /// every list endpoint's default sort wants, so that offset paging is an index walk.
+  @@index([companyId, name])
+  @@index([organisationId])
+  @@map("parties")
+}
+
+/// One role a party holds: `customer`, `supplier`, `employee-contact`, or whatever a module
+/// introduces next.
+///
+/// A row rather than a column, and no table of permitted roles anywhere. That is the whole
+/// of "adding a role does not require changing the Parties module": a role exists because
+/// somebody gave it to somebody. A join table would need a `roles` table, and a `roles`
+/// table would need a module that owns which roles exist — which is a decision Sales and
+/// Purchase should each be able to make alone.
+model PartyRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  partyId   String   @map("party_id") @db.Uuid
+  role      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  /// Holding a role twice is not a different fact from holding it once.
+  @@unique([partyId, role])
+  @@index([companyId])
+  /// Answers "which roles are in use here?" without reading the parties themselves.
+  @@index([companyId, role])
+  @@map("party_roles")
+}
+
+/// Somewhere a party can be written to or delivered to.
+///
+/// Several per party, because a supplier's registered office and its warehouse are both
+/// real and neither is the other. Deliberately unstructured beyond the fields below: address
+/// formats differ by country and a schema that insisted on a county would be wrong in most
+/// of the world.
+model PartyAddress {
+  id        String  @id @default(uuid()) @db.Uuid
+  companyId String  @map("company_id") @db.Uuid
+  partyId   String  @map("party_id") @db.Uuid
+  /// What this address is for, in the user's own words: 'Registered office', 'Delivery'.
+  label     String
+  line1     String  @map("line1")
+  line2     String? @map("line2")
+  city      String
+  postcode  String
+  country   String
+  /// The one used when nothing says otherwise. At most one per party, kept so by the module.
+  isPrimary Boolean @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([partyId])
+  @@map("party_addresses")
+}
+
 // ─── hrm ────────────────────────────────────────────────────────────────────────────
 // Owned by the hrm module. See backend/src/modules/hrm.
 //

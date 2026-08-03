@@ -107,7 +107,9 @@ function readSort(
   const { field, descending } = readSortParameter(raw);
 
   const declared = spec.fields[field];
-  if (!declared?.sortable) {
+  // A field on a related table can occur several times per row, so there is no single value
+  // to order by. `sortableFields` leaves it out of the offer for the same reason.
+  if (!declared?.sortable || declared.via) {
     report(
       LIST_PARAMS.sort,
       `You cannot sort by '${field}'. ${offering(sortableFields(spec), 'Sort by')}`,
@@ -204,7 +206,28 @@ function readFilter(
     return undefined;
   }
 
-  return clauseFor(parameter, field, declared, operator, value, report);
+  const condition = clauseFor(parameter, field, declared, operator, value, report);
+  return condition && relate(condition, declared);
+}
+
+/**
+ * A condition on a related table, expressed as one on the row that owns it.
+ *
+ * `role` becomes `roles: { some: { role: … } }`. The rest of the pipeline never learns the
+ * difference: the clause was already built and checked against the field's declared type, and
+ * all this does is say which side of the join it belongs on.
+ *
+ * Nested filters are not seen by the tenancy extension — they are executed as part of their
+ * parent's query — but they are safe for the same reason an `include` is: the parent row was
+ * scoped, and a foreign key cannot point outside its company. See docs/tenancy.md.
+ */
+function relate(condition: Condition, declared: ListField): Condition {
+  if (!declared.via) return condition;
+
+  return {
+    field: declared.via.relation,
+    clause: { some: { [declared.via.field]: condition.clause } },
+  };
 }
 
 function clauseFor(
