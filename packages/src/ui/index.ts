@@ -17,6 +17,7 @@
 export { DataTable, type DataTableProps } from './DataTable.js';
 export { Field } from './Field.js';
 export { FormError } from './FormError.js';
+export { Select } from './Select.js';
 export {
   MoneyInput,
   MoneyText,

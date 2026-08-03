@@ -85,6 +85,52 @@ export function flag(options: { missing: string }): FieldRule<boolean> {
   );
 }
 
+/**
+ * One of a fixed set of words, refused by naming the alternatives.
+ *
+ * Not a `text` rule with a cross-field check afterwards: "person or organisation" is a fact
+ * about the field, and putting it in the rule is what makes the message say what is *allowed*
+ * rather than that something is wrong.
+ *
+ * The allowed set comes from the module's own contract — `PARTY_KINDS`, `CATALOGUE_STATUSES` —
+ * so the values a caller may send and the values the module's screens offer are one list.
+ */
+export function oneOf<T extends string>(
+  allowed: readonly T[],
+  options: { missing: string; invalid: string },
+): FieldRule<T> {
+  return rule(options.missing, (value) => {
+    const given = typeof value === 'string' ? value.trim() : '';
+    if (given.length === 0) return refused(options.missing);
+
+    return (allowed as readonly string[]).includes(given)
+      ? accepted(given as T)
+      : refused(`${options.invalid} Use one of: ${allowed.join(', ')}.`);
+  });
+}
+
+/** A UUID, which is what every identifier in this system is. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * An identifier, checked only for shape.
+ *
+ * Whether the row exists, belongs to this company, and is the right kind of thing are all
+ * questions for the service, which has the database. What this stops is a malformed identifier
+ * reaching Prisma, where an invalid UUID is a 500 rather than a message beside the input.
+ *
+ * The wording stays with the caller because the field is somebody's *choice* of something —
+ * "Choose an organisation." and "Choose a unit of measure." are the same rule and different
+ * sentences.
+ */
+export function identifier(options: { missing: string; invalid: string }): FieldRule<string> {
+  return rule(options.missing, (value) => {
+    const given = typeof value === 'string' ? value.trim() : '';
+    if (given.length === 0) return refused(options.missing);
+    return UUID.test(given) ? accepted(given) : refused(options.invalid);
+  });
+}
+
 export interface DecimalOptions {
   missing: string;
   invalid: string;

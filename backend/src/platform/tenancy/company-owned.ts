@@ -118,6 +118,21 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
     immutable: true,
     restricted: { grossPay: 'hrm:pay:read' },
   },
+
+  // ─── products ───────────────────────────────────────────────────────────────────────
+  // Four ordinary company-owned tables. Nothing is restricted — a colleague who may see the
+  // catalogue may see the cost, because a cost is what the business pays rather than what a
+  // person is paid — and nothing is immutable, because correcting a mistyped SKU is not an
+  // event worth preserving. The interesting property is elsewhere: a product code is unique
+  // *within* a company, which is a constraint the schema states and this file is what makes
+  // safe to state.
+  UnitGroup: { kind: 'company-owned' },
+
+  UnitOfMeasure: { kind: 'company-owned' },
+
+  Product: { kind: 'company-owned' },
+
+  ProductSupplier: { kind: 'company-owned' },
 };
 
 /**

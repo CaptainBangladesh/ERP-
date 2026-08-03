@@ -206,6 +206,30 @@ export class Decimal {
     return new Decimal(divide(this.units, pow10(this.scale - scale), rounding), scale);
   }
 
+  /**
+   * The same value at the fewest decimal places that hold it exactly. `2500.000000` → `2500`.
+   *
+   * Exact, and therefore not `round`: no digit that carries information is discarded, only
+   * zeros that were an artifact of how the value was arrived at. Division is where they come
+   * from — it takes the scale it was told to round to, whether or not the answer needed it —
+   * so this is the counterpart to `dividedBy` rather than a formatting nicety.
+   *
+   * Deliberately not applied on the way out of `toValue`: `2.50` as an amount of money is
+   * meant to read that way, and a quantity parsed from `3.000` is reporting the precision it
+   * was given. Trimming is something a caller asks for when the trailing zeros are noise.
+   */
+  trimmed(): Decimal {
+    let units = this.units;
+    let scale = this.scale;
+
+    while (scale > 0 && units % 10n === 0n) {
+      units /= 10n;
+      scale -= 1;
+    }
+
+    return new Decimal(units, scale);
+  }
+
   negated(): Decimal {
     return new Decimal(-this.units, this.scale);
   }

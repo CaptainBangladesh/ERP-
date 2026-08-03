@@ -13,6 +13,7 @@ import {
   type PayRunSummary,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
+import { exactly } from '../../prisma/columns';
 import { listQuery } from '../../platform/list';
 import {
   companyApplied,
@@ -251,22 +252,6 @@ function describePayRun(payRun: {
     periodEnd: isoDay(payRun.periodEnd),
     calculatedAt: payRun.calculatedAt.toISOString(),
   };
-}
-
-/**
- * A `numeric` column as exact text, or nothing where the platform withheld it.
- *
- * The absent case is the one that matters, and the type denies it: Prisma's generated row
- * type has the column, because as far as the schema is concerned it is always there. When the
- * caller lacks the grant it is genuinely absent from the object the extension returns. This
- * only has to carry that absence one step without pretending it cannot happen; `Money.wire`
- * turns it into the `null` the contract promises. See docs/tenancy.md.
- *
- * `toFixed()` with no argument rather than `toString()`, because decimal.js prints values
- * past a certain size in exponential notation and `Decimal.parse` will not accept an exponent.
- */
-function exactly(value: Prisma.Decimal | null | undefined): string | null | undefined {
-  return value === null || value === undefined ? value : value.toFixed();
 }
 
 /** A calendar day, without the midnight-UTC instant it is stored as. */

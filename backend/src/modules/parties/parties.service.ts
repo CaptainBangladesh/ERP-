@@ -10,6 +10,7 @@ import {
   type PartySummary,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
+import { defined } from '../../prisma/columns';
 import { FieldException } from '../../http/validation-exception';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
@@ -515,17 +516,6 @@ function describeAddress(address: {
     country: address.country,
     primary: address.isPrimary,
   };
-}
-
-/**
- * One field of a `PATCH`, included only if it was sent.
- *
- * Tested against `undefined` specifically rather than for truthiness, so that a field whose
- * legitimate value is falsy — a status of `''` would be refused, but the next module's
- * `quantity: 0` will not be — is not silently dropped by the helper every module copies.
- */
-function defined<K extends string, V>(key: K, value: V): Partial<Record<K, V>> {
-  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 }
 
 /**

@@ -216,5 +216,22 @@ describe('exact numbers', () => {
       expect(Quantity.parse('1').minus(Quantity.parse('4')).toValue()).toBe('-3');
       expect(Quantity.parse('1').minus(Quantity.parse('4')).isNegative()).toBe(true);
     });
+
+    it('drops the zeros a division left behind, and only those', () => {
+      // Dividing takes the scale it was told to round to whether or not the answer needed it,
+      // which is how converting 2.5 kilograms to grams produces six decimal places on a whole
+      // number. They are an artifact of the arithmetic rather than precision anybody has.
+      const grams = Quantity.parse('2.5')
+        .times(Decimal.parse('1000'))
+        .dividedBy(Decimal.ONE, { scale: 6, rounding: 'half-even' });
+
+      expect(grams.toValue()).toBe('2500.000000');
+      expect(grams.trimmed().toValue()).toBe('2500');
+
+      // Nothing that carries information goes, and a value that needs its places keeps them.
+      expect(Quantity.parse('0.250000').trimmed().toValue()).toBe('0.25');
+      expect(Quantity.parse('1.005').trimmed().toValue()).toBe('1.005');
+      expect(Quantity.parse('0.000000').trimmed().toValue()).toBe('0');
+    });
   });
 });

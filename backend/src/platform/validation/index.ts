@@ -18,4 +18,14 @@ export {
   type Valid,
 } from './validator';
 export { optional, withDefault, accepted, refused, rule, type FieldRule, type Read } from './rule';
-export { day, decimal, email, flag, money, password, text } from './rules';
+export {
+  day,
+  decimal,
+  email,
+  flag,
+  identifier,
+  money,
+  oneOf,
+  password,
+  text,
+} from './rules';

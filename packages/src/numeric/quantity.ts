@@ -79,6 +79,19 @@ export class Quantity {
     return new Quantity(this.amount.round(QUANTITY_SCALE, rounding));
   }
 
+  /**
+   * The same amount without the trailing zeros a division left on it.
+   *
+   * Exact — nothing that carries information is discarded. It exists because dividing takes
+   * the scale it was told to round to whether or not the answer needed it, so converting 2.5
+   * kilograms to grams produces `2500.000000` where the number is plainly `2500`. Six zeros of
+   * false precision on a quantity somebody is about to read is worse than no answer, because
+   * it looks like a measurement.
+   */
+  trimmed(): Quantity {
+    return new Quantity(this.amount.trimmed());
+  }
+
   compare(other: Quantity): -1 | 0 | 1 {
     return this.amount.compare(other.amount);
   }

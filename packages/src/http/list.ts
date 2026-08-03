@@ -156,3 +156,20 @@ export function readSortParameter(sort: string): { field: string; descending: bo
 export function emptyPage(size: number = PAGE_SIZE.default): PageInfo {
   return { number: 1, size, total: 0, pages: 0 };
 }
+
+/**
+ * The query with one filter set, or gone.
+ *
+ * Two details every filter control needs and each would otherwise get right separately.
+ * Cleared means *gone* rather than blank: an empty filter left in the object still counts as
+ * narrowing, so the screen would go on offering "clear your filters" to somebody with none.
+ * And paging returns to the first page, because page four of the old list is not page four of
+ * the new one.
+ */
+export function narrowed(query: ListQuery, field: string, value: string): ListQuery {
+  const filters = { ...query.filters };
+  if (value) filters[field] = value;
+  else delete filters[field];
+
+  return { ...query, filters, page: 1 };
+}

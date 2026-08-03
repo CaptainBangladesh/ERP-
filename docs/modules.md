@@ -13,13 +13,20 @@ silently does not load.
 
 ## Adding a module
 
-Copy `backend/src/modules/identity`. It is the worked example, and it is a real module rather
-than a template kept alive alongside real ones.
+```
+npm run new:module -- --name products --tier core --depends-on parties
+```
 
-`backend/src/modules/hrm` is the other one worth reading, and for the opposite reason: it is
-the shape stub, deliberately unlike inventory, and it is the module that shows what
-company-owned tables, a restricted field, and records that cannot be edited look like from
-inside a module. Note what is *not* in it — there is no company filter anywhere.
+**This is the only supported way to add a module.** Not a convenience — the roadmap is
+forty-plus modules, and every one written by hand is a fresh opportunity to page a list
+slightly differently, to name an error code in a new shape, or to forget the tenancy
+classification. None of those fails loudly on the day it is written. Consistency at that scale
+cannot come from discipline; it comes from the starting point being correct.
+
+What arrives is a *working* module rather than a skeleton with `TODO` in it: a table, a list
+endpoint under the platform's conventions, a screen with the empty state a fresh company
+actually sees, and tests for all of it. It passes `check:modules`, `check:conformance` and
+both suites the moment it exists, so the first thing you do is change working code.
 
 ```
 backend/src/modules/<name>/
@@ -28,26 +35,44 @@ backend/src/modules/<name>/
   <name>.module.ts       the Nest module
   <name>.controller.ts   its endpoints
   <name>.service.ts      its behaviour — never exported to other modules
+  schemas.ts             what its endpoints accept, and what its list offers
+backend/prisma/migrations/<stamp>_<name>/
+backend/test/<name>.spec.ts
+packages/src/modules/<name>/contract.ts
 application/src/modules/<name>/
   manifest.ts            which component renders which path
   pages/                 the screens
   components/            pieces used by more than one of its own screens
 ```
 
+It also makes the three edits a directory cannot express, each of which fails somewhere
+different and unhelpful when forgotten: the model in `schema.prisma`, its classification in
+`platform/tenancy/company-owned.ts`, and the contract's line in `packages/src/index.ts`.
+
+Flags: `--tier` (`core` by default), `--depends-on a,b`, and `--record <Model>` when English
+defeats the singulariser — `products` gives `Product` and `parties` gives `Party`, but not
+everything will.
+
+It refuses, before writing anything, a name a module already has, a dependency that is not
+present, a Core module reaching up a tier, a record another module owns, and a name that could
+not be a directory. Half a generated module is worse than none, so nothing is written until
+all of it can be.
+
 Then:
 
-1. Add your models to `backend/prisma/schema.prisma` under a heading naming your module, and
-   list them in the manifest's `models`. Every model belongs to exactly one module, which is
-   what gives "a module may not query another module's tables" something to compare against.
-2. Classify each new model in `backend/src/platform/tenancy/company-owned.ts` — company-owned
-   or explicitly not, with a reason. See [tenancy.md](tenancy.md). The application refuses to
-   boot until you have, so this is not a step you can skip by forgetting it.
-3. Generate the migration, and declare its directory name in the manifest's `migrations`.
-4. Write `index.ts`, exporting what other modules may use — or `export {}` with a sentence
-   saying it offers nothing, which is what identity and hrm do.
-5. Run `npm run check:modules` and `npm run check:conformance`. Between them they will tell
+1. Run `npm run db:migrate` to apply the migration it wrote.
+2. Make it yours — the generated model is one table with a name and a status, which is a
+   starting point rather than a design.
+3. Keep the manifest honest as you go: new models in `models`, new migrations in
+   `migrations`, and a classification in `company-owned.ts` for every new table.
+4. Run `npm run check:modules` and `npm run check:conformance`. Between them they will tell
    you what is wrong, by name, without a database.
-6. Write the tests: HTTP-level in `backend/test/`, screen-level beside the page component.
+
+`backend/src/modules/parties` is the worked example to read next — a public surface another
+module actually consumes. `backend/src/modules/hrm` is the other one worth reading, and for
+the opposite reason: it is the shape stub, deliberately unlike inventory, and it shows what
+company-owned tables, a restricted field, and records that cannot be edited look like from
+inside a module. Note what is *not* in either — there is no company filter anywhere.
 
 ## The backend manifest
 
@@ -112,6 +137,11 @@ A module's public surface is `backend/src/modules/<name>/index.ts`. Everything e
 directory is internal, including the service — `PartiesModule` exports `PartyDirectory` and
 not `PartiesService`, so there is no way to reach the implementation even with the dependency
 declared.
+
+The Nest module is exported from `index.ts` beside the contract, because Nest's container
+requires it: a module that injects `PartyDirectory` has to import `PartiesModule` to get it,
+and a surface offering only the abstract class would be one nobody could use. It grants
+nothing extra — what `PartiesModule` exports is the contract alone.
 
 The pack refuses:
 

@@ -281,3 +281,146 @@ model PayRunLine {
   @@index([companyId])
   @@map("pay_run_lines")
 }
+
+// ─── products ──────────────────────────────────────────────────────────────────────
+// Owned by the products module. See backend/src/modules/products.
+//
+// The product master, beneath inventory rather than inside it, so that Sales, Purchase,
+// Manufacturing and E-commerce depend on products rather than on stock movements and
+// locations in order to name the thing they are dealing in.
+//
+// As everywhere else, `companyId` is a plain column with no foreign key to `companies`:
+// keys stay inside a module, and scoping is the tenancy extension's rather than the schema's.
+// `product_suppliers.party_id` is the same rule seen from the other side — it points at a
+// row parties owns, and there is deliberately no key to it. The reference is resolved through
+// `PartyDirectory`, which is a contract, and a foreign key would be a second dependency the
+// module graph does not describe.
+
+/// A set of units that measure the same thing: weight, volume, time.
+///
+/// The group is what makes conversion meaningful and what makes it *refusable*: kilograms and
+/// grams convert because somebody said they measure the same thing, and kilograms and hours
+/// do not because nobody could.
+model UnitGroup {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  units UnitOfMeasure[]
+
+  /// One group per name per company. Two 'Weight' groups would be two sets of units that
+  /// cannot convert to each other while claiming to measure the same thing.
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@map("unit_groups")
+}
+
+/// How much of something there is measured in — a kilogram, an hour, an each.
+///
+/// Nothing is seeded, here least of all. A business that deals in metres and one that deals in
+/// pallets should not both start with a list somebody else guessed at, and a seeded unit is a
+/// row nobody chose that every later movement is measured in.
+model UnitOfMeasure {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  /// The symbol as the user types it — `kg`, `kWh`, `each`. Case is preserved, because there
+  /// is no normalisation that is right for all three. Unique within the company.
+  code String
+  /// What it is called in full: 'Kilogram'.
+  name String
+
+  /// The group it converts within, or none.
+  groupId String? @map("group_id") @db.Uuid
+
+  /// How many of the group's *base* unit one of these is.
+  ///
+  /// The base unit is simply the one whose ratio is 1 — there is no pointer to it, and there
+  /// does not need to be: converting is `amount × from.ratio ÷ to.ratio`, which never names
+  /// the base and cannot disagree with a column claiming which unit it is.
+  ///
+  /// Twelve decimal places because a ratio is a definition rather than a measurement: an ounce
+  /// is 0.028349523125 kilograms exactly, and rounding a definition makes every quantity
+  /// derived from it slightly wrong forever.
+  ratio Decimal @default(1) @db.Decimal(24, 12)
+
+  /// `active` or `inactive`. A unit in use is never deleted — every product measured in it
+  /// and every movement recorded in it would be measured in nothing.
+  status String @default("active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  group    UnitGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  products Product[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([groupId])
+  @@map("units_of_measure")
+}
+
+/// A thing the business deals in.
+model Product {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  /// The SKU, upper case and unique within the company. Unique *within* the company and not
+  /// across it: two businesses both calling something `WIDGET-1` is not a collision, and a
+  /// global constraint would make one of them rename their catalogue because of the other.
+  code String
+  name String
+
+  unitId String @map("unit_id") @db.Uuid
+
+  /// What one of these costs, for stock to be valued at. Numeric rather than floating point:
+  /// money is exact or it is wrong. Null until somebody records one — a cost of zero is a
+  /// claim, and "nobody has said" is not that claim.
+  cost Decimal? @db.Decimal(14, 2)
+
+  /// Whether stock of it is counted. A delivery charge and an hour of consultancy are
+  /// products with prices and no shelf.
+  stockable Boolean @default(true)
+
+  /// `active` or `inactive`. Deactivating rather than deleting is what keeps three years of
+  /// movements, orders and valuations naming this row intelligible.
+  status String @default("active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  unit      UnitOfMeasure     @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  suppliers ProductSupplier[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  /// The list's default order, within a company — the `(company_id, <default sort>)` shape
+  /// every list endpoint's default sort wants, so that offset paging is an index walk.
+  @@index([companyId, code])
+  @@index([companyId, name])
+  @@index([unitId])
+  @@map("products")
+}
+
+/// Somebody this product is bought from.
+///
+/// A row rather than a column on the product, because a product has several suppliers and a
+/// supplier supplies several products. `partyId` names a row in the address book and is
+/// resolved through the Parties contract; products never reads that table.
+model ProductSupplier {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  partyId   String   @map("party_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Supplying something twice is not a different fact from supplying it once.
+  @@unique([productId, partyId])
+  @@index([companyId])
+  @@index([partyId])
+  @@map("product_suppliers")
+}

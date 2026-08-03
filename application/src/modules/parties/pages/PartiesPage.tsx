@@ -9,6 +9,7 @@ import {
   emptyPage,
   listPath,
   listQueryString,
+  narrowed,
   type ListQuery,
   type PartyKind,
   type CreatePartyRequest,
@@ -18,7 +19,7 @@ import {
   type PartyStatus,
   type PartySummary,
 } from '@erp/shared';
-import { DataTable, Field, FormError } from '@erp/shared/ui';
+import { DataTable, Field, FormError, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 import { PartyDetail } from '../components/PartyDetail';
 
@@ -158,22 +159,22 @@ export function PartiesPage() {
         searchLabel="Search by name or email"
         filters={
           <>
-            <Choice
+            <Select
               id="party-status"
               label="Status"
               value={query.filters?.[PARTY_FIELDS.status] ?? ''}
-              anything="Any status"
+              placeholder="Any status"
               options={SETTABLE_PARTY_STATUSES.map((status) => ({
                 value: status,
                 label: STATUS_LABELS[status],
               }))}
               onChange={(status) => setQuery(narrowed(query, PARTY_FIELDS.status, status))}
             />
-            <Choice
+            <Select
               id="party-role"
               label="Role"
               value={query.filters?.[PARTY_FIELDS.role] ?? ''}
-              anything="Any role"
+              placeholder="Any role"
               options={(roles.data?.roles ?? []).map((role) => ({ value: role, label: role }))}
               onChange={(role) => setQuery(narrowed(query, PARTY_FIELDS.role, role))}
             />
@@ -196,66 +197,6 @@ const STATUS_LABELS = {
   merged: 'Merged',
 } as const satisfies Record<PartyStatus, string>;
 
-/**
- * The query with one filter set, or gone.
- *
- * Cleared means gone rather than blank: an empty filter still in the object would count as
- * "narrowed" and show "nothing matches" to somebody who had filtered nothing. Paging goes
- * back to the first page, because page four of the old list is not page four of the new one.
- */
-function narrowed(query: ListQuery, field: string, value: string): ListQuery {
-  const filters = { ...query.filters };
-  if (value) filters[field] = value;
-  else delete filters[field];
-
-  return { ...query, filters, page: 1 };
-}
-
-/**
- * A dropdown filter, and the screen's whole contribution to filtering alongside the search
- * box the table already provides.
- *
- * The table takes filter controls as a slot rather than generating them, because what a
- * filter should look like is a question about the field — a select here, a date picker in
- * hrm, a location tree in inventory — and a table answering it for forty modules would answer
- * it badly for most of them.
- */
-function Choice({
-  id,
-  label,
-  value,
-  anything,
-  options,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  anything: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-slate-900">
-        {label}
-      </label>
-      <select
-        id={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-900/20"
-      >
-        <option value="">{anything}</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
 
 /**
  * The form that puts somebody in the book.
@@ -350,11 +291,11 @@ function AddParty({
         {/* Only a person belongs to an organisation, so the control is only there for one. */}
         {kind === 'person' && organisations.length > 0 && (
           <div className="min-w-56 flex-1">
-            <Choice
+            <Select
               id="party-organisation"
               label="Belongs to"
               value={organisationId}
-              anything="Nobody in particular"
+              placeholder="Nobody in particular"
               options={organisations.map((organisation) => ({
                 value: organisation.id,
                 label: organisation.name,

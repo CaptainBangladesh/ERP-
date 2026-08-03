@@ -1,13 +1,20 @@
 /**
  * The address book's public surface.
  *
- * One abstract class, and it is the only thing about parties another module may name. Sales,
- * Purchase, Inventory and Marketing all read parties through this; none of them knows that a
- * party is three tables, that a role is a row, or that a merged party still exists.
+ * Two exports, and between them they are the whole of what another module may name about
+ * parties. Sales, Purchase, Inventory and Products all read parties through this; none of them
+ * knows that a party is three tables, that a role is a row, or that a merged party still
+ * exists.
  *
- * `PartiesService` is not here, and `PartiesModule` does not export it. That is what makes
- * this a surface rather than a suggestion — there is no way to reach the implementation, so
- * the contract cannot be widened by accident on the far side of a `dependsOn` somebody added
- * for a different reason.
+ * `PartyDirectory` is the contract. `PartiesModule` is here because Nest's container requires
+ * it: a module that injects the contract has to import the module that provides it, so a
+ * surface offering only the abstract class would be a surface nobody could actually use. It
+ * grants nothing extra — `PartiesModule` exports `PartyDirectory` alone, and deliberately not
+ * `PartiesService`, so there is still no way to reach the implementation even with the
+ * dependency declared.
+ *
+ * That distinction is why both are here rather than the module being reached for directly at
+ * `parties/parties.module`: the file *is* the surface, and importing past it is refused.
  */
 export { PartyDirectory } from './party-directory';
+export { PartiesModule } from './parties.module';

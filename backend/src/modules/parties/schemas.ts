@@ -11,6 +11,8 @@ import {
   accepted,
   email,
   flag,
+  identifier,
+  oneOf,
   optional,
   refused,
   rule,
@@ -34,27 +36,6 @@ const PARTY_NAME = {
   tooLong: 'Use 200 characters or fewer.',
 } as const;
 
-/**
- * One of a fixed set of words, refused by naming the alternatives.
- *
- * Not a `text` rule with a cross-field check afterwards: "person or organisation" is a fact
- * about the field, and putting it in the rule is what makes the message say what is allowed
- * rather than that something is wrong.
- */
-function oneOf<T extends string>(
-  allowed: readonly T[],
-  options: { missing: string; invalid: string },
-): FieldRule<T> {
-  return rule(options.missing, (value) => {
-    const given = typeof value === 'string' ? value.trim() : '';
-    if (given.length === 0) return refused(options.missing);
-
-    return (allowed as readonly string[]).includes(given)
-      ? accepted(given as T)
-      : refused(`${options.invalid} Use one of: ${allowed.join(', ')}.`);
-  });
-}
-
 const KIND = oneOf<PartyKind>(PARTY_KINDS, {
   missing: 'Say whether this is a person or an organisation.',
   invalid: 'That is not a kind of party.',
@@ -66,23 +47,6 @@ const STATUS = oneOf<SettablePartyStatus>(SETTABLE_PARTY_STATUSES, {
   // merged away, and setting it by hand would leave a record pointing at nothing.
   invalid: 'That is not a status you can set.',
 });
-
-/**
- * An identifier, checked only for shape.
- *
- * Whether the party exists, belongs to this company, and is an organisation are all
- * questions for the service, which has the database. What this stops is a malformed id
- * reaching Prisma, where an invalid UUID is a 500 rather than a message beside the input.
- */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function identifier(options: { missing: string; invalid: string }): FieldRule<string> {
-  return rule(options.missing, (value) => {
-    const given = typeof value === 'string' ? value.trim() : '';
-    if (given.length === 0) return refused(options.missing);
-    return UUID.test(given) ? accepted(given) : refused(options.invalid);
-  });
-}
 
 const ORGANISATION = {
   missing: 'Choose an organisation.',
