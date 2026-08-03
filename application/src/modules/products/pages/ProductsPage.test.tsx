@@ -13,7 +13,7 @@ import {
   type UnitSummary,
 } from '@erp/shared';
 import { server } from '../../../test/server';
-import { renderPage } from '../../../test/render';
+import { renderPage, signedInWith } from '../../../test/render';
 import { ProductsPage } from './ProductsPage';
 
 /**
@@ -174,10 +174,11 @@ describe('ProductsPage', () => {
 
   describe('the states a fresh account passes through', () => {
     it('sends somebody with no units to the units screen rather than offering a broken form', async () => {
+      signedInWith();
       unitsAvailable([]);
       listing(() => page([]));
 
-      renderPage(<ProductsPage />, { path: '/products' });
+      renderPage(<ProductsPage />, { token: 'a-token', path: '/products' });
 
       // A product cannot exist without a unit, and nothing is seeded, so this is the first
       // thing a real user sees. A form whose only outcome is a validation message is worse
@@ -188,13 +189,16 @@ describe('ProductsPage', () => {
     });
 
     it('guides the first product once there is something to measure it in', async () => {
+      signedInWith();
       unitsAvailable();
       listing(() => page([]));
 
-      renderPage(<ProductsPage />, { path: '/products' });
+      renderPage(<ProductsPage />, { token: 'a-token', path: '/products' });
 
       expect(await screen.findByText(/nothing in the catalogue yet/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /add product/i })).toBeInTheDocument();
+      // `findBy`, not `getBy`: the form is gated on a permission the session query resolves
+      // separately from the (empty) product list, so the two need not settle in one tick.
+      expect(await screen.findByRole('button', { name: /add product/i })).toBeInTheDocument();
     });
 
     it('tells somebody their search matched nothing rather than that they sell nothing', async () => {
@@ -245,6 +249,7 @@ describe('ProductsPage', () => {
 
   describe('adding a product', () => {
     it('sends the code, the name, the unit and an exact cost', async () => {
+      signedInWith();
       unitsAvailable();
       let sent: unknown;
       let created = false;
@@ -265,10 +270,10 @@ describe('ProductsPage', () => {
         }),
       );
 
-      const { user } = renderPage(<ProductsPage />, { path: '/products' });
+      const { user } = renderPage(<ProductsPage />, { token: 'a-token', path: '/products' });
       await screen.findByText(/nothing in the catalogue yet/i);
 
-      await user.type(screen.getByLabelText(/^code$/i), 'flour');
+      await user.type(await screen.findByLabelText(/^code$/i), 'flour');
       await user.type(screen.getByLabelText(/^name$/i), 'Flour');
       await user.selectOptions(screen.getByLabelText(/^unit$/i), kilogram.id);
       await user.type(screen.getByLabelText(/^cost$/i), '1.25');
@@ -290,6 +295,7 @@ describe('ProductsPage', () => {
     });
 
     it('sends a product that is not stocked when the box is unticked', async () => {
+      signedInWith();
       unitsAvailable();
       let sent: unknown;
       const consultancy = product('CONSULT', { stockable: false });
@@ -308,10 +314,10 @@ describe('ProductsPage', () => {
         }),
       );
 
-      const { user } = renderPage(<ProductsPage />, { path: '/products' });
+      const { user } = renderPage(<ProductsPage />, { token: 'a-token', path: '/products' });
       await screen.findByText(/nothing in the catalogue yet/i);
 
-      await user.type(screen.getByLabelText(/^code$/i), 'CONSULT');
+      await user.type(await screen.findByLabelText(/^code$/i), 'CONSULT');
       await user.type(screen.getByLabelText(/^name$/i), 'Consultancy');
       await user.selectOptions(screen.getByLabelText(/^unit$/i), kilogram.id);
       await user.click(screen.getByLabelText(/stock of this is counted/i));
@@ -331,6 +337,7 @@ describe('ProductsPage', () => {
     });
 
     it('puts a server message beside the input it belongs to', async () => {
+      signedInWith();
       unitsAvailable();
       server.use(
         http.get(PRODUCT_PATHS.products, () => HttpResponse.json(page([]))),
@@ -346,10 +353,10 @@ describe('ProductsPage', () => {
         ),
       );
 
-      const { user } = renderPage(<ProductsPage />, { path: '/products' });
+      const { user } = renderPage(<ProductsPage />, { token: 'a-token', path: '/products' });
       await screen.findByText(/nothing in the catalogue yet/i);
 
-      await user.type(screen.getByLabelText(/^code$/i), 'a widget');
+      await user.type(await screen.findByLabelText(/^code$/i), 'a widget');
       await user.click(screen.getByRole('button', { name: /add product/i }));
 
       const code = await screen.findByLabelText(/^code$/i);
@@ -358,6 +365,7 @@ describe('ProductsPage', () => {
     });
 
     it('shows a duplicate code as a message rather than a silent failure', async () => {
+      signedInWith();
       unitsAvailable();
       server.use(
         http.get(PRODUCT_PATHS.products, () => HttpResponse.json(page([]))),
@@ -373,15 +381,26 @@ describe('ProductsPage', () => {
         ),
       );
 
-      const { user } = renderPage(<ProductsPage />, { path: '/products' });
+      const { user } = renderPage(<ProductsPage />, { token: 'a-token', path: '/products' });
       await screen.findByText(/nothing in the catalogue yet/i);
 
-      await user.type(screen.getByLabelText(/^code$/i), 'FLOUR');
+      await user.type(await screen.findByLabelText(/^code$/i), 'FLOUR');
       await user.click(screen.getByRole('button', { name: /add product/i }));
 
       // A conflict is not a validation failure, so it arrives with a code of its own — and
       // still carries the field, because the message belongs beside the box that caused it.
       expect(await screen.findByRole('alert')).toHaveTextContent(/already the code/i);
+    });
+
+    it('hides the form from a colleague without products:products:write', async () => {
+      signedInWith([]);
+      unitsAvailable();
+      listing(() => page([product('FLOUR')]));
+
+      renderPage(<ProductsPage />, { token: 'a-token', path: '/products' });
+      await screen.findByText('FLOUR');
+
+      expect(screen.queryByRole('button', { name: /add product/i })).not.toBeInTheDocument();
     });
   });
 

@@ -141,6 +141,7 @@ import {
   type ${names.record}ListResponse,
   type ${names.record}Response,
 } from '@erp/shared';
+import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { ${names.pascal}Service } from './${names.name}.service';
 import { Create${names.record}Body, Update${names.record}Body } from './schemas';
@@ -149,7 +150,9 @@ import { Create${names.record}Body, Update${names.record}Body } from './schemas'
  * The module's surface.
  *
  * Nothing is '@Public()', which is the default every endpoint in the system has: a global
- * guard requires a session, and opting out is explicit and rare.
+ * guard requires a session, and opting out is explicit and rare. Every handler also declares
+ * '@RequirePermission(...)' — the read permission for a lookup, the write permission for a
+ * change — which is what lets a role grant or deny this module's actions one at a time.
  *
  * There is no 'DELETE'. A record is deactivated rather than deleted, so that anything naming
  * it later still means something — see the service.
@@ -164,6 +167,7 @@ export class ${names.pascal}Controller {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('${names.name}:${names.name}:write')
   async add(
     @Body(validated(Create${names.record}Body)) body: Valid<typeof Create${names.record}Body>,
   ): Promise<${names.record}Response> {
@@ -171,16 +175,19 @@ export class ${names.pascal}Controller {
   }
 
   @Get()
+  @RequirePermission('${names.name}:${names.name}:read')
   async list(@Query() query: Record<string, unknown>): Promise<${names.record}ListResponse> {
     return this.${names.name.replace(/-/g, '')}.list${names.record}s(query);
   }
 
   @Get(':id')
+  @RequirePermission('${names.name}:${names.name}:read')
   async one(@Param('id') id: string): Promise<${names.record}Response> {
     return this.${names.name.replace(/-/g, '')}.${names.delegate}Detail(id);
   }
 
   @Patch(':id')
+  @RequirePermission('${names.name}:${names.name}:write')
   async change(
     @Param('id') id: string,
     @Body(validated(Update${names.record}Body)) body: Valid<typeof Update${names.record}Body>,

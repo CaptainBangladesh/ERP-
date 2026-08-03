@@ -9,7 +9,7 @@ import {
   type UnitSummary,
 } from '@erp/shared';
 import { server } from '../../../test/server';
-import { renderPage } from '../../../test/render';
+import { renderPage, signedInWith } from '../../../test/render';
 import { UnitsPage } from './UnitsPage';
 
 /**
@@ -154,6 +154,7 @@ describe('UnitsPage', () => {
 
   describe('adding a unit', () => {
     it('sends the code exactly as it was typed, because kWh is not KWH', async () => {
+      signedInWith();
       let sent: unknown;
       listing([]);
       server.use(
@@ -163,7 +164,7 @@ describe('UnitsPage', () => {
         }),
       );
 
-      const { user } = renderPage(<UnitsPage />, { path: '/units' });
+      const { user } = renderPage(<UnitsPage />, { token: 'a-token', path: '/units' });
       await screen.findByText(/no units yet/i);
 
       await user.type(screen.getByLabelText(/^code$/i), 'kWh');
@@ -174,6 +175,7 @@ describe('UnitsPage', () => {
     });
 
     it('offers a ratio only once a group is chosen, and sends both', async () => {
+      signedInWith();
       let sent: unknown;
       listing([], [{ id: 'group-weight', name: 'Weight', units: [] }]);
       server.use(
@@ -183,7 +185,7 @@ describe('UnitsPage', () => {
         }),
       );
 
-      const { user } = renderPage(<UnitsPage />, { path: '/units' });
+      const { user } = renderPage(<UnitsPage />, { token: 'a-token', path: '/units' });
       await screen.findByRole('button', { name: /add unit/i });
 
       // A ratio without a group is a number about nothing, so the box is not there to fill in.
@@ -209,6 +211,7 @@ describe('UnitsPage', () => {
     });
 
     it('puts a server message beside the input it belongs to', async () => {
+      signedInWith();
       listing([]);
       server.use(
         http.post(UNIT_PATHS.units, () =>
@@ -223,7 +226,7 @@ describe('UnitsPage', () => {
         ),
       );
 
-      const { user } = renderPage(<UnitsPage />, { path: '/units' });
+      const { user } = renderPage(<UnitsPage />, { token: 'a-token', path: '/units' });
       await screen.findByText(/no units yet/i);
 
       await user.type(screen.getByLabelText(/^code$/i), '!!');
@@ -233,10 +236,21 @@ describe('UnitsPage', () => {
       expect(code).toHaveAttribute('aria-invalid', 'true');
       expect(code).toHaveAccessibleDescription(/such as/i);
     });
+
+    it('hides the form from a colleague without products:units:write', async () => {
+      signedInWith([]);
+      listing([unit('kg')]);
+
+      renderPage(<UnitsPage />, { token: 'a-token', path: '/units' });
+      await screen.findByRole('cell', { name: 'kg in full' });
+
+      expect(screen.queryByRole('button', { name: /add unit/i })).not.toBeInTheDocument();
+    });
   });
 
   describe('adding a group', () => {
     it('creates one and shows it, so a unit can then be put in it', async () => {
+      signedInWith();
       let sent: unknown;
       let created = false;
       const weight = { id: 'group-weight', name: 'Weight', units: [] };
@@ -255,10 +269,13 @@ describe('UnitsPage', () => {
         }),
       );
 
-      const { user } = renderPage(<UnitsPage />, { path: '/units' });
+      const { user } = renderPage(<UnitsPage />, { token: 'a-token', path: '/units' });
       await screen.findByText(/no groups yet/i);
 
-      await user.type(screen.getByLabelText(/add a group/i), 'Weight');
+      // Waited for with `findBy`, not `getBy`: the form is gated on a permission the session
+      // query resolves separately from the groups list, so the two do not necessarily settle
+      // in the same tick.
+      await user.type(await screen.findByLabelText(/add a group/i), 'Weight');
       await user.click(screen.getByRole('button', { name: /add group/i }));
 
       await waitFor(() => expect(sent).toEqual({ name: 'Weight' }));

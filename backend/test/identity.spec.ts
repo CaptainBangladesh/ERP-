@@ -58,13 +58,16 @@ describe('identity and access', () => {
       expect(session).toEqual({
         token: expect.any(String),
         expiresAt: expect.any(String),
-        company: { id: expect.any(String), name: 'Northwind Trading' },
+        company: { id: expect.any(String), name: 'Northwind Trading', tier: 'core' },
         user: {
           id: expect.any(String),
           name: 'Ada Okafor',
           email: 'ada@northwind.test',
           isOwner: true,
         },
+        // The owner's access is derived from having created the company, unconditionally —
+        // not from a role, so there is nothing to assign and nothing that could lock them out.
+        permissions: 'all',
       });
 
       // The company that exists is the one the user typed. Nothing was seeded ahead of it.

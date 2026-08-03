@@ -124,4 +124,13 @@ describe('SignInPage', () => {
       '/sign-up',
     );
   });
+
+  it('offers a way back in for somebody who has forgotten their password', () => {
+    renderPage(<SignInPage />, { path: '/sign-in' });
+
+    expect(screen.getByRole('link', { name: /forgot password/i })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+  });
 });

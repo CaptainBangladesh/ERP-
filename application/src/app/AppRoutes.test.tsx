@@ -8,8 +8,9 @@ import { AppRoutes } from './AppRoutes';
 
 const SESSION = {
   user: { id: 'u1', name: 'Ada Okafor', email: 'ada@northwind.test', isOwner: true },
-  company: { id: 'c1', name: 'Northwind Trading' },
+  company: { id: 'c1', name: 'Northwind Trading', tier: 'core' },
   expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  permissions: 'all',
 };
 
 /**
@@ -43,6 +44,60 @@ describe('AppRoutes', () => {
     const nav = await screen.findByRole('navigation', { name: /main/i });
     expect(await screen.findByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(nav).toHaveTextContent('Home');
+  });
+
+  /**
+   * The menu differs by tier and by role, and the difference is entirely the server's: this
+   * screen renders whatever `GET /api/navigation` answered with and filters nothing.
+   *
+   * That is the property worth pinning. A client that decided for itself which entries to show
+   * would be a client that could be talked into showing one — so these two cases send the same
+   * user to the same screen and change only what the server said.
+   */
+  it('renders whatever menu the server assembled for this caller, and no more', async () => {
+    // A Core-tier colleague holding only parties:read. No People entry, because hrm is
+    // Enterprise; no Roles entry, because they do not hold identity:roles:read.
+    server.use(
+      http.get(AUTH_PATHS.session, () => HttpResponse.json(SESSION)),
+      http.get(NAVIGATION_PATH, () =>
+        HttpResponse.json({
+          entries: [
+            { module: 'identity', label: 'Home', path: '/', order: 0 },
+            { module: 'parties', label: 'Parties', path: '/parties', order: 10 },
+          ],
+        }),
+      ),
+    );
+
+    renderPage(<AppRoutes />, { token: 'a-token', path: '/' });
+
+    const nav = await screen.findByRole('navigation', { name: /main/i });
+    await waitFor(() => expect(nav).toHaveTextContent('Parties'));
+    expect(nav).not.toHaveTextContent('People');
+    expect(nav).not.toHaveTextContent('Roles');
+  });
+
+  it('shows the entries an enterprise-tier owner reaches that a core-tier colleague does not', async () => {
+    server.use(
+      http.get(AUTH_PATHS.session, () =>
+        HttpResponse.json({ ...SESSION, company: { ...SESSION.company, tier: 'enterprise' } }),
+      ),
+      http.get(NAVIGATION_PATH, () =>
+        HttpResponse.json({
+          entries: [
+            { module: 'identity', label: 'Home', path: '/', order: 0 },
+            { module: 'hrm', label: 'People', path: '/hrm/employees', order: 20 },
+            { module: 'identity', label: 'Roles', path: '/roles', order: 91 },
+          ],
+        }),
+      ),
+    );
+
+    renderPage(<AppRoutes />, { token: 'a-token', path: '/' });
+
+    const nav = await screen.findByRole('navigation', { name: /main/i });
+    await waitFor(() => expect(nav).toHaveTextContent('People'));
+    expect(nav).toHaveTextContent('Roles');
   });
 
   it('signs out and returns to sign-in', async () => {

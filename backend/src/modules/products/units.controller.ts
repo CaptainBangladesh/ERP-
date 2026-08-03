@@ -5,6 +5,7 @@ import {
   type UnitListResponse,
   type UnitSummary,
 } from '@erp/shared';
+import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { CreateUnitBody, CreateUnitGroupBody, UpdateUnitBody } from './schemas';
 import { UnitsService } from './units.service';
@@ -25,6 +26,7 @@ export class UnitsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('products:units:write')
   async addUnit(
     @Body(validated(CreateUnitBody)) body: Valid<typeof CreateUnitBody>,
   ): Promise<UnitSummary> {
@@ -32,6 +34,7 @@ export class UnitsController {
   }
 
   @Get()
+  @RequirePermission('products:units:read')
   async listUnits(@Query() query: Record<string, unknown>): Promise<UnitListResponse> {
     return this.units.listUnits(query);
   }
@@ -42,12 +45,14 @@ export class UnitsController {
    * up a unit by that name.
    */
   @Get('groups')
+  @RequirePermission('products:units:read')
   async groups(): Promise<UnitGroupsResponse> {
     return this.units.groups();
   }
 
   @Post('groups')
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('products:units:write')
   async addGroup(
     @Body(validated(CreateUnitGroupBody)) body: Valid<typeof CreateUnitGroupBody>,
   ): Promise<UnitGroupsResponse> {
@@ -55,11 +60,13 @@ export class UnitsController {
   }
 
   @Get(':id')
+  @RequirePermission('products:units:read')
   async unit(@Param('id') id: string): Promise<UnitSummary> {
     return this.units.unitDetail(id);
   }
 
   @Patch(':id')
+  @RequirePermission('products:units:write')
   async changeUnit(
     @Param('id') id: string,
     @Body(validated(UpdateUnitBody)) body: Valid<typeof UpdateUnitBody>,

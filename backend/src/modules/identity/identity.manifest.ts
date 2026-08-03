@@ -1,4 +1,4 @@
-import { AUTH_ROUTE, IDENTITY_MODULE } from '@erp/shared';
+import { AUTH_ROUTE, IDENTITY_MODULE, IDENTITY_ROUTE } from '@erp/shared';
 import type { ModuleManifest } from '../../platform/modules';
 import { IdentityModule } from './identity.module';
 
@@ -29,31 +29,49 @@ export const manifest: ModuleManifest = {
 
   nestModule: IdentityModule,
 
-  routes: [AUTH_ROUTE],
+  /**
+   * Two bases. `AUTH_ROUTE` is everything reachable with no session, or that establishes
+   * one — sign-up, sign-in, session, sign-out, and now account recovery and invitation
+   * acceptance. `IDENTITY_ROUTE` is everything that requires being signed in already:
+   * colleagues, their roles, and role definitions.
+   */
+  routes: [AUTH_ROUTE, IDENTITY_ROUTE],
 
-  migrations: ['20260801000000_identity_companies_users_sessions'],
+  migrations: [
+    '20260801000000_identity_companies_users_sessions',
+    '20260803114923_identity_roles_and_recovery',
+  ],
 
   /**
-   * The three tables identity owns. `Company` is the tenant root every other module's rows
-   * are scoped to, and it is still identity's: the module that creates the company is the
-   * module that owns the table, and everything else reaches a company through the scoping
-   * the platform applies rather than by querying it.
+   * `Company`, `User` and `Session` were here from the start. The other five arrived with
+   * roles and recovery: `Role` and `RolePermission` are what a role *is*; `UserRole` is who
+   * holds one; `Invitation` and `PasswordReset` are the two single-use tokens account
+   * recovery and colleague invitation share the same shape for.
    */
-  models: ['Company', 'User', 'Session'],
+  models: ['Company', 'User', 'Session', 'Role', 'RolePermission', 'UserRole', 'Invitation', 'PasswordReset'],
 
   /**
-   * Managing colleagues is user story 17 and arrives with roles in ticket 07. The
-   * permission is declared now because the navigation entry that will be guarded by it is
-   * declared now, and because declaring it is how the permission model grows without a
-   * central list to edit.
+   * Read and write, for colleagues and for roles separately: somebody trusted to invite a
+   * colleague and assign them a role is not automatically trusted to redefine what that role
+   * grants.
    */
-  permissions: ['identity:users:manage'],
+  permissions: [
+    'identity:users:read',
+    'identity:users:write',
+    'identity:roles:read',
+    'identity:roles:write',
+  ],
 
   /**
-   * The home screen. Ticket 07 filters these by the caller's permissions and their
-   * company's tier; this one is guarded by nothing because everybody signed in has a home.
+   * The home screen is guarded by nothing, because everybody signed in has one. Team and
+   * Roles are guarded by the read permission for each — the write actions on those screens
+   * are gated the same way their endpoints are, by the same permission strings.
    */
-  navigation: [{ label: 'Home', path: '/', order: 0 }],
+  navigation: [
+    { label: 'Home', path: '/', order: 0 },
+    { label: 'Team', path: '/team', order: 90, permission: 'identity:users:read' },
+    { label: 'Roles', path: '/roles', order: 91, permission: 'identity:roles:read' },
+  ],
 
   /**
    * Nothing yet, and deliberately not a placeholder.

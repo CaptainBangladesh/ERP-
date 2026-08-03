@@ -14,6 +14,8 @@ import {
 } from '@erp/shared';
 import { DataTable, Field, FormError, MoneyInput, MoneyText } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
+import { useSession } from '../../../session/SessionProvider';
+import { hasPermission } from '../../../session/permissions';
 
 /**
  * Everybody on the payroll.
@@ -28,6 +30,8 @@ import { ApiFailure, api } from '../../../api/client';
  * is the same shape every later module's list screen will be.
  */
 export function EmployeesPage() {
+  const { session } = useSession();
+  const canAddEmployee = hasPermission(session, 'hrm:employees:write');
   const [query, setQuery] = useState<ListQuery>({});
   const queryClient = useQueryClient();
 
@@ -73,14 +77,16 @@ export function EmployeesPage() {
         </p>
       </header>
 
-      <AddEmployee
-        onAdded={() => {
-          // The list is stale the moment an employee is added, and a screen showing a list
-          // that does not contain what you just created is a screen nobody trusts again.
-          void queryClient.invalidateQueries({ queryKey: ['hrm', 'employees'] });
-          setQuery({});
-        }}
-      />
+      {canAddEmployee && (
+        <AddEmployee
+          onAdded={() => {
+            // The list is stale the moment an employee is added, and a screen showing a list
+            // that does not contain what you just created is a screen nobody trusts again.
+            void queryClient.invalidateQueries({ queryKey: ['hrm', 'employees'] });
+            setQuery({});
+          }}
+        />
+      )}
 
       <DataTable
         caption="Employees"

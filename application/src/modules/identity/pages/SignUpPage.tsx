@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   AUTH_PATHS,
@@ -33,18 +33,6 @@ export function SignUpPage() {
     password: '',
   });
 
-  /**
-   * Kept beside the form rather than in it, and never sent.
-   *
-   * Whether two boxes on one screen match is a question about this screen — the server only
-   * ever knows one password, and an API client typing a password twice would be answering a
-   * question nobody asked. Putting it in the request would push a detail of this form into
-   * a contract that outlives it.
-   */
-  const [confirmation, setConfirmation] = useState('');
-  const [mismatch, setMismatch] = useState<string>();
-  const confirmationInput = useRef<HTMLInputElement>(null);
-
   const signUp = useMutation({
     mutationFn: () => api.post<AuthenticatedSession>(AUTH_PATHS.signUp, form),
     onSuccess: (session) => {
@@ -56,22 +44,8 @@ export function SignUpPage() {
   const failure = signUp.error instanceof ApiFailure ? signUp.error : undefined;
   // The server decides what is valid; this screen only renders the answer. Duplicating the
   // rules here would give two sources of truth that drift, and the one users would meet
-  // second is the one that actually governs. The confirmation is the exception that proves
-  // it: there is no server rule to duplicate.
+  // second is the one that actually governs.
   const fields = failure?.fields ?? {};
-
-  /**
-   * Checked when they leave the box and again on submit — never while they type, which
-   * would flash "does not match" at somebody who has entered one correct character.
-   */
-  function checkConfirmation(): boolean {
-    if (!confirmation || confirmation === form.password) {
-      setMismatch(undefined);
-      return Boolean(confirmation);
-    }
-    setMismatch('This does not match the password above.');
-    return false;
-  }
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center gap-8 p-6">
@@ -90,15 +64,6 @@ export function SignUpPage() {
         className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-
-          if (form.password && !checkConfirmation()) {
-            // Sent to the box that needs attention rather than left to find it. A mismatch
-            // caught after a round trip would be a round trip spent saying "look again".
-            setMismatch('This does not match the password above.');
-            confirmationInput.current?.focus();
-            return;
-          }
-
           signUp.mutate();
         }}
       >
@@ -129,6 +94,13 @@ export function SignUpPage() {
         {/*
           The hint gives way to the meter rather than sitting beside it. Two lines of advice
           under one box is where people stop reading either.
+
+          There is no "confirm password" box. That field earned its place only because a
+          mistyped password was unrecoverable — the first and only user of a brand-new
+          company, with no reset link and no colleague to let them back in — and account
+          recovery now exists precisely to close that gap. What is left to guard against a
+          typo is `Field`'s own reveal toggle, which lets somebody check what they typed
+          without a second box to keep in step with the first.
         */}
         <div className="flex flex-col gap-1.5">
           <Field
@@ -139,12 +111,7 @@ export function SignUpPage() {
             hint={form.password ? undefined : `At least ${PASSWORD_MIN_LENGTH} characters.`}
             value={form.password}
             error={fields.password}
-            onChange={(password) => {
-              setForm({ ...form, password });
-              // Editing either box makes the old verdict stale. Leaving it up would accuse
-              // somebody of a mistake they are in the middle of fixing.
-              setMismatch(undefined);
-            }}
+            onChange={(password) => setForm({ ...form, password })}
           />
 
           {!fields.password && (
@@ -157,31 +124,6 @@ export function SignUpPage() {
             />
           )}
         </div>
-
-        {/*
-          Redundant on the face of it — the reveal toggle already lets somebody check what
-          they typed — and worth keeping anyway while there is no password reset. This is
-          the first and only user of a brand-new company, so a typo locks them out of
-          something they have just created, with no reset link and no colleague to let them
-          back in.
-
-          Ticket 07 adds recovery alongside colleague invitations, and is the point at which
-          this field should be reconsidered rather than kept out of habit.
-        */}
-        <Field
-          id="confirmPassword"
-          label="Confirm password"
-          type="password"
-          autoComplete="new-password"
-          value={confirmation}
-          error={mismatch}
-          inputRef={confirmationInput}
-          onChange={(value) => {
-            setConfirmation(value);
-            setMismatch(undefined);
-          }}
-          onBlur={checkConfirmation}
-        />
 
         {/* Field-level messages already sit beside their inputs; repeating them at the top
             would say everything twice. Anything with no field of its own shows here. */}

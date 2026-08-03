@@ -384,7 +384,11 @@ function assembleNavigation(
 ): AssembledNavigationEntry[] {
   return ordered
     .flatMap((manifest) =>
-      manifest.navigation.map((entry) => ({ ...entry, module: manifest.name })),
+      manifest.navigation.map((entry) => ({
+        ...entry,
+        module: manifest.name,
+        tier: manifest.tier,
+      })),
     )
     .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
 }

@@ -171,7 +171,10 @@ The pack refuses:
 - **a Nest built-in exception or `@Res()`** — refusals are `ApiException` with the module's
   own code;
 - **`@Body()` without `validated(…)`** — there is no global pipe to fall back on, so an
-  undeclared body is an unchecked one.
+  undeclared body is an unchecked one;
+- **a handler with no `@RequirePermission()`, `@Public()` or `@NoPermissionRequired()`** — an
+  unguarded endpoint works perfectly for an owner, who holds everything, and refuses nothing on
+  the day somebody is given a role that omits it.
 
 Every message names both modules and states the permitted alternative. `backend/test/
 conformance.spec.ts` runs each rule against a module that deliberately breaks it, so the
@@ -199,9 +202,12 @@ export const manifest: FrontendModuleManifest = {
 };
 ```
 
-Routes are protected unless marked `public: true`, matching the backend's default. Sign-in
-and sign-up are the whole legitimate use of `public`: they are the screens somebody with no
-session must reach in order to get one.
+Routes are protected unless marked `public: true`, matching the backend's default. The
+legitimate use of `public` is exactly the screens somebody with no session must reach in order
+to get one: sign-in, sign-up, and the three account-recovery screens — forgot-password,
+reset-password, and accepting an invitation. Their paths come from the shared contract
+(`RECOVERY_SCREEN_PATHS`), because the backend writes two of them into the emails it sends and
+a rename has to break both workspaces rather than one inbox.
 
 ## Endpoints are guarded by default
 
@@ -213,6 +219,38 @@ identity binds an implementation to it. That is what lets the guard protect ever
 endpoints without the platform importing a module, and what lets the application boot with
 identity absent — nothing is bound, and every non-public endpoint refuses, which is the
 right failure for a system with no way to tell who anyone is.
+
+## Endpoints declare the permission they need
+
+Beyond a session, every handler says what a caller must hold:
+
+```ts
+@Get('employees')
+@RequirePermission('hrm:employees:read')
+async listEmployees(@Query() query: Record<string, unknown>) { … }
+```
+
+Three decorators, and a handler with none of them fails `npm run check:conformance`:
+
+| | |
+| --- | --- |
+| `@RequirePermission('…')` | The ordinary case. One of the module's own declared permissions. |
+| `@Public()` | Reachable with no session at all. Sign-in, sign-up, and account recovery. |
+| `@NoPermissionRequired('reason')` | Needs a session and nothing more specific, with the reason written out. Reading your own session, signing out, reading a menu that filters itself. |
+
+**Tier availability comes from the same string.** `AccessGuard` takes the module name from the
+permission's own prefix — `hrm:pay-runs:write` is hrm's — looks that module's tier up in the
+assembled registry, and refuses `module_unavailable` when the company's tier ranks below it,
+before checking the permission at all. That is the whole of tier enforcement: **no module ever
+mentions a tier outside its manifest**, and there is no second declaration for availability to
+drift from. Navigation filters by the same two facts, in the same one place.
+
+The company's tier is read from the database on every request rather than cached anywhere, so
+changing a company's tier takes effect on their very next request with no restart.
+
+Permissions themselves come from the manifests — `GET /api/permissions` assembles them the same
+way `GET /api/navigation` assembles the menu — so a module introducing one extends what a role
+can grant without anything central being edited. See ADR 0007.
 
 ## What a module may not do
 

@@ -17,6 +17,7 @@ import {
   type PayRunListResponse,
   type PayRunResponse,
 } from '@erp/shared';
+import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { HrmService } from './hrm.service';
 import { CalculatePayRunBody, CreateEmployeeBody, UpdateEmployeeBody } from './schemas';
@@ -40,6 +41,7 @@ export class HrmController {
 
   @Post('employees')
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('hrm:employees:write')
   async addEmployee(
     @Body(validated(CreateEmployeeBody)) body: Valid<typeof CreateEmployeeBody>,
   ): Promise<EmployeeResponse> {
@@ -47,6 +49,7 @@ export class HrmController {
   }
 
   @Get('employees')
+  @RequirePermission('hrm:employees:read')
   async listEmployees(
     @Query() query: Record<string, unknown>,
   ): Promise<EmployeeListResponse> {
@@ -54,6 +57,7 @@ export class HrmController {
   }
 
   @Patch('employees/:id')
+  @RequirePermission('hrm:employees:write')
   async changeEmployee(
     @Param('id') id: string,
     @Body(validated(UpdateEmployeeBody)) body: Valid<typeof UpdateEmployeeBody>,
@@ -63,12 +67,14 @@ export class HrmController {
 
   @Delete('employees/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('hrm:employees:write')
   async removeEmployee(@Param('id') id: string): Promise<void> {
     await this.hrm.removeEmployee(id);
   }
 
   @Post('pay-runs')
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('hrm:pay-runs:write')
   async calculatePayRun(
     @Body(validated(CalculatePayRunBody)) body: Valid<typeof CalculatePayRunBody>,
   ): Promise<PayRunResponse> {
@@ -76,11 +82,13 @@ export class HrmController {
   }
 
   @Get('pay-runs')
+  @RequirePermission('hrm:pay-runs:read')
   async listPayRuns(@Query() query: Record<string, unknown>): Promise<PayRunListResponse> {
     return this.hrm.listPayRuns(query);
   }
 
   @Get('pay-runs/:id')
+  @RequirePermission('hrm:pay-runs:read')
   async payRun(@Param('id') id: string): Promise<PayRunResponse> {
     return this.hrm.payRun(id);
   }

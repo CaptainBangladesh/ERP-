@@ -25,6 +25,11 @@ datasource db {
 model Company {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
+  /// `core`, `enterprise` or `custom` — see `@erp/shared`'s `ModuleTier`. Every company starts
+  /// at `core`; there is no self-serve upgrade in this system yet, so nothing here writes a
+  /// different value on sign-up. `AccessGuard` reads it fresh on every request rather than
+  /// caching it anywhere, which is what makes changing it take effect without a restart.
+  tier      String   @default("core")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -57,8 +62,10 @@ model User {
 
   company      Company  @relation("CompanyMembers", fields: [companyId], references: [id], onDelete: Cascade)
   /// Back-reference for the ownership relation above. At most one company points here.
-  ownedCompany Company? @relation("CompanyOwner")
-  sessions     Session[]
+  ownedCompany   Company?        @relation("CompanyOwner")
+  sessions       Session[]
+  userRoles      UserRole[]
+  passwordResets PasswordReset[]
 
   @@index([companyId])
   @@map("users")
@@ -78,6 +85,107 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+/// A named set of permissions, held by however many people a company assigns it to.
+///
+/// Permissions live in their own table (`RolePermission`) rather than an array column, the
+/// same shape `PartyRole` already uses for the one other multi-valued relation in this schema
+/// — a join table is a query and a foreign key, an array is neither.
+model Role {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  permissions RolePermission[]
+  userRoles   UserRole[]
+  invitations Invitation[]
+
+  /// One name per company. Two roles both called 'Stock clerk' would leave whoever assigns
+  /// them unable to say which is meant.
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@map("roles")
+}
+
+/// One permission a role grants, `<module>:<resource>:<action>`. No table of permitted values:
+/// a module introduces one by declaring it in its manifest, and this table only ever names
+/// strings some manifest already owns — checked by the conformance pack, not by a foreign key,
+/// because the set changes with the modules installed.
+model RolePermission {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  permission String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  /// Holding a permission twice is not a different fact from holding it once.
+  @@unique([roleId, permission])
+  @@index([companyId])
+  @@map("role_permissions")
+}
+
+/// One role held by one person. A person may hold several; their permissions are the union.
+model UserRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Restrict, deliberately: a role assigned to somebody cannot be deleted out from under
+  /// them. The service translates the constraint violation into a clear refusal rather than
+  /// checking first — the same shape `HrmService.removeEmployee` already uses for pay history.
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, roleId])
+  @@index([companyId])
+  @@index([companyId, userId])
+  @@map("user_roles")
+}
+
+/// A colleague invited but not yet signed up. `id` is the token itself — an unguessable UUID
+/// looked up directly, exactly the precedent `Session` already sets, rather than a second
+/// hashing scheme invented for one more bearer credential.
+model Invitation {
+  id          String    @id @default(uuid()) @db.Uuid
+  companyId   String    @map("company_id") @db.Uuid
+  email       String
+  /// Granted the moment the invitation is accepted. Nullable — an invitation need not start
+  /// anyone with a role — and `SetNull` rather than `Restrict`: a role deleted after somebody
+  /// was invited with it should not block their acceptance, only leave them roleless until
+  /// somebody assigns one.
+  roleId      String?   @map("role_id") @db.Uuid
+  invitedById String    @map("invited_by_id") @db.Uuid
+  expiresAt   DateTime  @map("expires_at")
+  acceptedAt  DateTime? @map("accepted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  role Role? @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([email])
+  @@map("invitations")
+}
+
+/// A password reset in progress. `id` is the token, as with `Invitation` and `Session`.
+model PasswordReset {
+  id        String    @id @default(uuid()) @db.Uuid
+  companyId String    @map("company_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_resets")
 }
 
 // ─── parties ────────────────────────────────────────────────────────────────────────
@@ -423,4 +531,40 @@ model ProductSupplier {
   @@index([companyId])
   @@index([partyId])
   @@map("product_suppliers")
+}
+
+// ─── warranties ────────────────────────────────────────────────────────────────────
+// Owned by the warranties module. See backend/src/modules/warranties.
+//
+// The add-on shape stub: Custom tier, depending on and extending `products` through its
+// public contract rather than editing it. As everywhere else, `companyId` is a plain column
+// with no foreign key to `companies` — keys stay inside a module, and scoping is the tenancy
+// extension's rather than the schema's. `productId` is the same rule seen from the other
+// side: it points at a row `products` owns, and there is deliberately no key to it. The
+// reference is resolved through `ProductCatalogue`, which is a contract, and a foreign key
+// would be a second dependency the module graph does not describe.
+
+/// A warranty period recorded against a product.
+model Warranty {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  productId String  @map("product_id") @db.Uuid
+  /// How many months the warranty covers, from whenever the business considers it to start.
+  months    Int
+  notes     String?
+
+  /// `active` or `inactive`. Deactivating rather than deleting is what keeps a voided
+  /// warranty's history intelligible.
+  status String @default("active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  /// The list's default order, within a company — the `(company_id, <default sort>)` shape
+  /// every list endpoint's default sort wants, so that offset paging is an index walk.
+  @@index([companyId, createdAt])
+  @@index([companyId, productId])
+  @@map("warranties")
 }

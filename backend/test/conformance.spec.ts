@@ -473,6 +473,98 @@ describe('what every module has to get right', () => {
       ),
     ).toEqual([]);
   });
+
+  it('refuses a handler with no permission check at all', () => {
+    const violations = checkConformance(
+      repository([parties], [
+        {
+          path: 'backend/src/modules/parties/parties.controller.ts',
+          text:
+            `@Controller('api/parties')\n` +
+            `export class PartiesController {\n` +
+            `  @Get()\n` +
+            `  async list() {}\n` +
+            `}\n`,
+        },
+      ]),
+    );
+
+    expect(rules(violations)).toEqual(['permission-declared']);
+    expect(message(violations, 'permission-declared')).toContain('@RequirePermission');
+  });
+
+  it('accepts each of the three ways a handler may check access', () => {
+    const controller = (decorator: string): SourceFile => ({
+      path: 'backend/src/modules/parties/parties.controller.ts',
+      text:
+        `@Controller('api/parties')\n` +
+        `export class PartiesController {\n` +
+        `  ${decorator}\n` +
+        `  @Get()\n` +
+        `  async list() {}\n` +
+        `}\n`,
+    });
+
+    expect(checkConformance(repository([parties], [controller('@Public()')]))).toEqual([]);
+    expect(
+      checkConformance(
+        repository([parties], [controller("@RequirePermission('parties:parties:read')")]),
+      ),
+    ).toEqual([]);
+    expect(
+      checkConformance(
+        repository([parties], [controller("@NoPermissionRequired('reason')")]),
+      ),
+    ).toEqual([]);
+  });
+
+  /**
+   * The two gaps a per-module, per-filename rule would leave.
+   *
+   * The platform serves endpoints of its own, and they need guarding for exactly the reason a
+   * module's do; and a handler in a file nobody thought to call `*.controller.ts` is the case
+   * where being unguarded *and* unnoticed coincide. Both are refused by recognising the
+   * `@Controller` rather than the path.
+   */
+  it('refuses an unguarded handler in a platform controller, which belongs to no module', () => {
+    const violations = checkConformance(
+      repository([parties], [
+        {
+          path: 'backend/src/platform/reporting/reporting.controller.ts',
+          text:
+            `@Controller()\n` +
+            `export class ReportingController {\n` +
+            `  @Get('api/reports')\n` +
+            `  reports() {}\n` +
+            `}\n`,
+        },
+      ]),
+    );
+
+    expect(rules(violations)).toEqual(['permission-declared']);
+    // Nobody's module, so the message names the file instead — and still says what to write.
+    expect(message(violations, 'permission-declared')).toContain('reporting.controller.ts');
+    expect(message(violations, 'permission-declared')).toContain('@RequirePermission');
+  });
+
+  it('refuses an unguarded handler whatever the file is called', () => {
+    const violations = checkConformance(
+      repository([parties], [
+        {
+          path: 'backend/src/modules/parties/merge-endpoints.ts',
+          text:
+            `@Controller('api/parties')\n` +
+            `export class MergeEndpoints {\n` +
+            `  @Post(':id/merge')\n` +
+            `  merge() {}\n` +
+            `}\n`,
+        },
+      ]),
+    );
+
+    expect(rules(violations)).toEqual(['permission-declared']);
+    expect(message(violations, 'permission-declared')).toContain("'parties'");
+  });
 });
 
 /**

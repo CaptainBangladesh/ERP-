@@ -1,9 +1,12 @@
 import { render, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
+import { http, HttpResponse } from 'msw';
+import { AUTH_PATHS, type ModuleTier } from '@erp/shared';
 import { AppProviders, createQueryClient } from '../providers/AppProviders';
 import { setAuthToken } from '../api/client';
 import { SESSION_TOKEN_STORAGE_KEY } from '../session/token-storage';
+import { server } from './server';
 
 export interface RenderOptions {
   /**
@@ -23,6 +26,36 @@ export interface RenderOptions {
  * Every later module's screens are tested through this. Assert on rendered output and user
  * interaction — never on hooks or component state.
  */
+/**
+ * Answers `GET /api/auth/session` as somebody holding the given permissions.
+ *
+ * A screen that hides a control the caller may not use has to be told what they hold, and
+ * every such test needs the same three lines. Here rather than copied per file so that a
+ * change to the session shape is one edit — the same reasoning `renderPage` itself follows.
+ *
+ * Pair it with `renderPage(…, { token })`: the token is what makes the application *ask*.
+ */
+export function signedInWith(
+  permissions: 'all' | string[] = 'all',
+  overrides: { isOwner?: boolean; tier?: ModuleTier } = {},
+): void {
+  server.use(
+    http.get(AUTH_PATHS.session, () =>
+      HttpResponse.json({
+        user: {
+          id: 'u1',
+          name: 'Ada Okafor',
+          email: 'ada@northwind.test',
+          isOwner: overrides.isOwner ?? false,
+        },
+        company: { id: 'c1', name: 'Northwind Trading', tier: overrides.tier ?? 'core' },
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        permissions,
+      }),
+    ),
+  );
+}
+
 export function renderPage(
   ui: ReactElement,
   { token, path = '/' }: RenderOptions = {},

@@ -52,6 +52,12 @@ describe('tenant scoping', () => {
       .expect(201);
 
     const session = response.body as AuthenticatedSession;
+
+    // This whole file exists to exercise the HRM stub, which is enterprise tier. Every
+    // company here needs to reach it, and there is no self-serve upgrade screen — the tier
+    // is set directly, the same way a future billing process would.
+    await factories.setTier(session.company.id, 'enterprise');
+
     return {
       session,
       as: (request) => request.set('Authorization', `Bearer ${session.token}`),
@@ -80,17 +86,26 @@ describe('tenant scoping', () => {
   }
 
   /**
-   * A second person in the company, holding nothing.
+   * A second person in the company, holding every ordinary HRM permission and neither
+   * restricted grant.
    *
-   * Same company, so tenancy lets them see everything the owner can — which is exactly what
-   * makes them the right person to prove that restriction is a separate thing from scoping.
-   * Until ticket 07 there is no way to invite one, so the harness arranges it directly.
+   * Same company, so tenancy lets them reach everything the owner can once RBAC agrees they
+   * may use HRM at all — which is exactly what makes them the right person to prove that
+   * restriction (a value withheld) is a separate thing from authorization (an endpoint
+   * refused). Without `hrm:employees:read` etc. every request below would be `403 forbidden`
+   * before it ever reached the tenancy extension, which is not what these tests are about.
    */
   async function colleagueWithout(tenant: Tenant): Promise<Tenant['as']> {
     await factories.addColleague({
       ownerUserId: tenant.session.user.id,
       name: 'Kit Moreau',
       email: 'kit@northwind.test',
+      permissions: [
+        'hrm:employees:read',
+        'hrm:employees:write',
+        'hrm:pay-runs:read',
+        'hrm:pay-runs:write',
+      ],
     });
 
     const signedIn = await app.http

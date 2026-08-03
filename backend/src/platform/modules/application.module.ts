@@ -6,10 +6,13 @@ import {
 } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { SessionGuard } from '../auth';
+import { AccessGuard } from '../authorization';
+import { MailModule } from '../mail';
 import { TenancyModule } from '../tenancy';
 import { TenancyGuard } from '../tenancy/tenancy.guard';
 import { TenancyMiddleware } from '../tenancy/tenancy.middleware';
 import { NavigationController } from '../navigation/navigation.controller';
+import { PermissionsController } from '../navigation/permissions.controller';
 import { assembleModules } from './assemble';
 import { MODULE_REGISTRY } from './registry';
 import type { ModuleManifest } from './manifest';
@@ -30,8 +33,8 @@ export class ApplicationModule implements NestModule {
 
     return {
       module: ApplicationModule,
-      imports: [TenancyModule, ...assembled.nestModules],
-      controllers: [NavigationController],
+      imports: [TenancyModule, MailModule, ...assembled.nestModules],
+      controllers: [NavigationController, PermissionsController],
       providers: [
         { provide: MODULE_REGISTRY, useValue: assembled },
         TenancyMiddleware,
@@ -47,9 +50,14 @@ export class ApplicationModule implements NestModule {
         /**
          * Then the company the caller acts as. Order matters and is the order these are
          * written in: guards run in registration order, so the session exists by the time
-         * tenancy asks for it. Ticket 07's permission guard joins the end of this list.
+         * tenancy asks for it.
          */
         { provide: APP_GUARD, useClass: TenancyGuard },
+        /**
+         * Finally, whether that company's tier and that caller's permissions reach this
+         * particular handler — last, because it needs the grants tenancy has just resolved.
+         */
+        { provide: APP_GUARD, useClass: AccessGuard },
       ],
     };
   }

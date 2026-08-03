@@ -16,6 +16,17 @@ export function useLocationPath(): string {
   return useSyncExternalStore(subscribe, () => window.location.pathname);
 }
 
+/**
+ * The query string of wherever the browser is now.
+ *
+ * Not reactive, unlike `useLocationPath`: the one use today is reading a token off a link a
+ * user arrived on — `?token=…` — which does not change while the screen it named is open, so
+ * there is nothing here for a subscription to watch for.
+ */
+export function currentSearchParams(): URLSearchParams {
+  return new URLSearchParams(window.location.search);
+}
+
 function subscribe(onChange: () => void): () => void {
   // `popstate` covers back and forward; the custom event covers `navigate` below, because
   // pushState deliberately does not fire one.

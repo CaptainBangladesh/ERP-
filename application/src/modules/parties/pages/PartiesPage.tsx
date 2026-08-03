@@ -21,6 +21,8 @@ import {
 } from '@erp/shared';
 import { DataTable, Field, FormError, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
+import { useSession } from '../../../session/SessionProvider';
+import { hasPermission } from '../../../session/permissions';
 import { PartyDetail } from '../components/PartyDetail';
 
 /**
@@ -37,6 +39,8 @@ import { PartyDetail } from '../components/PartyDetail';
  * the same promise the module makes: a module that introduces a role changes nothing here.
  */
 export function PartiesPage() {
+  const { session } = useSession();
+  const canAddParty = hasPermission(session, 'parties:parties:write');
   const [query, setQuery] = useState<ListQuery>({});
   const [selectedId, setSelectedId] = useState<string>();
   const queryClient = useQueryClient();
@@ -124,16 +128,18 @@ export function PartiesPage() {
         </p>
       </header>
 
-      <AddParty
-        organisations={everyone.filter((party) => party.kind === 'organisation')}
-        onAdded={(party) => {
-          // The list is stale the moment a party is added, and a screen showing a list that
-          // does not contain what you just created is a screen nobody trusts again.
-          refresh();
-          setQuery({});
-          setSelectedId(party.id);
-        }}
-      />
+      {canAddParty && (
+        <AddParty
+          organisations={everyone.filter((party) => party.kind === 'organisation')}
+          onAdded={(party) => {
+            // The list is stale the moment a party is added, and a screen showing a list that
+            // does not contain what you just created is a screen nobody trusts again.
+            refresh();
+            setQuery({});
+            setSelectedId(party.id);
+          }}
+        />
+      )}
 
       {selectedId && (
         <PartyDetail

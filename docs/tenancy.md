@@ -133,7 +133,10 @@ await prisma.payRunLine.findMany({ include: { employee: { select: { name: true }
 
 Where the value is the *point* of the request — calculating a pay run reads salaries — the
 module refuses up front with a 403 rather than computing over omitted values. Use
-`Tenancy.holds(grant)` for that; ticket 07 turns it into a permission on the handler.
+`Tenancy.holds(grant)` for that. Note that this is *not* the same as the handler's
+`@RequirePermission`: the permission says whether the caller may run a pay run at all, and this
+says whether the numbers it would produce are theirs to see. Both apply, and `hrm.service.ts`
+is the worked example.
 
 **A caller can name a restricted field too**, since ticket 04 turned field names into
 query-string input: `?sort=annualSalary` is a URL a user can type. `RestrictedFieldError` and
@@ -143,8 +146,9 @@ something other than a 500 — `ApiExceptionFilter` translates them into a **403
 Nothing in the list convention duplicates the restriction table to do this; the extension
 refuses and the boundary translates. See ADR 0004 and [api-conventions.md](api-conventions.md).
 
-**Restriction governs reading.** Who may *write* a restricted field is authorization, and
-that is ticket 07's.
+**Restriction governs reading.** Who may *write* a restricted field is authorization: it takes
+the same permission as any other field on that record — `hrm:employees:write` for a salary — and
+restriction has nothing to say about it. See "Grants" below and ADR 0007.
 
 ## Restricting a whole record
 
@@ -234,9 +238,21 @@ email across every company, because until it has found them there is nothing to 
 
 If you are reaching for it anywhere else, you are almost certainly working around a bug.
 
-## Grants today
+## Grants
 
-Until ticket 07 introduces roles, `TenancyGuard` derives grants the only way the system
-honestly can: a company's owner created it and holds everything, nobody else holds anything.
-Blunt, but not a lie — and it is one line to replace, in one file, with nothing outside the
-tenancy platform changing.
+A caller's grants are the permissions their roles resolve to, read fresh on every request:
+identity computes them in `authenticate()` from the `Role` / `RolePermission` / `UserRole`
+tables, and `TenancyGuard` puts them into the tenant context. A company's owner holds `'all'`
+unconditionally — derived from having created the company, never from a role, which is what
+makes it impossible to lock them out. See ADR 0007.
+
+This is the one line ticket 03 earmarked and ticket 07 replaced. Nothing outside the tenancy
+platform changed to make it real: a restricted field is still restricted by the same grant
+string, and `holdsGrant` still answers the same question.
+
+**Restriction governs reading; authorization governs the action.** They are separate axes and
+both apply. Writing `Employee.annualSalary` needs `hrm:employees:write`, like any other field on
+that record — restriction says nothing about writing. A caller holding `hrm:employees:write` and
+not `hrm:pay:read` can set a salary and will not see it in the response, which is coherent: the
+endpoint permission decides whether the action happens, the restriction decides whether the value
+comes back.

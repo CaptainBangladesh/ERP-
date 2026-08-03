@@ -16,6 +16,7 @@ import {
   type PartyResponse,
   type PartyRolesResponse,
 } from '@erp/shared';
+import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { PartiesService } from './parties.service';
 import {
@@ -44,6 +45,7 @@ export class PartiesController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('parties:parties:write')
   async addParty(
     @Body(validated(CreatePartyBody)) body: Valid<typeof CreatePartyBody>,
   ): Promise<PartyResponse> {
@@ -51,6 +53,7 @@ export class PartiesController {
   }
 
   @Get()
+  @RequirePermission('parties:parties:read')
   async listParties(@Query() query: Record<string, unknown>): Promise<PartyListResponse> {
     return this.parties.listParties(query);
   }
@@ -61,16 +64,19 @@ export class PartiesController {
    * up a party by that name.
    */
   @Get('roles')
+  @RequirePermission('parties:parties:read')
   async roles(): Promise<PartyRolesResponse> {
     return this.parties.rolesInUse();
   }
 
   @Get(':id')
+  @RequirePermission('parties:parties:read')
   async party(@Param('id') id: string): Promise<PartyResponse> {
     return this.parties.partyDetail(id);
   }
 
   @Patch(':id')
+  @RequirePermission('parties:parties:write')
   async changeParty(
     @Param('id') id: string,
     @Body(validated(UpdatePartyBody)) body: Valid<typeof UpdatePartyBody>,
@@ -80,6 +86,7 @@ export class PartiesController {
 
   @Post(':id/roles')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('parties:parties:write')
   async addRole(
     @Param('id') id: string,
     @Body(validated(AddPartyRoleBody)) body: Valid<typeof AddPartyRoleBody>,
@@ -93,6 +100,7 @@ export class PartiesController {
    * second request to find out would be a second chance for the two to disagree.
    */
   @Delete(':id/roles/:role')
+  @RequirePermission('parties:parties:write')
   async removeRole(
     @Param('id') id: string,
     @Param('role') role: string,
@@ -102,6 +110,7 @@ export class PartiesController {
 
   @Post(':id/addresses')
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('parties:parties:write')
   async addAddress(
     @Param('id') id: string,
     @Body(validated(CreatePartyAddressBody)) body: Valid<typeof CreatePartyAddressBody>,
@@ -110,6 +119,7 @@ export class PartiesController {
   }
 
   @Delete(':id/addresses/:addressId')
+  @RequirePermission('parties:parties:write')
   async removeAddress(
     @Param('id') id: string,
     @Param('addressId') addressId: string,
@@ -124,6 +134,7 @@ export class PartiesController {
    */
   @Post(':id/merge')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('parties:parties:write')
   async merge(
     @Param('id') id: string,
     @Body(validated(MergePartiesBody)) body: Valid<typeof MergePartiesBody>,

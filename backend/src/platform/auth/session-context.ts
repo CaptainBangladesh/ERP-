@@ -15,6 +15,8 @@ export interface RequestSession {
   readonly user: SignedInUser;
   readonly company: SignedInCompany;
   readonly expiresAt: Date;
+  /** Every permission this caller holds, or `'all'` for the company's owner. See `Tenancy`. */
+  readonly permissions: 'all' | readonly string[];
 }
 
 /** Where the guard leaves the resolved session. Read it through `@CurrentSession()`. */

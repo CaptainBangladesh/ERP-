@@ -345,6 +345,86 @@ function validatedBodies({ manifest, sources }: ModuleConformanceInput): Violati
   return violations;
 }
 
+const CONTROLLER_DECORATOR = /^\s*@Controller\(/m;
+const HTTP_VERB_DECORATOR = /^\s*@(Get|Post|Put|Patch|Delete)\(/;
+const DECORATOR_LINE = /^\s*@/;
+const ACCESS_DECORATOR = /^\s*@(Public|RequirePermission|NoPermissionRequired)\(/;
+
+/**
+ * Every endpoint checks a permission, one way or another — ticket 07's handover from the
+ * placeholder `TenancyGuard` used to carry alone.
+ *
+ * A handler is guarded by default, the same posture as everything else here: `@Public()` for
+ * the handful that need no session at all, `@RequirePermission(...)` for the ordinary case,
+ * and `@NoPermissionRequired(...)` for the rare handler that needs a session and nothing more
+ * specific — reading your own session, signing out, reading a menu that filters itself. A
+ * handler with none of the three is the quietest possible mistake: it works today, for an
+ * owner who holds everything, and refuses nothing the day somebody assigns a caller a role
+ * that does not include it.
+ *
+ * This runs over **every** backend source declaring a `@Controller`, not only the ones inside
+ * a module and not only the ones named `*.controller.ts`. Two gaps close with that: the
+ * platform serves endpoints of its own (navigation, the permission catalogue), and a module
+ * handler in a differently-named file would otherwise be unguarded *and* invisible here — the
+ * exact combination this rule exists to make impossible.
+ *
+ * Decorators are grouped by the contiguous run of lines immediately above the method they
+ * belong to, because that is what a decorator *is* — not matched by one regex across the whole
+ * file, which could not tell one handler's decorators from another's. Every controller in this
+ * repository is laid out with one decorator per line directly above its method, which is what
+ * makes a line-by-line grouping exact rather than a heuristic.
+ */
+export function checkPermissionsDeclared(sources: readonly SourceFile[]): Violation[] {
+  const violations: Violation[] = [];
+
+  for (const source of sources) {
+    if (!source.path.startsWith('backend/')) continue;
+
+    const text = withoutComments(source.text);
+    if (!CONTROLLER_DECORATOR.test(text)) continue;
+
+    const owner = moduleOf(source.path, BACKEND_MODULES);
+    const who = owner ? `Module '${owner}'` : `'${source.path}'`;
+    const lines = text.split('\n');
+
+    let groupStart: number | undefined;
+    let hasHttpVerb = false;
+    let hasAccessDecorator = false;
+
+    const flush = (): void => {
+      if (hasHttpVerb && !hasAccessDecorator && groupStart !== undefined) {
+        violations.push({
+          rule: 'permission-declared',
+          module: owner,
+          path: source.path,
+          line: groupStart,
+          message:
+            `${who} has a handler with none of '@Public()', '@RequirePermission(...)' or ` +
+            `'@NoPermissionRequired(...)'. Every endpoint checks a permission one of those ` +
+            `three ways; a handler with none of them refuses nothing today and refuses ` +
+            `nothing tomorrow, however a caller's role changes.`,
+        });
+      }
+      groupStart = undefined;
+      hasHttpVerb = false;
+      hasAccessDecorator = false;
+    };
+
+    for (const [index, line] of lines.entries()) {
+      if (DECORATOR_LINE.test(line)) {
+        if (groupStart === undefined) groupStart = index + 1;
+        if (HTTP_VERB_DECORATOR.test(line)) hasHttpVerb = true;
+        if (ACCESS_DECORATOR.test(line)) hasAccessDecorator = true;
+      } else if (line.trim().length > 0) {
+        flush();
+      }
+    }
+    flush();
+  }
+
+  return violations;
+}
+
 /** The sources belonging to one module, from the whole backend tree. */
 export function sourcesOf(
   name: string,

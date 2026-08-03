@@ -27,3 +27,4 @@ export * from './modules/identity/contract.js';
 export * from './modules/hrm/contract.js';
 export * from './modules/parties/contract.js';
 export * from './modules/products/contract.js';
+export * from './modules/warranties/contract.js';

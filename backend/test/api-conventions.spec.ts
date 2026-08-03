@@ -68,6 +68,12 @@ describe('API conventions', () => {
       .expect(201);
 
     const session = response.body as AuthenticatedSession;
+
+    // This file exercises hrm's list, which is enterprise tier. There is no self-serve
+    // upgrade screen, so the tier is set directly, the same way a future billing process
+    // eventually would.
+    await factories.setTier(session.company.id, 'enterprise');
+
     return {
       session,
       as: (request) => request.set('Authorization', `Bearer ${session.token}`),
@@ -75,15 +81,23 @@ describe('API conventions', () => {
   }
 
   /**
-   * A colleague of the owner: same company, no grants at all until ticket 07 introduces
-   * roles. They are the caller every restriction test needs, because the owner holds
-   * everything by construction.
+   * A colleague of the owner: same company, holding every ordinary HRM permission and
+   * neither of its two restriction grants. They are the caller every restriction test needs,
+   * because the owner holds everything by construction — and they need the ordinary
+   * permissions too, or every request below would be refused for lacking them before it ever
+   * reached the restriction this file is actually testing.
    */
   async function colleagueOf(owner: Tenant): Promise<Tenant['as']> {
     await factories.addColleague({
       ownerUserId: owner.session.user.id,
       name: 'Kit Bramley',
       email: 'kit@northwind.test',
+      permissions: [
+        'hrm:employees:read',
+        'hrm:employees:write',
+        'hrm:pay-runs:read',
+        'hrm:pay-runs:write',
+      ],
     });
 
     const response = await app.http

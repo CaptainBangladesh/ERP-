@@ -9,7 +9,7 @@ import {
   type PartySummary,
 } from '@erp/shared';
 import { server } from '../../../test/server';
-import { renderPage } from '../../../test/render';
+import { renderPage, signedInWith } from '../../../test/render';
 import { PartiesPage } from './PartiesPage';
 
 /**
@@ -269,6 +269,7 @@ describe('PartiesPage', () => {
 
   describe('adding a party', () => {
     it('creates a person and refreshes the list', async () => {
+      signedInWith();
       let sent: unknown;
       let created = false;
       const ada = party('Ada Okafor');
@@ -286,10 +287,10 @@ describe('PartiesPage', () => {
         }),
       );
 
-      const { user } = renderPage(<PartiesPage />, { path: '/parties' });
+      const { user } = renderPage(<PartiesPage />, { token: 'a-token', path: '/parties' });
       await screen.findByText(/nobody in the address book yet/i);
 
-      await user.type(screen.getByLabelText(/^name$/i), 'Ada Okafor');
+      await user.type(await screen.findByLabelText(/^name$/i), 'Ada Okafor');
       await user.type(screen.getByLabelText(/^email$/i), 'ada@example.test');
       await user.click(screen.getByRole('button', { name: /add party/i }));
 
@@ -300,6 +301,7 @@ describe('PartiesPage', () => {
     });
 
     it('creates an organisation when asked to', async () => {
+      signedInWith();
       let sent: unknown;
       const northwind = party('Northwind Ltd', { kind: 'organisation' });
 
@@ -313,10 +315,10 @@ describe('PartiesPage', () => {
         }),
       );
 
-      const { user } = renderPage(<PartiesPage />, { path: '/parties' });
+      const { user } = renderPage(<PartiesPage />, { token: 'a-token', path: '/parties' });
       await screen.findByText(/nobody in the address book yet/i);
 
-      await user.click(screen.getByRole('radio', { name: /organisation/i }));
+      await user.click(await screen.findByRole('radio', { name: /organisation/i }));
       await user.type(screen.getByLabelText(/^name$/i), 'Northwind Ltd');
       await user.click(screen.getByRole('button', { name: /add party/i }));
 
@@ -326,6 +328,7 @@ describe('PartiesPage', () => {
     });
 
     it('puts a server message beside the input it belongs to', async () => {
+      signedInWith();
       server.use(
         http.get(PARTY_PATHS.roles, () => HttpResponse.json({ roles: [] })),
         http.get(PARTY_PATHS.parties, () => HttpResponse.json(page([]))),
@@ -341,15 +344,28 @@ describe('PartiesPage', () => {
         ),
       );
 
-      const { user } = renderPage(<PartiesPage />, { path: '/parties' });
+      const { user } = renderPage(<PartiesPage />, { token: 'a-token', path: '/parties' });
       await screen.findByText(/nobody in the address book yet/i);
 
-      await user.type(screen.getByLabelText(/^name$/i), 'Ada Okafor');
+      await user.type(await screen.findByLabelText(/^name$/i), 'Ada Okafor');
       await user.click(screen.getByRole('button', { name: /add party/i }));
 
       const email = await screen.findByLabelText(/^email$/i);
       expect(email).toHaveAttribute('aria-invalid', 'true');
       expect(email).toHaveAccessibleDescription(/name@example.com/i);
+    });
+
+    it('hides the form from a colleague without parties:parties:write', async () => {
+      signedInWith([]);
+      server.use(
+        http.get(PARTY_PATHS.roles, () => HttpResponse.json({ roles: [] })),
+        http.get(PARTY_PATHS.parties, () => HttpResponse.json(page([party('Ada Okafor')]))),
+      );
+
+      renderPage(<PartiesPage />, { token: 'a-token', path: '/parties' });
+      await screen.findByText('Ada Okafor');
+
+      expect(screen.queryByRole('button', { name: /add party/i })).not.toBeInTheDocument();
     });
   });
 

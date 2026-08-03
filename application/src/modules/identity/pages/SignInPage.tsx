@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import {
   AUTH_PATHS,
   ERROR_CODES,
+  RECOVERY_SCREEN_PATHS,
   type AuthenticatedSession,
   type SignInRequest,
 } from '@erp/shared';
@@ -57,15 +58,23 @@ export function SignInPage() {
           error={fields.email}
           onChange={(email) => setForm({ ...form, email })}
         />
-        <Field
-          id="password"
-          label="Password"
-          type="password"
-          autoComplete="current-password"
-          value={form.password}
-          error={fields.password}
-          onChange={(password) => setForm({ ...form, password })}
-        />
+        <div className="flex flex-col gap-1.5">
+          <Field
+            id="password"
+            label="Password"
+            type="password"
+            autoComplete="current-password"
+            value={form.password}
+            error={fields.password}
+            onChange={(password) => setForm({ ...form, password })}
+          />
+          <a
+            {...linkProps(RECOVERY_SCREEN_PATHS.forgotPassword)}
+            className="self-start text-sm text-slate-600 underline hover:text-slate-900"
+          >
+            Forgot password?
+          </a>
+        </div>
 
         {failure && failure.code !== ERROR_CODES.validationFailed && (
           <FormError>{failure.message}</FormError>

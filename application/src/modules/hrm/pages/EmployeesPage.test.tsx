@@ -9,7 +9,7 @@ import {
   type EmployeeResponse,
 } from '@erp/shared';
 import { server } from '../../../test/server';
-import { renderPage } from '../../../test/render';
+import { renderPage, signedInWith } from '../../../test/render';
 import { EmployeesPage } from './EmployeesPage';
 
 /**
@@ -304,6 +304,7 @@ describe('EmployeesPage', () => {
 
   describe('adding somebody', () => {
     it('sends the amount as exact text and refreshes the list', async () => {
+      signedInWith('all', { tier: 'enterprise' });
       let sent: unknown;
       let created = false;
 
@@ -318,10 +319,10 @@ describe('EmployeesPage', () => {
         }),
       );
 
-      const { user } = renderPage(<EmployeesPage />, { path: '/hrm/employees' });
-      await screen.findByText(/nobody on the payroll yet/i);
-
-      await user.type(screen.getByLabelText(/^name$/i), 'Ada Okafor');
+      const { user } = renderPage(<EmployeesPage />, { token: 'a-token', path: '/hrm/employees' });
+      // `findBy`, not `getBy`: the form is gated on a permission the session query resolves
+      // separately from the (empty) employee list, so the two need not settle in one tick.
+      await user.type(await screen.findByLabelText(/^name$/i), 'Ada Okafor');
       await user.type(screen.getByLabelText(/annual salary/i), '48000.10');
       await user.click(screen.getByRole('button', { name: /add employee/i }));
 
@@ -334,12 +335,11 @@ describe('EmployeesPage', () => {
     });
 
     it('refuses a keystroke that could not become an amount', async () => {
+      signedInWith('all', { tier: 'enterprise' });
       listing(() => page([]));
 
-      const { user } = renderPage(<EmployeesPage />, { path: '/hrm/employees' });
-      await screen.findByText(/nobody on the payroll yet/i);
-
-      const salary = screen.getByLabelText(/annual salary/i);
+      const { user } = renderPage(<EmployeesPage />, { token: 'a-token', path: '/hrm/employees' });
+      const salary = await screen.findByLabelText(/annual salary/i);
       await user.type(salary, '12a.999');
 
       // A letter never appears, and neither does a third decimal place — the box cannot
@@ -348,6 +348,7 @@ describe('EmployeesPage', () => {
     });
 
     it('puts a server message beside the input it belongs to', async () => {
+      signedInWith('all', { tier: 'enterprise' });
       listing(() => page([]));
       server.use(
         http.post(HRM_PATHS.employees, () =>
@@ -362,15 +363,23 @@ describe('EmployeesPage', () => {
         ),
       );
 
-      const { user } = renderPage(<EmployeesPage />, { path: '/hrm/employees' });
-      await screen.findByText(/nobody on the payroll yet/i);
-
-      await user.type(screen.getByLabelText(/^name$/i), 'Ada Okafor');
+      const { user } = renderPage(<EmployeesPage />, { token: 'a-token', path: '/hrm/employees' });
+      await user.type(await screen.findByLabelText(/^name$/i), 'Ada Okafor');
       await user.click(screen.getByRole('button', { name: /add employee/i }));
 
       const salary = await screen.findByLabelText(/annual salary/i);
       expect(salary).toHaveAttribute('aria-invalid', 'true');
       expect(salary).toHaveAccessibleDescription(/cannot be negative/i);
+    });
+
+    it('hides the form from a colleague without hrm:employees:write', async () => {
+      signedInWith([], { tier: 'enterprise' });
+      listing(() => page([employee('Ada Okafor')]));
+
+      renderPage(<EmployeesPage />, { token: 'a-token', path: '/hrm/employees' });
+      await screen.findByText('Ada Okafor');
+
+      expect(screen.queryByRole('button', { name: /add employee/i })).not.toBeInTheDocument();
     });
   });
 });

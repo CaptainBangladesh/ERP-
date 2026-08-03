@@ -23,6 +23,8 @@ import {
 import { DataTable, Field, FormError, MoneyInput, MoneyText, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 import { linkProps } from '../../../app/location';
+import { useSession } from '../../../session/SessionProvider';
+import { hasPermission } from '../../../session/permissions';
 import { ProductDetail } from '../components/ProductDetail';
 
 /**
@@ -39,6 +41,8 @@ import { ProductDetail } from '../components/ProductDetail';
  * and points at the screen that fixes it.
  */
 export function ProductsPage() {
+  const { session } = useSession();
+  const canAddProduct = hasPermission(session, 'products:products:write');
   const [query, setQuery] = useState<ListQuery>({});
   const [selectedId, setSelectedId] = useState<string>();
   const queryClient = useQueryClient();
@@ -123,26 +127,27 @@ export function ProductsPage() {
         </p>
       </header>
 
-      {units.isSuccess && usable.length === 0 ? (
-        <p className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-700">
-          Before you can add a product, say what you measure things in. Units are on the{' '}
-          <a {...linkProps('/units')} className="font-medium text-slate-900 underline">
-            Units
-          </a>{' '}
-          screen — nothing here is set up for you, so a kilogram exists once you say it does.
-        </p>
-      ) : (
-        <AddProduct
-          units={usable}
-          onAdded={(product) => {
-            // The list is stale the moment a product is added, and a screen showing a list
-            // that does not contain what you just created is a screen nobody trusts again.
-            refresh();
-            setQuery({});
-            setSelectedId(product.id);
-          }}
-        />
-      )}
+      {canAddProduct &&
+        (units.isSuccess && usable.length === 0 ? (
+          <p className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-700">
+            Before you can add a product, say what you measure things in. Units are on the{' '}
+            <a {...linkProps('/units')} className="font-medium text-slate-900 underline">
+              Units
+            </a>{' '}
+            screen — nothing here is set up for you, so a kilogram exists once you say it does.
+          </p>
+        ) : (
+          <AddProduct
+            units={usable}
+            onAdded={(product) => {
+              // The list is stale the moment a product is added, and a screen showing a list
+              // that does not contain what you just created is a screen nobody trusts again.
+              refresh();
+              setQuery({});
+              setSelectedId(product.id);
+            }}
+          />
+        ))}
 
       {selectedId && (
         <ProductDetail

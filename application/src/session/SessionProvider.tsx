@@ -85,6 +85,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         user: session.user,
         company: session.company,
         expiresAt: session.expiresAt,
+        permissions: session.permissions,
       } satisfies Session);
     },
     [queryClient],

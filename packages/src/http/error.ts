@@ -49,6 +49,18 @@ export const ERROR_CODES = {
    * it was an invalid field name would be a refusal disguised as a typo. ADR 0004.
    */
   fieldRestricted: 'field_restricted',
+  /**
+   * A caller is signed in but lacks the specific permission a handler requires. Ticket 07's
+   * `AccessGuard` raises this; distinct from `field_restricted` because nothing here was named
+   * in a query string — the whole action was refused.
+   */
+  forbidden: 'forbidden',
+  /**
+   * The endpoint belongs to a module the caller's company tier does not reach. Distinct from
+   * `forbidden`: the caller might hold the permission outright and still be refused, because
+   * the module itself is not part of their plan.
+   */
+  moduleUnavailable: 'module_unavailable',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

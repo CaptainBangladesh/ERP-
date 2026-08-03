@@ -141,6 +141,20 @@ company name." and "Enter the employee's name." are the same rule and different 
 Unknown keys are ignored: refusing them would make every additive API change a breaking one
 for a client that sends a record back exactly as it received it.
 
+## Three ways a signed-in caller is refused
+
+They are deliberately distinct, and none subsumes another:
+
+| Code | Status | Means |
+| --- | --- | --- |
+| `forbidden` | 403 | You do not hold the permission this endpoint requires. |
+| `module_unavailable` | 403 | This endpoint belongs to a module your company's plan does not include. |
+| `field_restricted` | 403 | You named a column you may not read, in a sort or a filter. |
+
+A caller can hold `hrm:employees:read` and still be refused `?sort=annualSalary` — the action is
+theirs and the column is not. See [modules.md](modules.md) for the first two and below for the
+third.
+
 ## A field the caller may not read
 
 Some columns are restricted beyond company scope — see [tenancy](tenancy.md). Naming one in a

@@ -17,6 +17,8 @@ import {
 } from '@erp/shared';
 import { DataTable, Field, FormError, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
+import { useSession } from '../../../session/SessionProvider';
+import { hasPermission } from '../../../session/permissions';
 
 /**
  * What this business measures things in.
@@ -30,6 +32,8 @@ import { ApiFailure, api } from '../../../api/client';
  * refusal rather than a number.
  */
 export function UnitsPage() {
+  const { session } = useSession();
+  const canAddUnit = hasPermission(session, 'products:units:write');
   const [query, setQuery] = useState<ListQuery>({});
   const queryClient = useQueryClient();
 
@@ -114,9 +118,9 @@ export function UnitsPage() {
       */}
       {change.error instanceof ApiFailure && <FormError>{change.error.message}</FormError>}
 
-      <AddUnit groups={known} onAdded={refresh} />
+      {canAddUnit && <AddUnit groups={known} onAdded={refresh} />}
 
-      <Groups groups={known} onAdded={refresh} />
+      <Groups groups={known} canAdd={canAddUnit} onAdded={refresh} />
 
       <DataTable
         caption="Units of measure"
@@ -264,9 +268,11 @@ function AddUnit({
  */
 function Groups({
   groups,
+  canAdd,
   onAdded,
 }: {
   groups: UnitGroupsResponse['groups'];
+  canAdd: boolean;
   onAdded: () => void;
 }) {
   const [name, setName] = useState('');
@@ -315,31 +321,33 @@ function Groups({
         </ul>
       )}
 
-      <form
-        noValidate
-        className="flex flex-wrap items-end gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          add.mutate();
-        }}
-      >
-        <div className="min-w-56">
-          <Field
-            id="group-name"
-            label="Add a group"
-            value={name}
-            error={failure?.fields.name}
-            onChange={setName}
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={add.isPending}
-          className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 disabled:opacity-50"
+      {canAdd && (
+        <form
+          noValidate
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            add.mutate();
+          }}
         >
-          Add group
-        </button>
-      </form>
+          <div className="min-w-56">
+            <Field
+              id="group-name"
+              label="Add a group"
+              value={name}
+              error={failure?.fields.name}
+              onChange={setName}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={add.isPending}
+            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Add group
+          </button>
+        </form>
+      )}
     </section>
   );
 }

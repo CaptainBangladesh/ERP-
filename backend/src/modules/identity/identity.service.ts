@@ -1,28 +1,16 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
-import type { Company, User } from '@prisma/client';
-import {
-  ERROR_CODES,
-  IDENTITY_ERROR_CODES,
-  type AuthenticatedSession,
-  type Session,
-} from '@erp/shared';
+import { ERROR_CODES, type AuthenticatedSession } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
-import { FieldException } from '../../http/validation-exception';
 import { InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import { SessionAuthority, unauthenticated, type RequestSession } from '../../platform/auth';
 import type { Valid } from '../../platform/validation';
+import { emailAlreadyRegistered, invalidCredentials } from './errors';
 import { hashPassword, verifyPassword } from './passwords';
-import { sessionExpiry } from './session.config';
+import { SessionIssuer } from './session-issuer';
+import { describe, permissionsOf, WITH_ROLES, type TokenPayload } from './session-shape';
 import type { SignInBody, SignUpBody } from './schemas';
-
-/** What a token carries. Everything else about the caller is read from the database. */
-interface TokenPayload {
-  sub: string;
-  sid: string;
-  cid: string;
-}
 
 /**
  * The way into an empty system, and the way back out of it.
@@ -44,6 +32,7 @@ export class IdentityService implements SessionAuthority {
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly tenancy: Tenancy,
     private readonly jwt: JwtService,
+    private readonly sessions: SessionIssuer,
   ) {}
 
   /**
@@ -104,7 +93,9 @@ export class IdentityService implements SessionAuthority {
         throw cause;
       });
 
-    return this.startSession(describe(user, company));
+    // The owner's permissions are 'all' unconditionally — see `describe` — so there is
+    // nothing to gain from loading roles for someone who holds every grant regardless of one.
+    return this.sessions.issue(user, company, 'all');
   }
 
   async signIn(input: Valid<typeof SignInBody>): Promise<AuthenticatedSession> {
@@ -116,7 +107,7 @@ export class IdentityService implements SessionAuthority {
         // unique constraint on the column mean what it appears to mean.
         this.prisma.user.findUnique({
           where: { email: input.email },
-          include: { company: true },
+          include: { company: true, ...WITH_ROLES },
         }),
     );
 
@@ -128,7 +119,8 @@ export class IdentityService implements SessionAuthority {
 
     if (!user || !correct) throw invalidCredentials();
 
-    return this.startSession(describe(user, user.company));
+    const isOwner = user.company.ownerUserId === user.id;
+    return this.sessions.issue(user, user.company, isOwner ? 'all' : permissionsOf(user));
   }
 
   /**
@@ -162,7 +154,7 @@ export class IdentityService implements SessionAuthority {
 
     const session = await this.prisma.session.findUnique({
       where: { id: payload.sid },
-      include: { user: { include: { company: true } } },
+      include: { user: { include: { company: true, ...WITH_ROLES } } },
     });
 
     if (!session || session.revokedAt) throw unauthenticated();
@@ -177,53 +169,20 @@ export class IdentityService implements SessionAuthority {
       );
     }
 
+    // Read fresh on every request rather than carried in the token, which is what makes a
+    // role change — or a tier change — take effect on the caller's very next request.
+    const isOwner = session.user.company.ownerUserId === session.user.id;
+
     return {
       id: session.id,
       expiresAt: session.expiresAt,
-      ...describe(session.user, session.user.company),
+      ...describe(
+        session.user,
+        session.user.company,
+        isOwner ? 'all' : permissionsOf(session.user),
+      ),
     };
   }
-
-  private async startSession(caller: Omit<Session, 'expiresAt'>): Promise<AuthenticatedSession> {
-    const expiresAt = sessionExpiry();
-
-    const row = await this.prisma.session.create({
-      data: { userId: caller.user.id, expiresAt },
-    });
-
-    const payload: TokenPayload = {
-      sub: caller.user.id,
-      sid: row.id,
-      cid: caller.company.id,
-    };
-
-    return {
-      ...caller,
-      expiresAt: expiresAt.toISOString(),
-      // The token expires with the row it names, so a token that outlived its session
-      // cannot exist to be reasoned about.
-      token: await this.jwt.signAsync(payload, {
-        expiresIn: Math.floor((expiresAt.getTime() - Date.now()) / 1000),
-      }),
-    };
-  }
-}
-
-/**
- * The one description of a caller, so sign-up, sign-in, and authentication cannot disagree
- * about what a user is — particularly about `isOwner`, which is derived rather than stored
- * and would be easy to compute three slightly different ways.
- */
-function describe(user: User, company: Company): Omit<Session, 'expiresAt'> {
-  return {
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      isOwner: company.ownerUserId === user.id,
-    },
-    company: { id: company.id, name: company.name },
-  };
 }
 
 /**
@@ -232,28 +191,3 @@ function describe(user: User, company: Company): Omit<Session, 'expiresAt'> {
  * Its only job is to make the verification step cost what a real one costs.
  */
 const NO_SUCH_USER_HASH = 'scrypt$00000000000000000000000000000000$' + '0'.repeat(128);
-
-/**
- * Carries a field as well as a code. The code is what a client branches on; the field is
- * what puts the message beside the email input rather than at the top of the form.
- *
- * Sign-up is the one place admitting an address is taken is right: the user is trying to
- * create that account, telling them nothing leaves them stuck, and a form that lets you
- * discover the answer by trying cannot keep the secret anyway.
- */
-function emailAlreadyRegistered(): FieldException {
-  return new FieldException(
-    IDENTITY_ERROR_CODES.emailAlreadyRegistered,
-    'That email address is already registered.',
-    HttpStatus.CONFLICT,
-    { email: 'That email address is already registered. Sign in instead.' },
-  );
-}
-
-function invalidCredentials(): ApiException {
-  return new ApiException(
-    IDENTITY_ERROR_CODES.invalidCredentials,
-    'That email address and password do not match an account.',
-    HttpStatus.UNAUTHORIZED,
-  );
-}

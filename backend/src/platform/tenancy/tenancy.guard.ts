@@ -28,12 +28,13 @@ export class TenancyGuard implements CanActivate {
       this.tenancy.enter({
         companyId: session.company.id,
         /**
-         * Ticket 07 replaces this with the caller's roles. Until roles exist the only
-         * distinction the system can honestly make is the one it derives rather than
-         * stores: the owner created the company and can see all of it; nobody else can see
-         * anything restricted. Blunt, but not a lie — and it is one line to replace.
+         * `session.permissions` is already `'all'` for the owner and the union of every role
+         * they hold for anybody else — identity resolves it once, in `authenticate()`, from
+         * the real `Role`/`RolePermission` tables. This one line is what ADR 0003 and
+         * `tenancy.ts` both earmarked for this ticket; nothing else in the tenancy platform
+         * changed to make it real.
          */
-        grants: session.user.isOwner ? 'all' : new Set<string>(),
+        grants: session.permissions === 'all' ? 'all' : new Set(session.permissions),
       });
     }
 

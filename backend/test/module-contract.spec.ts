@@ -56,7 +56,7 @@ describe('module assembly', () => {
     expect(assembled.nestModules).toEqual([StubNestModule]);
     expect(assembled.permissions).toEqual(['identity:users:read']);
     expect(assembled.navigation).toEqual([
-      { module: 'identity', label: 'Home', path: '/', order: 10 },
+      { module: 'identity', label: 'Home', path: '/', order: 10, tier: 'core' },
     ]);
   });
 

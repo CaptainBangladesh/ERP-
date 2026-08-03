@@ -85,6 +85,12 @@ export interface ModuleNavigationEntry extends Omit<NavigationEntry, 'module'> {
 /** A navigation entry with its owning module resolved. */
 export interface AssembledNavigationEntry extends NavigationEntry {
   readonly permission?: string;
+  /**
+   * The owning module's tier, so the entry can be filtered before it ever reaches a client.
+   * Not part of the wire shape — `NavigationController` reads it and strips it, the same way
+   * it already strips `permission`.
+   */
+  readonly tier: ModuleTier;
 }
 
 /** The application, derived entirely from manifests. */

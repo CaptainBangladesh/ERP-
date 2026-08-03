@@ -6,7 +6,7 @@ import {
   checkTableAccess,
   SHARED_SOURCE,
 } from './boundaries';
-import { checkModule, sourcesOf } from './module-rules';
+import { checkModule, checkPermissionsDeclared, sourcesOf } from './module-rules';
 import type { SourceFile } from './source';
 import type { Violation } from './violation';
 
@@ -57,6 +57,9 @@ export function checkConformance(input: ConformanceInput): Violation[] {
     ...checkTableAccess(input.sources, input.modelOwners),
     ...checkSharedPackage(input.sources),
     ...checkFrontendModules(input.sources),
+    // Over every backend controller rather than per module: the platform serves endpoints of
+    // its own, and they need guarding for exactly the same reason a module's do.
+    ...checkPermissionsDeclared(input.sources),
     ...perModule,
   ].sort(byPathThenLine);
 }

@@ -1,3 +1,4 @@
+import type { ModuleTier } from '@erp/shared';
 import type { PrismaClient } from '@prisma/client';
 
 /**
@@ -25,11 +26,14 @@ export interface Factories {
   expireSessions: (userId: string) => Promise<void>;
 
   /**
-   * Puts a second person in a company, sharing the owner's password.
+   * Puts a second person in a company, sharing the owner's password and holding exactly the
+   * permissions given — nothing, by default.
    *
-   * There is no endpoint for this yet — inviting colleagues is user story 17 and arrives
-   * with roles in ticket 07 — and the state is needed now, because "the owner sees salaries
-   * and a colleague does not" cannot be asserted with only one user per company.
+   * Ticket 07 adds real endpoints for invitation and role assignment, and tests of *those*
+   * flows use them. This factory remains for everything else that merely needs "a colleague
+   * with this permission set" as a starting condition: creating a `Role` and inviting through
+   * the API on every such test would make each one about the invitation flow whether or not
+   * that is what it is testing.
    *
    * The password is copied from the owner rather than hashed here on purpose: the harness
    * has no business knowing how identity stores passwords, and copying a hash it never
@@ -39,7 +43,17 @@ export interface Factories {
     ownerUserId: string;
     name: string;
     email: string;
+    permissions?: readonly string[];
   }) => Promise<{ id: string }>;
+
+  /**
+   * Sets a company's tier directly.
+   *
+   * There is no self-serve upgrade screen in this system — no billing exists to gate it —
+   * so the only way to arrange "a company on the enterprise or custom tier" for a test is the
+   * same way a future admin process would eventually do it: writing the column.
+   */
+  setTier: (companyId: string, tier: ModuleTier) => Promise<void>;
 
   /**
    * Fills a company's payroll with however many people a test needs.
@@ -64,10 +78,10 @@ export function createFactories(prisma: PrismaClient): Factories {
       });
     },
 
-    addColleague: async ({ ownerUserId, name, email }) => {
+    addColleague: async ({ ownerUserId, name, email, permissions = [] }) => {
       const owner = await prisma.user.findUniqueOrThrow({ where: { id: ownerUserId } });
 
-      return prisma.user.create({
+      const colleague = await prisma.user.create({
         data: {
           companyId: owner.companyId,
           name,
@@ -76,6 +90,28 @@ export function createFactories(prisma: PrismaClient): Factories {
         },
         select: { id: true },
       });
+
+      if (permissions.length > 0) {
+        const role = await prisma.role.create({
+          data: { companyId: owner.companyId, name: `${name}'s role` },
+        });
+        await prisma.rolePermission.createMany({
+          data: permissions.map((permission) => ({
+            companyId: owner.companyId,
+            roleId: role.id,
+            permission,
+          })),
+        });
+        await prisma.userRole.create({
+          data: { companyId: owner.companyId, userId: colleague.id, roleId: role.id },
+        });
+      }
+
+      return colleague;
+    },
+
+    setTier: async (companyId, tier) => {
+      await prisma.company.update({ where: { id: companyId }, data: { tier } });
     },
 
     fillPayroll: async ({ companyId, count }) => {

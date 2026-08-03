@@ -15,6 +15,7 @@ import {
   type ProductListResponse,
   type ProductResponse,
 } from '@erp/shared';
+import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { ProductsService } from './products.service';
 import {
@@ -41,6 +42,7 @@ export class ProductsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('products:products:write')
   async addProduct(
     @Body(validated(CreateProductBody)) body: Valid<typeof CreateProductBody>,
   ): Promise<ProductResponse> {
@@ -48,16 +50,19 @@ export class ProductsController {
   }
 
   @Get()
+  @RequirePermission('products:products:read')
   async listProducts(@Query() query: Record<string, unknown>): Promise<ProductListResponse> {
     return this.products.listProducts(query);
   }
 
   @Get(':id')
+  @RequirePermission('products:products:read')
   async product(@Param('id') id: string): Promise<ProductResponse> {
     return this.products.productDetail(id);
   }
 
   @Patch(':id')
+  @RequirePermission('products:products:write')
   async changeProduct(
     @Param('id') id: string,
     @Body(validated(UpdateProductBody)) body: Valid<typeof UpdateProductBody>,
@@ -72,6 +77,7 @@ export class ProductsController {
    */
   @Post(':id/suppliers')
   @HttpCode(HttpStatus.OK)
+  @RequirePermission('products:products:write')
   async addSupplier(
     @Param('id') id: string,
     @Body(validated(AddProductSupplierBody)) body: Valid<typeof AddProductSupplierBody>,
@@ -80,6 +86,7 @@ export class ProductsController {
   }
 
   @Delete(':id/suppliers/:partyId')
+  @RequirePermission('products:products:write')
   async removeSupplier(
     @Param('id') id: string,
     @Param('partyId') partyId: string,

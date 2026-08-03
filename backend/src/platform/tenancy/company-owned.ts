@@ -88,6 +88,22 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
       'touches it.',
   },
 
+  Role: { kind: 'company-owned' },
+
+  RolePermission: { kind: 'company-owned' },
+
+  UserRole: { kind: 'company-owned' },
+
+  // Company-owned, not unscoped: unlike Session, an invitation or a reset genuinely belongs
+  // to one company (it names the company inviting, or the user resetting) and an ordinary
+  // list of pending invitations is scoped exactly like any other list. The one operation that
+  // runs before a session exists — resolving the raw token a caller arrived with — uses
+  // `withoutCompanyScope('…')` explicitly, the same way sign-in looks a `User` up by email
+  // across every company. See `backend/src/modules/identity/recovery.service.ts`.
+  Invitation: { kind: 'company-owned' },
+
+  PasswordReset: { kind: 'company-owned' },
+
   // ─── parties ────────────────────────────────────────────────────────────────────────
   // Ordinary company-owned tables, all three of them, and worth noting for that reason: the
   // address book is the first module with real business data in it and it needed nothing
@@ -133,6 +149,9 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   Product: { kind: 'company-owned' },
 
   ProductSupplier: { kind: 'company-owned' },
+
+  // ─── warranties ──
+  Warranty: { kind: 'company-owned' },
 };
 
 /**

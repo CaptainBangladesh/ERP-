@@ -1,3 +1,5 @@
+import type { ModuleTier } from '../modules/tier.js';
+
 /**
  * Who is making a request.
  *
@@ -14,6 +16,12 @@
 export interface SignedInCompany {
   id: string;
   name: string;
+  /**
+   * Which modules this company can reach at all. Ticket 07's `AccessGuard` reads it fresh on
+   * every request — nothing caches it — which is what makes changing a company's tier take
+   * effect without a restart.
+   */
+  tier: ModuleTier;
 }
 
 export interface SignedInUser {
@@ -30,6 +38,17 @@ export interface Session {
   company: SignedInCompany;
   /** ISO 8601. The frontend does not enforce it — the API does — but it can pre-empt it. */
   expiresAt: string;
+  /**
+   * Every permission this caller holds, or `'all'` for the company's owner.
+   *
+   * `'all'` is not a lie standing in for "we didn't check" — an owner's access is derived from
+   * having created the company, the same way `isOwner` is, and it is unconditional so that an
+   * owner can never be locked out by a role assigned (or not assigned) to them. Anybody else's
+   * array is the union of every role they hold — see `backend/src/modules/identity` — and it is
+   * sent to the frontend for exactly one reason: deciding what to render. The API itself checks
+   * again on every request; nothing trusts the client's copy.
+   */
+  permissions: 'all' | string[];
 }
 
 /**
