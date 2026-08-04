@@ -61,6 +61,43 @@ export function email(options: {
 }
 
 /**
+ * A code somebody types onto a label — a SKU, a location code — upper-cased on the way in.
+ *
+ * Here rather than beside one module's schema because a second module needed it, which is the
+ * bar this file sets. The *pattern* still comes from each module's own contract, because what
+ * characters a code may contain is that module's business and the frontend has to agree with
+ * it; what is shared is the shape of the rule, and one decision inside it.
+ *
+ * That decision is the normalisation. Upper-casing here rather than comparing
+ * case-insensitively at the query is what makes the unique constraint on the column refuse
+ * what a person would call a duplicate. A catalogue holding both `widget-1` and `WIDGET-1` is
+ * a catalogue with a duplicate nobody notices until stock has been split across the two.
+ *
+ * It is deliberately *not* the right rule for every code in the system: a unit of measure's
+ * symbol is kept exactly as typed, because `kg` is the SI symbol and `KG` is not. See
+ * `UNIT_CODE_PATTERN`.
+ */
+export function code(options: {
+  missing: string;
+  maxLength: number;
+  tooLong?: string;
+  /** What a code may contain, from the module's own contract. Tested after upper-casing. */
+  pattern: RegExp;
+  invalid: string;
+}): FieldRule<string> {
+  return rule(options.missing, (value) => {
+    const given = typeof value === 'string' ? value.trim().toUpperCase() : '';
+    if (given.length === 0) return refused(options.missing);
+
+    if (given.length > options.maxLength) {
+      return refused(options.tooLong ?? `Use ${options.maxLength} characters or fewer.`);
+    }
+
+    return options.pattern.test(given) ? accepted(given) : refused(options.invalid);
+  });
+}
+
+/**
  * A password, untrimmed and unnormalised.
  *
  * Whitespace is a legitimate character in a password and trimming one would lock somebody out

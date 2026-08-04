@@ -152,6 +152,9 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
 
   // ─── warranties ──
   Warranty: { kind: 'company-owned' },
+
+  // ─── inventory ──
+  Location: { kind: 'company-owned' },
 };
 
 /**

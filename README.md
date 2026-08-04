@@ -7,9 +7,10 @@ The plan lives in [`.scratch/erp-foundation-inventory/`](.scratch/erp-foundation
 [the spec](.scratch/erp-foundation-inventory/spec.md) and
 [fourteen tickets](.scratch/erp-foundation-inventory/issues/README.md).
 
-**Current state: ticket 02 complete.** The module contract exists and identity and access is
-the first module built against it. You can create a company, sign in, and sign out. Ticket 03
-adds automatic tenant scoping.
+**Current state: ticket 08 complete.** Six modules, generated against a module contract the
+build enforces. You can create a company, sign in, invite colleagues, define roles, keep an
+address book, a product catalogue and units of measure, and say where you keep stock. Ticket 09
+records stock moving.
 
 ## Getting started
 

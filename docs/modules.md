@@ -53,6 +53,14 @@ Flags: `--tier` (`core` by default), `--depends-on a,b`, and `--record <Model>` 
 defeats the singulariser — `products` gives `Product` and `parties` gives `Party`, but not
 everything will.
 
+A module with more than one resource names those files after the resource rather than after
+itself: products has `products.controller.ts` beside `units.controller.ts`, and inventory —
+whose resources are locations and, from ticket 09, movements — has `locations.controller.ts`
+and no `inventory.controller.ts` at all. The manifest keeps the module's own name, because that
+is the thing the directory scan and the permission namespace are about. `check:conformance`
+reads every file declaring a `@Controller` rather than only the ones named `*.controller.ts`,
+so nothing is exempted by being named for its resource.
+
 It refuses, before writing anything, a name a module already has, a dependency that is not
 present, a Core module reaching up a tier, a record another module owns, and a name that could
 not be a directory. Half a generated module is worse than none, so nothing is written until

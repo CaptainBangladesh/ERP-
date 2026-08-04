@@ -33,3 +33,17 @@ every movement type and backfilling history.
 - [ ] Stock screens refresh automatically after a movement is recorded
 - [ ] Backend tests cover receipt, issue, resulting levels, immutability, history and events
 - [ ] Frontend tests cover recording a movement, validation, history and the no-locations state
+
+## Comments
+
+**Inherited from ticket 08: `LocationsService.productsHeldAt` returns zero and must stop.** The
+refusal that stops somewhere holding stock being deactivated is already written — the rule, the
+`location_holds_stock` code, the message, and the screen that shows it. The only part ticket 08
+could not build is the count itself, because nothing could put stock into a location until this
+ticket. Replace that method's body with a count over the ledger and the rule becomes live; add a
+backend test that receives stock into a location and is then refused the deactivation, which is
+the test ticket 08 had no way to write.
+
+**Also inherited: inventory's dependency on products is declared and unused.** `ProductCatalogue`
+is what a movement resolves what moved through — `warranties.service.ts` is the worked example.
+`InventoryModule` imports `ProductsModule` here for the first time.

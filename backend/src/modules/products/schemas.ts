@@ -11,6 +11,7 @@ import {
 import type { ListSpec } from '../../platform/list';
 import {
   accepted,
+  code,
   decimal,
   flag,
   identifier,
@@ -60,14 +61,11 @@ const GROUP_NAME = {
  * `WIDGET-1` is a catalogue with a duplicate nobody notices until stock has been split across
  * the two, and by then merging them is somebody's afternoon.
  */
-const PRODUCT_CODE = rule<string>('Enter a code.', (value) => {
-  const given = typeof value === 'string' ? value.trim().toUpperCase() : '';
-  if (given.length === 0) return refused('Enter a code.');
-  if (given.length > 40) return refused('Use 40 characters or fewer.');
-
-  return PRODUCT_CODE_PATTERN.test(given)
-    ? accepted(given)
-    : refused('Use letters, numbers, and . _ - / — such as “WIDGET-1”.');
+const PRODUCT_CODE = code({
+  missing: 'Enter a code.',
+  maxLength: 40,
+  pattern: PRODUCT_CODE_PATTERN,
+  invalid: 'Use letters, numbers, and . _ - / — such as “WIDGET-1”.',
 });
 
 /**

@@ -1,8 +1,9 @@
 import { HttpStatus } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PRODUCT_ERROR_CODES } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
 import { FieldException } from '../../http/validation-exception';
+
+export { refuseDuplicate } from '../../http/unique-constraint';
 
 /**
  * Everything this module refuses, and the words it refuses in.
@@ -130,31 +131,10 @@ export function groupNameTaken(name: string): string {
   );
 }
 
-/**
- * Prisma's "that unique constraint again", as the message beside the input that caused it.
- *
- * Caught rather than checked for beforehand: the constraint is the only thing that can settle
- * a race between two people adding the same code at the same moment, and asking first would
- * just move the race earlier.
- *
- * `gone` is given only by the writes that can race with a delete — an update, where `P2025`
- * means the row vanished between the read and the write and the caller should get the 404 it
- * would have had a moment earlier. A create cannot produce one, so it does not pretend to
- * handle it.
+/*
+ * `refuseDuplicate` used to live here and now lives in `src/http`, re-exported above so that
+ * this file is still the whole of what products refuses. It moved when inventory needed the
+ * identical handling for location codes: what is shared is Prisma's error and the shape of the
+ * answer, and what stayed here is the code and the sentence — because "that SKU exists" and
+ * "that warehouse exists" are different events a caller handles differently.
  */
-export function refuseDuplicate(
-  code: string,
-  field: string,
-  message: string,
-  gone?: () => ApiException,
-) {
-  return (cause: unknown): never => {
-    if (cause instanceof Prisma.PrismaClientKnownRequestError) {
-      if (cause.code === 'P2002') {
-        throw new FieldException(code, message, HttpStatus.CONFLICT, { [field]: message });
-      }
-      if (cause.code === 'P2025' && gone) throw gone();
-    }
-    throw cause;
-  };
-}

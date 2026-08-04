@@ -568,3 +568,40 @@ model Warranty {
   @@index([companyId, productId])
   @@map("warranties")
 }
+
+// ─── inventory ─────────────────────────────────────────────────────────────────────
+// Owned by the inventory module. See backend/src/modules/inventory.
+//
+// As everywhere else, `companyId` is a plain column with no foreign key to `companies`:
+// keys stay inside a module, and scoping is the tenancy extension's rather than the schema's.
+
+/// Somewhere this company keeps things — a warehouse, a van, a bay, a bonded store.
+///
+/// Flat, with no parent: a bin inside an aisle inside a warehouse is a level every stock
+/// figure has to be summed across, and nobody has asked for one. Adding a parent later leaves
+/// every row written today still true, which is not something the reverse can claim.
+model Location {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  /// The code people write on a label, upper case and unique within the company. Unique
+  /// *within* it and not across it, as a SKU is: two businesses both calling somewhere `WH-1`
+  /// is not a collision.
+  code String
+  name String
+
+  /// `active` or `inactive`. Deactivating rather than deleting is what keeps every movement
+  /// ever recorded against this row intelligible.
+  status String @default("active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  /// The list's default order, within a company. `(company_id, code)` is already covered by
+  /// the unique constraint above — Postgres backs it with an index the default sort walks —
+  /// so the only one worth adding is the other order somebody sorts by.
+  @@index([companyId, name])
+  @@map("locations")
+}

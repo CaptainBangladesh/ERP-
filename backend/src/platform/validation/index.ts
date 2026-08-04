@@ -19,6 +19,7 @@ export {
 } from './validator';
 export { optional, withDefault, accepted, refused, rule, type FieldRule, type Read } from './rule';
 export {
+  code,
   day,
   decimal,
   email,
