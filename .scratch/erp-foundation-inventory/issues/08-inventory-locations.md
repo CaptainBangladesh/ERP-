@@ -10,7 +10,7 @@ me here rather than presenting an unusable form.
 
 **Blocked by:** 07 — Roles, permissions, tiers, and the add-on shape stub
 
-**Status:** done, except the stock check — see Comments
+**Status:** done — the stock check was completed by ticket 09, see Comments
 
 - [x] Inventory is produced by the module generator and passes the conformance pack
 - [x] Inventory declares its dependency on Products in its manifest
@@ -18,8 +18,8 @@ me here rather than presenting an unusable form.
 - [x] I can create a location with a name and a code
 - [x] Location code is unique within my company
 - [x] I can edit a location, and deactivate and reactivate it
-- [ ] A location holding stock cannot be deactivated without a clear explanation — built but
-      inert; carried to 09, see Comments
+- [x] A location holding stock cannot be deactivated without a clear explanation — the refusal
+      was built here and made live by ticket 09, which added the count and the test
 - [x] The locations screen shows a distinct empty state on a fresh account
 - [x] The list uses the shared table with sorting, filtering and paging
 - [x] Locations are company-scoped and invisible across companies

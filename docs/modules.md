@@ -111,7 +111,46 @@ export const manifest: ModuleManifest = {
 | `models` | The Prisma models it owns, by their schema names — `Party`, not `parties`. Every model in the schema must be claimed by exactly one module, and a module may not claim one that does not exist. This is what "a module may not query another module's tables" is checked against. |
 | `permissions` | `<name>:<resource>:<action>`, always in the module's own namespace. |
 | `navigation` | Menu entries, assembled and served by `GET /api/navigation`. |
-| `events` | What it emits and consumes. A consumed event must be emitted by a declared dependency. |
+| `events` | What it emits and consumes. A consumed event must be emitted by a declared dependency. See below. |
+
+## Telling other modules what happened
+
+A module reads another through its public surface. It tells other modules through an **event**,
+which is the other direction and needs no export at all — a listener binds to a name rather than
+to a class.
+
+```ts
+// packages/src/modules/inventory/contract.ts — the name and the payload shape
+export const INVENTORY_EVENTS = { movementRecorded: 'inventory.movement.recorded' } as const;
+export interface StockMovementRecorded { movementId: string; /* … */ }
+
+// the module emits
+this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, { … });
+
+// anything may listen, and gets back the way to stop
+const stop = this.events.on<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, (event) => …);
+```
+
+`DomainEvents` comes from `platform/events`, which is `@Global()` — announcing something is
+a thing any module may do, and the platform cannot be named in a `dependsOn`. The **names** stay
+in the emitting module's wire contract, because a name only the platform knew would be a seam
+nobody could bind to.
+
+Four properties are load-bearing, and ADR 0008 records why each:
+
+- **The company is stamped by the platform**, from the acting tenant scope. A module never writes
+  it, exactly as it never writes a company filter.
+- **Emit after the work is committed**, never inside its transaction — a listener would otherwise
+  see something that could still roll back.
+- **A listener that throws does not undo what happened.** The event describes a fact; a reaction to
+  it is a consequence, and a failed consequence must not roll back the fact.
+- **Declare it in the manifest.** `assembleModules` refuses a consumed event that no declared
+  dependency emits, so the pairing is checked without a database. Do not declare an emit before
+  something actually emits it: a module could then bind to something that never fires.
+
+`backend/src/modules/inventory` is the worked example — it emits one event carrying the value and
+accounting classification a journal entry would need, for an Accounting module that does not exist
+yet. That is the point: Accounting is a sink, and sinks are the expensive retrofit.
 
 ## What the build refuses
 

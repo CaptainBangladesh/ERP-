@@ -19,6 +19,7 @@ import {
   refuseDuplicate,
 } from './refusals';
 import { CreateLocationBody, LOCATION_LIST, UpdateLocationBody } from './schemas';
+import { StockService } from './stock.service';
 
 /**
  * Where this company keeps things.
@@ -39,7 +40,20 @@ import { CreateLocationBody, LOCATION_LIST, UpdateLocationBody } from './schemas
  */
 @Injectable()
 export class LocationsService {
-  constructor(@InjectPrisma() private readonly prisma: ScopedPrisma) {}
+  constructor(
+    @InjectPrisma() private readonly prisma: ScopedPrisma,
+    /**
+     * Asked one question, and only before a deactivation: how much is in the way.
+     *
+     * The refusal belongs here rather than travelling with the ledger, because it is part of
+     * what "deactivate a location" means — a client learning about `location_holds_stock` the
+     * week movements shipped would be a client whose error handling was complete and then
+     * quietly was not. What ticket 08 could not write was the *count*, because nothing could
+     * put stock anywhere yet; it is one line in `StockService` now, and nothing else here
+     * changed.
+     */
+    private readonly stock: StockService,
+  ) {}
 
   async createLocation(input: Valid<typeof CreateLocationBody>): Promise<LocationResponse> {
     const location = await this.prisma.location
@@ -88,7 +102,7 @@ export class LocationsService {
     const existing = await this.locationDetail(id);
 
     if (input.status === 'inactive') {
-      const held = await this.productsHeldAt(id);
+      const held = await this.stock.productsHeldAt(id);
       if (held > 0) throw locationHoldsStock(held);
     }
 
@@ -110,22 +124,6 @@ export class LocationsService {
     return summarise(location);
   }
 
-  /**
-   * How many distinct products are still held here.
-   *
-   * Zero for every location today, and that is a fact about the schema rather than a stub with
-   * optimism in it: the stock a movement leaves behind arrives in ticket 09, and until
-   * something can put stock into a location, nothing can be holding any. When the ledger
-   * exists this becomes a count over it, and nothing above changes.
-   *
-   * The rule lives here rather than travelling with the ledger because it belongs to
-   * deactivation: the refusal is part of what "deactivate a location" means, and a client
-   * learning about `location_holds_stock` the week movements ship would be a client whose
-   * error handling was complete and then quietly was not.
-   */
-  private async productsHeldAt(_locationId: string): Promise<number> {
-    return 0;
-  }
 }
 
 /**

@@ -7,6 +7,7 @@ import {
 import { APP_GUARD } from '@nestjs/core';
 import { SessionGuard } from '../auth';
 import { AccessGuard } from '../authorization';
+import { EventsModule } from '../events';
 import { MailModule } from '../mail';
 import { TenancyModule } from '../tenancy';
 import { TenancyGuard } from '../tenancy/tenancy.guard';
@@ -33,7 +34,7 @@ export class ApplicationModule implements NestModule {
 
     return {
       module: ApplicationModule,
-      imports: [TenancyModule, MailModule, ...assembled.nestModules],
+      imports: [TenancyModule, MailModule, EventsModule, ...assembled.nestModules],
       controllers: [NavigationController, PermissionsController],
       providers: [
         { provide: MODULE_REGISTRY, useValue: assembled },

@@ -155,6 +155,22 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
 
   // ─── inventory ──
   Location: { kind: 'company-owned' },
+
+  // The second immutable table in this schema, and the first that is immutable for a reason
+  // other than payroll's. A pay run cannot be edited because a payroll record that can be
+  // edited after the fact is not a payroll record; a stock movement cannot be edited because
+  // the accounting entries eventually derived from it would have nothing to reconcile against.
+  // Both arrive at the same declaration from different directions, which is the shape stub
+  // earning its keep — the mechanism was built for hrm and inventory needed it unchanged.
+  //
+  // Note what is *not* here: no restricted field and no restricted rows. A colleague who may
+  // read the ledger may read all of it, because what a movement records is what the business
+  // did rather than what a person is paid.
+  StockMovement: { kind: 'company-owned', immutable: true },
+
+  // Emphatically *not* immutable: it is the running total of the table above, and a running
+  // total is meant to change. The ledger is the record; this is the cache of it.
+  StockLevel: { kind: 'company-owned' },
 };
 
 /**

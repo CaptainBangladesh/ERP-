@@ -597,6 +597,9 @@ model Location {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  movements StockMovement[]
+  levels    StockLevel[]
+
   @@unique([companyId, code])
   @@index([companyId])
   /// The list's default order, within a company. `(company_id, code)` is already covered by
@@ -604,4 +607,142 @@ model Location {
   /// so the only one worth adding is the other order somebody sorts by.
   @@index([companyId, name])
   @@map("locations")
+}
+
+/// One thing that moved: the ledger, and the module's reason for existing.
+///
+/// Append-only, declared so in `platform/tenancy/company-owned.ts`, which refuses update and
+/// delete outright rather than leaving it to each service to remember. A stock ledger that can
+/// be edited after the fact is not a ledger — it is a table of current opinions, and the
+/// accounting entries derived from it would have nothing to reconcile against. A mistake is
+/// corrected by recording another movement (ticket 11's reversal), never by rewriting this one.
+///
+/// `productId` points at a row `products` owns, and `recordedById` at one `identity` owns.
+/// There is deliberately no foreign key to either: keys stay inside a module, and a key across
+/// the boundary would make the data model disagree with the module graph. The product is
+/// resolved through `ProductCatalogue`, which is a contract; the user is never resolved at all,
+/// because their name is frozen onto the row below. `locationId` is the one reference that
+/// *does* get a key, because a location is inventory's own.
+model StockMovement {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  /// `receipt` or `issue`. Not an enum, for the reason every status column here gives: the
+  /// values are part of the wire contract both workspaces bind to, and tickets 10 and 11 add
+  /// more of them.
+  kind String
+
+  /// What a journal entry posted from this would do — `stock-in` or `stock-out`. The whole of
+  /// the accounting seam, as a column: see the contract's `MOVEMENT_CLASSIFICATIONS` for why it
+  /// is this and not an account code.
+  classification String
+
+  productId  String @map("product_id") @db.Uuid
+  locationId String @map("location_id") @db.Uuid
+
+  /// Signed: positive for a receipt, negative for an issue. Signed rather than an unsigned
+  /// magnitude beside a direction column, because the two would be two ways to say one thing
+  /// and summing the ledger would have to consult both. `numeric` and never floating point,
+  /// at the scale `Quantity` is defined at.
+  quantity Decimal @db.Decimal(24, 6)
+
+  /// What the quantity was measured in — the symbol itself, frozen at the moment of recording.
+  ///
+  /// Text rather than a reference to `units_of_measure`, and that is the same decision
+  /// `recordedByName` below makes. A quantity without its unit is not a number anybody can act
+  /// on, so "5" has to still read as "5 kg" in three years — after the product has been
+  /// re-measured in grams, and whether or not the unit row still exists. Storing the identifier
+  /// would leave this module needing a way to turn one back into a symbol, which is a question
+  /// `ProductCatalogue` does not answer and should not have to: it is a contract about products,
+  /// not a dictionary of units.
+  ///
+  /// It is always the product's unit at the time of recording, which is what keeps the running
+  /// total below a sum of like with like.
+  unitCode String @map("unit_code")
+
+  /// What one of these was worth when it moved, and what the movement was worth in total.
+  ///
+  /// Frozen here rather than recomputed from the product's cost later, which is the difference
+  /// between a ledger and a report: the cost of a widget changes, and last April's receipt was
+  /// still worth what it was worth last April. Null when the product had no recorded cost —
+  /// not zero, because a cost of zero is a claim and "nobody has said" is not that claim.
+  unitCost Decimal? @map("unit_cost") @db.Decimal(14, 2)
+  /// Signed, matching the quantity, so the ledger's values sum to what the stock is worth.
+  /// Ticket 13's valuation is the assertion that they do.
+  value    Decimal? @db.Decimal(14, 2)
+
+  /// Who did it. No foreign key to `users` — see the note above — and never null: a ledger
+  /// entry nobody is accountable for is the one an auditor asks about.
+  recordedById String @map("recorded_by_id") @db.Uuid
+
+  /// Their name, as it was at the moment they did it.
+  ///
+  /// Copied rather than looked up, and this is the one denormalisation in the schema that is
+  /// load-bearing rather than a shortcut. Identity's public surface is deliberately empty — a
+  /// module asks the platform who is *asking*, and never asks identity who somebody *was* — so
+  /// there is no contract through which inventory could resolve this identifier later, by
+  /// design rather than by omission.
+  ///
+  /// It is also simply the right column for a ledger. An audit trail that renamed people
+  /// retroactively would report that Ada Okafor recorded a movement under a surname she did not
+  /// have that year, and a person who leaves the company should not make three years of history
+  /// unreadable. The product's and the location's names are resolved live, deliberately
+  /// differently: those label rows that still exist and are still being maintained, and a
+  /// reader wants to recognise them by what they are called now.
+  recordedByName String @map("recorded_by_name")
+
+  /// When it happened, which for an append-only table is also when the row was written. One
+  /// timestamp rather than the usual `createdAt` beside an `occurredAt`, because nothing here
+  /// can be back-dated: a movement is recorded as it is made. When something needs to record
+  /// stock as of a date it did not happen on, that is a second column and a decision, not a
+  /// reinterpretation of this one.
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+  /// The list's default order, within a company: newest first is what a history screen opens
+  /// on, and an offset page of it should be an index walk rather than a sort of the whole
+  /// ledger.
+  @@index([companyId, recordedAt])
+  /// "What has happened to this product?" — the question the product's own history screen asks.
+  @@index([companyId, productId, recordedAt])
+  @@index([companyId, locationId, recordedAt])
+  @@map("stock_movements")
+}
+
+/// How much of one product is at one location — the running total of the ledger above.
+///
+/// Derived data, and the only derived data in this schema. It exists because the alternative is
+/// summing every movement ever recorded on every screen that shows a stock figure, which is
+/// fine for a hundred rows and not for a million. The bargain is that it is written in the same
+/// transaction as the movement that changes it and never anywhere else, so the two cannot
+/// disagree — ticket 12 hardens that under concurrency, and ticket 12's reconciliation check is
+/// what proves it held.
+///
+/// Mutable, unlike the ledger: a running total is meant to change. That is exactly why the
+/// ledger is the record and this is the cache.
+model StockLevel {
+  id         String @id @default(uuid()) @db.Uuid
+  companyId  String @map("company_id") @db.Uuid
+  productId  String @map("product_id") @db.Uuid
+  locationId String @map("location_id") @db.Uuid
+
+  /// Can be negative. Ticket 11 is where a company decides whether it may be — until then the
+  /// column permits what the ledger permits, because a constraint here would be a policy
+  /// decision made by a migration.
+  quantity Decimal @db.Decimal(24, 6)
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  /// One row per product per place. This is what makes the running total a total rather than a
+  /// second ledger: there is nowhere to write a duplicate.
+  @@unique([companyId, productId, locationId])
+  @@index([companyId])
+  /// "What is held here?" — the question a location's stock screen asks, and the one
+  /// `LocationsService.productsHeldAt` asks before letting somewhere be deactivated.
+  @@index([companyId, locationId])
+  @@map("stock_levels")
 }

@@ -1,4 +1,10 @@
-import { INVENTORY_MODULE, LOCATIONS_ROUTE } from '@erp/shared';
+import {
+  INVENTORY_EVENTS,
+  INVENTORY_MODULE,
+  LOCATIONS_ROUTE,
+  MOVEMENTS_ROUTE,
+  STOCK_ROUTE,
+} from '@erp/shared';
 import type { ModuleManifest } from '../../platform/modules';
 import { InventoryModule } from './inventory.module';
 
@@ -26,8 +32,14 @@ export const manifest: ModuleManifest = {
    * Stock is stock *of something*, and that something is a row in the catalogue rather than a
    * name typed onto a movement. The reference is resolved through `ProductCatalogue` — the
    * public contract — so nothing here reads a products table or knows that a product has a
-   * unit column. Locations alone do not need it; movements, in ticket 09, are what call it,
-   * and it is the module that depends on products rather than whichever screen happens to.
+   * unit column. Locations alone did not need it; movements are what call it, and it is the
+   * module that depends on products rather than whichever screen happens to.
+   *
+   * Not identity, even though every movement records who made it. The acting user arrives
+   * through the platform's session seam and their *name* is copied onto the ledger row at the
+   * moment of recording, so nothing here ever has to ask identity who somebody was — which is
+   * just as well, since identity's public surface is deliberately empty. See `schema.prisma`
+   * on why freezing the name is the right column for an audit trail anyway.
    *
    * Declaring it now is not free ceremony: it is what makes this module's migrations sort
    * after products', which is the only thing that makes the dependency real to Prisma.
@@ -41,36 +53,57 @@ export const manifest: ModuleManifest = {
   nestModule: InventoryModule,
 
   /**
-   * One route today, named for the resource rather than for the module — `api/locations`, as
-   * products owns `api/units`. Movements will be a second route beside it rather than a
-   * segment underneath it.
+   * Three routes, each named for its resource rather than for the module — as products owns
+   * `api/products` and `api/units`. Movements and stock are siblings rather than one nested
+   * under the other: they answer different questions (what happened, and what there is) and
+   * are read by different people.
    */
-  routes: [LOCATIONS_ROUTE],
+  routes: [LOCATIONS_ROUTE, MOVEMENTS_ROUTE, STOCK_ROUTE],
 
-  migrations: ['20260804023340_inventory'],
+  migrations: ['20260804023340_inventory', '20260804032520_inventory_stock_movements'],
 
-  models: ['Location'],
+  models: ['Location', 'StockMovement', 'StockLevel'],
 
   /**
-   * `locations` rather than `inventory`, because a permission is about a resource. When
-   * movements arrive they get a pair of their own: somebody who maintains the list of
-   * warehouses is not thereby somebody who may write to the stock ledger, and a single
-   * `inventory:inventory:write` would have made those one job for ever.
+   * A permission is about a resource, which is why these are `locations` and `movements` and
+   * `stock` rather than one `inventory:inventory:write`. The three are genuinely different
+   * jobs: somebody who maintains the list of warehouses is not thereby somebody who may write
+   * to the stock ledger, and somebody who needs to know what is on the shelf is not thereby
+   * somebody who should read the audit trail of everything that ever happened to it.
+   *
+   * Stock has a read and no write, deliberately. There is no way to set a level — it is the
+   * running total of the ledger, so the way to change it is to record what happened.
    */
-  permissions: ['inventory:locations:read', 'inventory:locations:write'],
+  permissions: [
+    'inventory:locations:read',
+    'inventory:locations:write',
+    'inventory:movements:read',
+    'inventory:movements:write',
+    'inventory:stock:read',
+  ],
 
   navigation: [
     { label: 'Locations', path: '/locations', order: 30, permission: 'inventory:locations:read' },
+    { label: 'Stock', path: '/stock', order: 31, permission: 'inventory:stock:read' },
+    { label: 'Movements', path: '/movements', order: 32, permission: 'inventory:movements:read' },
   ],
 
   /**
-   * Nothing yet, and that is the right default. A declared event is a promise the assembler
-   * enforces; one nobody consumes is a promise made to nobody. Ticket 09 declares the first —
-   * a movement, carrying what a journal entry would need — because that is the ticket where
-   * there is finally something worth telling somebody about.
+   * The accounting seam, declared.
+   *
+   * One event, and nothing consumes it — which is the point rather than a gap. Accounting is
+   * the sink Sales, Purchase, Payroll and Manufacturing all eventually write to, and a sink
+   * retrofitted means reopening every movement type and backfilling history. Every movement
+   * already carries the value and classification a journal entry needs, and announces itself
+   * by a name declared in the wire contract, so the module that eventually listens binds to a
+   * promise rather than to this file.
+   *
+   * `consumes` stays empty and is not a placeholder: the assembler refuses a consumed event no
+   * declared dependency emits, so naming one before something emits it would let a module bind
+   * to something that never fires.
    */
   events: {
-    emits: [],
+    emits: [INVENTORY_EVENTS.movementRecorded],
     consumes: [],
   },
 };

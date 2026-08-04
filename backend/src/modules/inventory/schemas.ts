@@ -1,11 +1,23 @@
 import {
+  Decimal,
   LOCATION_CODE_PATTERN,
   LOCATION_FIELDS,
   LOCATION_STATUSES,
+  MOVEMENT_FIELDS,
+  QUANTITY_SCALE,
+  STOCK_FIELDS,
   type LocationStatus,
 } from '@erp/shared';
 import type { ListSpec } from '../../platform/list';
-import { code, oneOf, optional, text, validator } from '../../platform/validation';
+import {
+  code,
+  decimal,
+  identifier,
+  oneOf,
+  optional,
+  text,
+  validator,
+} from '../../platform/validation';
 
 /**
  * What inventory accepts, and what it lets a caller ask of its lists.
@@ -76,5 +88,95 @@ export const LOCATION_LIST: ListSpec = {
     [LOCATION_FIELDS.name]: { type: 'text', sortable: true, filterable: true, searchable: true },
     [LOCATION_FIELDS.status]: { type: 'text', sortable: true, filterable: true },
     [LOCATION_FIELDS.createdAt]: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+// ─── movements ──────────────────────────────────────────────────────────────────────
+
+const PRODUCT = {
+  missing: 'Choose a product.',
+  invalid: 'That is not a product.',
+} as const;
+
+const LOCATION = {
+  missing: 'Choose a location.',
+  invalid: 'That is not a location.',
+} as const;
+
+/**
+ * The smallest quantity the column can hold, which is also the smallest a caller may send.
+ *
+ * Naming it from the scale rather than writing `0.000001` out means the rule and the storage
+ * refuse exactly the same set, and go on doing so if the scale ever moves. It is what makes
+ * "greater than zero" expressible as a minimum — the shared `decimal` rule's bound is
+ * inclusive, and inclusive-of-the-smallest-step is exclusive-of-zero for a fixed-scale number.
+ */
+const SMALLEST_QUANTITY = Decimal.parse(`0.${'0'.repeat(QUANTITY_SCALE - 1)}1`);
+
+/**
+ * How much moved — always unsigned, however it moved.
+ *
+ * The caller says how much arrived or how much left; which way that pushes the stock figure is
+ * decided by the endpoint they chose, and written by the service. Accepting a signed quantity
+ * would put the one rule that makes every stock figure right into the hands of every caller,
+ * and a receipt of `-5` would be an issue nobody named.
+ *
+ * Zero is refused rather than accepted as a no-op. A movement of nothing is a row in a
+ * permanent ledger that records that nothing happened, which is worse than useless: it is a
+ * line an auditor has to ask about.
+ */
+const QUANTITY = decimal({
+  missing: 'Enter a quantity.',
+  invalid: 'Enter a quantity, such as 12 or 2.5.',
+  scale: QUANTITY_SCALE,
+  minimum: SMALLEST_QUANTITY,
+  belowMinimum: 'Enter a quantity greater than zero — a movement of nothing is not a movement.',
+});
+
+/**
+ * A receipt and an issue take the same three fields.
+ *
+ * One schema for both, because they genuinely are the same request: the difference between
+ * them is which endpoint it was sent to, which is a difference the *contract* makes rather
+ * than the body. Two identical validators would be two places for the wording to drift.
+ */
+export const RecordMovementBody = validator({
+  productId: identifier(PRODUCT),
+  locationId: identifier(LOCATION),
+  quantity: QUANTITY,
+});
+
+/**
+ * What a caller may ask of the ledger.
+ *
+ * Newest first by default, because a history screen opens on what just happened rather than on
+ * what happened when the company started. Nothing is searchable: there is no free text on a
+ * movement, and a search box that matched an identifier would be one nobody could type into.
+ * Product and location are filterable and not sortable — they are chosen from a dropdown, and
+ * sorting a ledger by an opaque identifier orders it by nothing a person can see.
+ */
+export const MOVEMENT_LIST: ListSpec = {
+  defaultSort: `-${MOVEMENT_FIELDS.recordedAt}`,
+  fields: {
+    [MOVEMENT_FIELDS.kind]: { type: 'text', sortable: true, filterable: true },
+    [MOVEMENT_FIELDS.productId]: { type: 'text', filterable: true },
+    [MOVEMENT_FIELDS.locationId]: { type: 'text', filterable: true },
+    [MOVEMENT_FIELDS.recordedAt]: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+/**
+ * What a caller may ask of the stock levels.
+ *
+ * The two questions the ticket asks for — everywhere one product is, and everything one
+ * location holds — are the same list with one filter set, so there is one endpoint rather than
+ * two. Sorting by quantity is what finds the thing you are about to run out of.
+ */
+export const STOCK_LIST: ListSpec = {
+  defaultSort: STOCK_FIELDS.productId,
+  fields: {
+    [STOCK_FIELDS.productId]: { type: 'text', sortable: true, filterable: true },
+    [STOCK_FIELDS.locationId]: { type: 'text', sortable: true, filterable: true },
+    [STOCK_FIELDS.quantity]: { type: 'decimal', sortable: true, filterable: true },
   },
 };

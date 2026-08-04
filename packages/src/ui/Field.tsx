@@ -38,7 +38,14 @@ export function Field({
   onBlur?: () => void;
   error?: string;
   hint?: string;
-  type?: 'text' | 'email' | 'password';
+  /**
+   * `date` gives the browser's own date picker, holding `YYYY-MM-DD` — which is exactly the
+   * form the platform's list convention reads a date filter in, so a screen hands the value
+   * straight to `narrowed(…)` without formatting it. Added when the movement history needed a
+   * "since" control; a date box knows nothing about what is being dated, which is what keeps it
+   * a primitive.
+   */
+  type?: 'text' | 'email' | 'password' | 'date';
   autoComplete?: string;
   inputRef?: Ref<HTMLInputElement>;
   /**

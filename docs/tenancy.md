@@ -175,11 +175,21 @@ the database the writer could not read back.
 ## Making a table immutable
 
 ```ts
-PayRun: { kind: 'company-owned', immutable: true },
+PayRun:        { kind: 'company-owned', immutable: true },
+StockMovement: { kind: 'company-owned', immutable: true },
 ```
 
 Update, upsert and delete are refused by the platform. Not having a route that would do it
 is not immutability — the next person to add a route is. This is.
+
+The two callers reach the same declaration from different directions, which is worth noticing:
+a payroll record that can be edited after the fact is not a payroll record, and a stock ledger
+that can be edited leaves the accounting entries derived from it with nothing to reconcile
+against. The mechanism was built for hrm's shape and inventory needed it unchanged.
+
+A module with an immutable table should still have no route that writes one, and assert both
+separately — `movements.spec.ts` does. They fail differently: "there is no endpoint" is a fact
+about today's controller, and "the table refuses updates" is a fact about the system.
 
 Immutability is checked *before* company context, so it holds even inside
 `withoutCompanyScope` below. It is a fact about the table rather than about who is asking, and
