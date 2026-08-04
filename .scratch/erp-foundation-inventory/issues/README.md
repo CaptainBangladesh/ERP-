@@ -46,6 +46,28 @@ entry needs and emit events, but no accounting module exists and inventory never
 Only 03, 12 and 14 produce nothing to look at, and they are spread out rather than stacked at the
 front. Ticket 12 can be worked in parallel with 10 and 11; everything else is a chain.
 
+## What the audit raised
+
+Ticket 14 answered its question — **the foundation is ready for the second business module, and
+that module must not be Accounting** — and left five follow-ups. The first four are recorded in
+`docs/adr/0009-foundation-audit-against-the-module-roadmap.md`, with their evidence in
+`backend/test/roadmap-audit.spec.ts`. The fifth came out of the review rather than the audit.
+
+| #  | Ticket                                          | Blocked by | Why it was raised                 | Blocks     |
+| -- | ----------------------------------------------- | ---------- | --------------------------------- | ---------- |
+| 15 | An event edge is not a service edge             | 14         | a sink cannot listen without depending | Accounting |
+| 16 | Row-level security, and the lock a check chose  | 14         | ADR 0003's deferral, and its trigger arrived in 12 | — |
+| 17 | Every default sort carries its index            | 14         | ADR 0004's obligation, unenforced and already drifted | — |
+| 18 | Money is summed as money                        | 14         | valuation sums as `Decimal`, losing the currency refusal | — |
+| 19 | What tickets 11 to 13 left behind               | 14         | three criteria ticked and not met, plus cleanup | — |
+
+None of them is a chain. 15 is the only one that blocks a module, and only one module.
+
+**Ticket 11 is done except three criteria**, carried to 19: the whole permissive branch of the
+negative-stock policy — the warning before and after, the negative display on `ValuationPage`,
+and the tests for both. It only shows up for a company that has chosen to allow negative stock,
+which is not the default, which is why nothing noticed until the audit read it.
+
 ## Why infrastructure rides along
 
 Each piece of platform machinery attaches to the first visible ticket that genuinely needs it, which
