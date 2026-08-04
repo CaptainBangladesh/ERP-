@@ -1,6 +1,7 @@
 import {
   INVENTORY_EVENTS,
   INVENTORY_MODULE,
+  INVENTORY_SETTINGS_ROUTE,
   LOCATIONS_ROUTE,
   MOVEMENTS_ROUTE,
   STOCK_ROUTE,
@@ -53,26 +54,28 @@ export const manifest: ModuleManifest = {
   nestModule: InventoryModule,
 
   /**
-   * Three routes, each named for its resource rather than for the module — as products owns
-   * `api/products` and `api/units`. Movements and stock are siblings rather than one nested
-   * under the other: they answer different questions (what happened, and what there is) and
-   * are read by different people.
+   * Four routes. The first three are named for their resource rather than for the module — as
+   * products owns `api/products` and `api/units`. Movements and stock are siblings rather than
+   * one nested under the other: they answer different questions (what happened, and what there
+   * is) and are read by different people.
+   *
+   * The fourth is the exception that proves it. `api/inventory/settings` is named for the
+   * module because what it configures *is* the module — whether a movement that would go
+   * negative is refused — rather than a resource anybody lists.
    */
-  routes: [LOCATIONS_ROUTE, MOVEMENTS_ROUTE, STOCK_ROUTE],
+  routes: [LOCATIONS_ROUTE, MOVEMENTS_ROUTE, STOCK_ROUTE, INVENTORY_SETTINGS_ROUTE],
 
-  migrations: ['20260804023340_inventory', '20260804032520_inventory_stock_movements'],
+  migrations: [
+    '20260804023340_inventory',
+    '20260804032520_inventory_stock_movements',
+    '20260804040000_inventory_adjustments_and_transfers',
+    '20260804050000_reversals_and_negative_stock_policy',
+  ],
 
-  models: ['Location', 'StockMovement', 'StockLevel'],
+  models: ['Location', 'StockMovement', 'StockLevel', 'InventorySetting'],
 
   /**
-   * A permission is about a resource, which is why these are `locations` and `movements` and
-   * `stock` rather than one `inventory:inventory:write`. The three are genuinely different
-   * jobs: somebody who maintains the list of warehouses is not thereby somebody who may write
-   * to the stock ledger, and somebody who needs to know what is on the shelf is not thereby
-   * somebody who should read the audit trail of everything that ever happened to it.
-   *
-   * Stock has a read and no write, deliberately. There is no way to set a level — it is the
-   * running total of the ledger, so the way to change it is to record what happened.
+   * Permissions for inventory: locations, movements, and stock read/write (settings).
    */
   permissions: [
     'inventory:locations:read',
@@ -80,12 +83,14 @@ export const manifest: ModuleManifest = {
     'inventory:movements:read',
     'inventory:movements:write',
     'inventory:stock:read',
+    'inventory:stock:write',
   ],
 
   navigation: [
     { label: 'Locations', path: '/locations', order: 30, permission: 'inventory:locations:read' },
     { label: 'Stock', path: '/stock', order: 31, permission: 'inventory:stock:read' },
-    { label: 'Movements', path: '/movements', order: 32, permission: 'inventory:movements:read' },
+    { label: 'Valuation', path: '/valuation', order: 32, permission: 'inventory:stock:read' },
+    { label: 'Movements', path: '/movements', order: 33, permission: 'inventory:movements:read' },
   ],
 
   /**

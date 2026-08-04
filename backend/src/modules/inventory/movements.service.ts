@@ -21,10 +21,12 @@ import { exactly } from '../../prisma/columns';
 import { ProductCatalogue } from '../products';
 import { InventoryReferences, type Resolved } from './references';
 import {
+  alreadyReversed,
   locationNotFound,
   locationNotInUse,
   movementNotFound,
   movementProductNotFound,
+  negativeStockRefused,
   productNotStockable,
   transferSameLocation,
 } from './refusals';
@@ -54,14 +56,69 @@ import { MOVEMENT_LIST, RecordAdjustmentBody, RecordMovementBody, RecordTransfer
  * As in every module, there is no company filter in this file: the platform scopes every query
  * below, so another company's stock is not reachable from here even by trying.
  */
+/**
+ * The one thing the negative-stock check needs from the transaction it runs inside.
+ *
+ * Named as a capability rather than typed as the whole client, because the type
+ * `$transaction` hands a callback on an *extended* Prisma client is Prisma's business and
+ * awkward to name from here — and because what this check actually does is one read. A
+ * parameter that says so is narrower than the client, cannot be used to widen the check
+ * later without saying so here first, and does not need `any` to compile.
+ */
+interface ReadsStockLevels {
+  stockLevel: {
+    findFirst(args: {
+      where: { productId: string; locationId: string };
+      select: { quantity: true };
+    }): Promise<{ quantity: Prisma.Decimal } | null>;
+  };
+}
+
 @Injectable()
 export class MovementsService {
+  private readonly locks = new ResourceLockManager();
+
   constructor(
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly products: ProductCatalogue,
     private readonly references: InventoryReferences,
     private readonly events: DomainEvents,
   ) {}
+
+  private async assertNegativeStockPolicy(
+    tx: ReadsStockLevels,
+    productId: string,
+    locationId: string,
+    deltaQuantity: Decimal,
+    locationName: string,
+    productCode: string,
+  ): Promise<void> {
+    if (deltaQuantity.compare(Decimal.ZERO) >= 0) return;
+
+    const setting = await this.prisma.inventorySetting.findFirst();
+
+    const allowNegative = setting?.allowNegativeStock ?? false;
+    if (allowNegative) return;
+
+    const currentLevel = await tx.stockLevel.findFirst({
+      where: { productId, locationId },
+      select: { quantity: true },
+    });
+
+    const currentQty = currentLevel
+      ? Decimal.parse(exactly(currentLevel.quantity))
+      : Decimal.ZERO;
+    const newQty = currentQty.plus(deltaQuantity);
+
+    if (newQty.compare(Decimal.ZERO) < 0) {
+      throw negativeStockRefused(
+        locationName,
+        productCode,
+        currentQty.toString(),
+        deltaQuantity.negated().toString(),
+      );
+    }
+  }
 
   /**
    * Goods arriving, and goods leaving — one method, because they are one act with a sign.
@@ -73,7 +130,7 @@ export class MovementsService {
    * eventually gain a fix the other did not.
    */
   async record(
-    kind: MovementKind,
+    kind: RecordedDirectly,
     actor: Actor,
     input: Valid<typeof RecordMovementBody>,
   ): Promise<MovementResponse> {
@@ -101,74 +158,58 @@ export class MovementsService {
       ? Money.fromValue(unitCost).times(quantity).round('half-even')
       : undefined;
 
-    const movement = await this.prisma.$transaction(async (tx) => {
-      const written = await tx.stockMovement.create({
-        data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
-          kind,
-          classification,
-          productId: input.productId,
-          locationId: input.locationId,
-          quantity: quantity.toString(),
-          unitCode: product.unitCode,
-          unitCost: unitCost?.amount,
-          value: value?.toValue().amount,
-          recordedById: actor.id,
-          recordedByName: actor.name,
-        }),
-      });
+    const lockKey = `${input.productId}:${input.locationId}`;
 
-      /**
-       * The running total, read and then written.
-       *
-       * Deliberately not an `upsert`: the compound key includes the company, so naming it would
-       * mean writing the one column this module is not allowed to write — scoping is the
-       * platform's, and a module that wrote the filter would be a module that could forget it.
-       * Read-then-write through the scoped client keeps every query scoped without this file
-       * ever mentioning a company.
-       *
-       * **This read-then-write is a lost update under concurrency, and ticket 12 owns it.**
-       *
-       * Two requests moving the same product at the same place can both read one quantity and
-       * both write their own answer, and the second silently overwrites the first. The unique
-       * constraint on `(company, product, location)` covers only the `create` branch below —
-       * two concurrent *first* movements collide loudly there — so it must not be mistaken for
-       * protection: once a level row exists, which is the ordinary case, nothing here trips.
-       *
-       * The ledger is what makes that survivable rather than merely unfortunate. Both movements
-       * are recorded whatever happens to the level, so the correct quantity is always
-       * recoverable by summing the rows — which is precisely the reconciliation check ticket 12
-       * builds, and the reason this projection is a cache rather than the record.
-       */
-      const level = await tx.stockLevel.findFirst({
-        where: { productId: input.productId, locationId: input.locationId },
-        select: { id: true, quantity: true },
-      });
+    const movement = await this.locks.acquire([lockKey], async () => {
+      return this.prisma.$transaction(async (tx) => {
+        await this.assertNegativeStockPolicy(
+          tx,
+          input.productId,
+          input.locationId,
+          quantity,
+          location.name,
+          product.code,
+        );
 
-      if (level) {
-        await tx.stockLevel.update({
-          where: { id: level.id },
-          data: { quantity: Decimal.parse(exactly(level.quantity)).plus(quantity).toString() },
-        });
-      } else {
-        await tx.stockLevel.create({
-          data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+        const written = await tx.stockMovement.create({
+          data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+            kind,
+            classification,
             productId: input.productId,
             locationId: input.locationId,
             quantity: quantity.toString(),
+            unitCode: product.unitCode,
+            unitCost: unitCost?.amount,
+            value: value?.toValue().amount,
+            recordedById: actor.id,
+            recordedByName: actor.name,
           }),
         });
-      }
 
-      return written;
+        const level = await tx.stockLevel.findFirst({
+          where: { productId: input.productId, locationId: input.locationId },
+          select: { id: true, quantity: true },
+        });
+
+        if (level) {
+          await tx.stockLevel.update({
+            where: { id: level.id },
+            data: { quantity: Decimal.parse(exactly(level.quantity)).plus(quantity).toString() },
+          });
+        } else {
+          await tx.stockLevel.create({
+            data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+              productId: input.productId,
+              locationId: input.locationId,
+              quantity: quantity.toString(),
+            }),
+          });
+        }
+
+        return written;
+      });
     });
 
-    /**
-     * Told to whoever is listening, which today is nobody — and that is the seam working rather
-     * than the seam missing. The payload is inventory's own contract, so an Accounting module
-     * written next year binds to a declared shape instead of to this file.
-     *
-     * After the commit, and outside the transaction, for the reason in the class note above.
-     */
     this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
       movementId: movement.id,
       kind,
@@ -206,44 +247,57 @@ export class MovementsService {
       ? Money.fromValue(unitCost).times(quantity).round('half-even')
       : undefined;
 
-    const movement = await this.prisma.$transaction(async (tx) => {
-      const written = await tx.stockMovement.create({
-        data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
-          kind: 'adjustment',
-          classification,
-          productId: input.productId,
-          locationId: input.locationId,
-          quantity: quantity.toString(),
-          unitCode: product.unitCode,
-          unitCost: unitCost?.amount,
-          value: value?.toValue().amount,
-          reason: input.reason,
-          recordedById: actor.id,
-          recordedByName: actor.name,
-        }),
-      });
+    const lockKey = `${input.productId}:${input.locationId}`;
 
-      const level = await tx.stockLevel.findFirst({
-        where: { productId: input.productId, locationId: input.locationId },
-        select: { id: true, quantity: true },
-      });
+    const movement = await this.locks.acquire([lockKey], async () => {
+      return this.prisma.$transaction(async (tx) => {
+        await this.assertNegativeStockPolicy(
+          tx,
+          input.productId,
+          input.locationId,
+          quantity,
+          location.name,
+          product.code,
+        );
 
-      if (level) {
-        await tx.stockLevel.update({
-          where: { id: level.id },
-          data: { quantity: Decimal.parse(exactly(level.quantity)).plus(quantity).toString() },
-        });
-      } else {
-        await tx.stockLevel.create({
-          data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+        const written = await tx.stockMovement.create({
+          data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+            kind: 'adjustment',
+            classification,
             productId: input.productId,
             locationId: input.locationId,
             quantity: quantity.toString(),
+            unitCode: product.unitCode,
+            unitCost: unitCost?.amount,
+            value: value?.toValue().amount,
+            reason: input.reason,
+            recordedById: actor.id,
+            recordedByName: actor.name,
           }),
         });
-      }
 
-      return written;
+        const level = await tx.stockLevel.findFirst({
+          where: { productId: input.productId, locationId: input.locationId },
+          select: { id: true, quantity: true },
+        });
+
+        if (level) {
+          await tx.stockLevel.update({
+            where: { id: level.id },
+            data: { quantity: Decimal.parse(exactly(level.quantity)).plus(quantity).toString() },
+          });
+        } else {
+          await tx.stockLevel.create({
+            data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+              productId: input.productId,
+              locationId: input.locationId,
+              quantity: quantity.toString(),
+            }),
+          });
+        }
+
+        return written;
+      });
     });
 
     this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
@@ -298,84 +352,100 @@ export class MovementsService {
       ? Money.fromValue(unitCost).times(inQuantity).round('half-even')
       : undefined;
 
-    const [outMovement, inMovement] = await this.prisma.$transaction(async (tx) => {
-      const outWritten = await tx.stockMovement.create({
-        data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
-          kind: 'transfer',
-          classification: 'transfer',
-          productId: input.productId,
-          locationId: input.fromLocationId,
-          quantity: outQuantity.toString(),
-          unitCode: product.unitCode,
-          unitCost: unitCost?.amount,
-          value: outValue?.toValue().amount,
-          transferId,
-          recordedById: actor.id,
-          recordedByName: actor.name,
-        }),
-      });
+    const lockKeys = [
+      `${input.productId}:${input.fromLocationId}`,
+      `${input.productId}:${input.toLocationId}`,
+    ];
 
-      const fromLevel = await tx.stockLevel.findFirst({
-        where: { productId: input.productId, locationId: input.fromLocationId },
-        select: { id: true, quantity: true },
-      });
+    const [outMovement, inMovement] = await this.locks.acquire(lockKeys, async () => {
+      return this.prisma.$transaction(async (tx) => {
+        await this.assertNegativeStockPolicy(
+          tx,
+          input.productId,
+          input.fromLocationId,
+          outQuantity,
+          fromLocation.name,
+          product.code,
+        );
 
-      if (fromLevel) {
-        await tx.stockLevel.update({
-          where: { id: fromLevel.id },
-          data: {
-            quantity: Decimal.parse(exactly(fromLevel.quantity)).plus(outQuantity).toString(),
-          },
-        });
-      } else {
-        await tx.stockLevel.create({
-          data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+        const outWritten = await tx.stockMovement.create({
+          data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+            kind: 'transfer',
+            classification: 'transfer',
             productId: input.productId,
             locationId: input.fromLocationId,
             quantity: outQuantity.toString(),
+            unitCode: product.unitCode,
+            unitCost: unitCost?.amount,
+            value: outValue?.toValue().amount,
+            transferId,
+            recordedById: actor.id,
+            recordedByName: actor.name,
           }),
         });
-      }
 
-      const inWritten = await tx.stockMovement.create({
-        data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
-          kind: 'transfer',
-          classification: 'transfer',
-          productId: input.productId,
-          locationId: input.toLocationId,
-          quantity: inQuantity.toString(),
-          unitCode: product.unitCode,
-          unitCost: unitCost?.amount,
-          value: inValue?.toValue().amount,
-          transferId,
-          recordedById: actor.id,
-          recordedByName: actor.name,
-        }),
-      });
-
-      const toLevel = await tx.stockLevel.findFirst({
-        where: { productId: input.productId, locationId: input.toLocationId },
-        select: { id: true, quantity: true },
-      });
-
-      if (toLevel) {
-        await tx.stockLevel.update({
-          where: { id: toLevel.id },
-          data: {
-            quantity: Decimal.parse(exactly(toLevel.quantity)).plus(inQuantity).toString(),
-          },
+        const fromLevel = await tx.stockLevel.findFirst({
+          where: { productId: input.productId, locationId: input.fromLocationId },
+          select: { id: true, quantity: true },
         });
-      } else {
-        await tx.stockLevel.create({
-          data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+
+        if (fromLevel) {
+          await tx.stockLevel.update({
+            where: { id: fromLevel.id },
+            data: {
+              quantity: Decimal.parse(exactly(fromLevel.quantity)).plus(outQuantity).toString(),
+            },
+          });
+        } else {
+          await tx.stockLevel.create({
+            data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+              productId: input.productId,
+              locationId: input.fromLocationId,
+              quantity: outQuantity.toString(),
+            }),
+          });
+        }
+
+        const inWritten = await tx.stockMovement.create({
+          data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+            kind: 'transfer',
+            classification: 'transfer',
             productId: input.productId,
             locationId: input.toLocationId,
             quantity: inQuantity.toString(),
+            unitCode: product.unitCode,
+            unitCost: unitCost?.amount,
+            value: inValue?.toValue().amount,
+            transferId,
+            recordedById: actor.id,
+            recordedByName: actor.name,
           }),
         });
-      }
 
-      return [outWritten, inWritten];
+        const toLevel = await tx.stockLevel.findFirst({
+          where: { productId: input.productId, locationId: input.toLocationId },
+          select: { id: true, quantity: true },
+        });
+
+        if (toLevel) {
+          await tx.stockLevel.update({
+            where: { id: toLevel.id },
+            data: {
+              quantity: Decimal.parse(exactly(toLevel.quantity)).plus(inQuantity).toString(),
+            },
+          });
+        } else {
+          await tx.stockLevel.create({
+            data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+              productId: input.productId,
+              locationId: input.toLocationId,
+              quantity: inQuantity.toString(),
+            }),
+          });
+        }
+
+        return [outWritten, inWritten];
+      });
     });
 
     this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
@@ -411,6 +481,213 @@ export class MovementsService {
     };
   }
 
+  async reverse(actor: Actor, movementId: string): Promise<MovementResponse> {
+    const original = await this.prisma.stockMovement.findFirst({ where: { id: movementId } });
+    if (!original) throw movementNotFound();
+
+    const existingReversal = await this.prisma.stockMovement.findFirst({
+      where: { reversedMovementId: movementId },
+    });
+    if (existingReversal) throw alreadyReversed();
+
+    if (original.transferId) {
+      const twinMovements = await this.prisma.stockMovement.findMany({
+        where: { transferId: original.transferId },
+      });
+
+      for (const m of twinMovements) {
+        const rev = await this.prisma.stockMovement.findFirst({
+          where: { reversedMovementId: m.id },
+        });
+        if (rev) throw alreadyReversed();
+      }
+
+      const newTransferId = randomUUID();
+      const product = await this.products.product(original.productId);
+
+      const lockKeys = twinMovements.map((m) => `${m.productId}:${m.locationId}`);
+
+      const [rev1, rev2] = await this.locks.acquire(lockKeys, async () => {
+        return this.prisma.$transaction(async (tx) => {
+          const reversals = [];
+          for (const m of twinMovements) {
+            const origQty = Decimal.parse(exactly(m.quantity));
+            const revQty = origQty.negated();
+            const origVal = m.value ? Decimal.parse(exactly(m.value)) : null;
+            const revVal = origVal ? origVal.negated() : null;
+
+            const loc = await tx.location.findFirst({ where: { id: m.locationId } });
+            const locName = loc ? loc.name : 'Unknown';
+            const prodCode = product ? product.code : 'UNKNOWN';
+
+            await this.assertNegativeStockPolicy(
+              tx,
+              m.productId,
+              m.locationId,
+              revQty,
+              locName,
+              prodCode,
+            );
+
+            const written = await tx.stockMovement.create({
+              data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+                kind: 'reversal',
+                classification: 'transfer',
+                productId: m.productId,
+                locationId: m.locationId,
+                quantity: revQty.toString(),
+                unitCode: m.unitCode,
+                // `exactly`, never `toString()`: these two are `Prisma.Decimal` read back off
+                // the original row, and Prisma prints a large one in exponential notation that
+                // `Decimal.parse` refuses. `revQty` and `revVal` above are this codebase's own
+                // `Decimal`, whose `toString` is the canonical form. See src/prisma/columns.ts.
+                unitCost: exactly(m.unitCost),
+                value: revVal?.toString(),
+                transferId: newTransferId,
+                reversedMovementId: m.id,
+                recordedById: actor.id,
+                recordedByName: actor.name,
+              }),
+            });
+
+            const level = await tx.stockLevel.findFirst({
+              where: { productId: m.productId, locationId: m.locationId },
+              select: { id: true, quantity: true },
+            });
+
+            if (level) {
+              await tx.stockLevel.update({
+                where: { id: level.id },
+                data: { quantity: Decimal.parse(exactly(level.quantity)).plus(revQty).toString() },
+              });
+            } else {
+              await tx.stockLevel.create({
+                data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+                  productId: m.productId,
+                  locationId: m.locationId,
+                  quantity: revQty.toString(),
+                }),
+              });
+            }
+
+            reversals.push(written);
+          }
+          return reversals;
+        });
+      });
+
+      for (const rev of [rev1, rev2]) {
+        if (!rev) continue;
+        this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
+          movementId: rev.id,
+          kind: 'reversal',
+          classification: 'transfer',
+          productId: rev.productId,
+          locationId: rev.locationId,
+          // Off the written row, so `Prisma.Decimal` and therefore `exactly`.
+          quantity: exactly(rev.quantity),
+          value: rev.value ? Money.wire(exactly(rev.value)) : null,
+          recordedById: rev.recordedById,
+          recordedAt: rev.recordedAt.toISOString(),
+          transferId: newTransferId,
+          reversedMovementId: rev.reversedMovementId,
+        });
+      }
+
+      const targetRev = [rev1, rev2].find((r) => r && r.reversedMovementId === movementId);
+      if (!targetRev) throw movementNotFound();
+      return describe(targetRev, await this.references.resolve([targetRev]));
+    }
+
+    const product = await this.products.product(original.productId);
+    const location = await this.prisma.location.findFirst({ where: { id: original.locationId } });
+    const locName = location ? location.name : 'Unknown';
+    const prodCode = product ? product.code : 'UNKNOWN';
+
+    const origQty = Decimal.parse(exactly(original.quantity));
+    const revQty = origQty.negated();
+    const origVal = original.value ? Decimal.parse(exactly(original.value)) : null;
+    const revVal = origVal ? origVal.negated() : null;
+
+    let classification: MovementClassification;
+    if (original.classification === 'stock-in') {
+      classification = 'stock-out';
+    } else if (original.classification === 'stock-out') {
+      classification = 'stock-in';
+    } else {
+      classification = 'transfer';
+    }
+
+    const lockKey = `${original.productId}:${original.locationId}`;
+
+    const reversal = await this.locks.acquire([lockKey], async () => {
+      return this.prisma.$transaction(async (tx) => {
+        await this.assertNegativeStockPolicy(
+          tx,
+          original.productId,
+          original.locationId,
+          revQty,
+          locName,
+          prodCode,
+        );
+
+        const written = await tx.stockMovement.create({
+          data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+            kind: 'reversal',
+            classification,
+            productId: original.productId,
+            locationId: original.locationId,
+            quantity: revQty.toString(),
+            unitCode: original.unitCode,
+            // `exactly` rather than `toString()`, for the reason the twin reversal above gives.
+            unitCost: exactly(original.unitCost),
+            value: revVal?.toString(),
+            reversedMovementId: original.id,
+            recordedById: actor.id,
+            recordedByName: actor.name,
+          }),
+        });
+
+        const level = await tx.stockLevel.findFirst({
+          where: { productId: original.productId, locationId: original.locationId },
+          select: { id: true, quantity: true },
+        });
+
+        if (level) {
+          await tx.stockLevel.update({
+            where: { id: level.id },
+            data: { quantity: Decimal.parse(exactly(level.quantity)).plus(revQty).toString() },
+          });
+        } else {
+          await tx.stockLevel.create({
+            data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+              productId: original.productId,
+              locationId: original.locationId,
+              quantity: revQty.toString(),
+            }),
+          });
+        }
+
+        return written;
+      });
+    });
+
+    this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
+      movementId: reversal.id,
+      kind: 'reversal',
+      classification,
+      productId: reversal.productId,
+      locationId: reversal.locationId,
+      quantity: revQty.toString(),
+      value: reversal.value ? Money.wire(exactly(reversal.value)) : null,
+      recordedById: reversal.recordedById,
+      recordedAt: reversal.recordedAt.toISOString(),
+      reversedMovementId: reversal.reversedMovementId,
+    });
+
+    return describe(reversal, await this.references.resolve([reversal]));
+  }
+
   async listMovements(query: Record<string, unknown>): Promise<MovementListResponse> {
     const slice = listQuery(query, MOVEMENT_LIST);
 
@@ -441,24 +718,31 @@ export interface Actor {
 }
 
 /**
- * What each kind of movement means: which way it pushes stock, and what a journal entry posted
- * from it would be.
+ * What a receipt and an issue mean: which way each pushes stock, and what a journal entry
+ * posted from it would be.
  *
- * A table rather than a pair of `if`s, because tickets 10 and 11 add rows to it — an adjustment
- * that can go either way, a transfer that posts nothing, a reversal that undoes whichever
- * direction it is reversing. Every one of those is a line here and a case nowhere else, which
- * is the property worth having: adding a movement type should not mean finding every place that
- * asked whether something was a receipt.
+ * A table rather than a pair of `if`s — and, as written at ticket 09, a table tickets 10 and 11
+ * were expected to add rows to. **They did not, and this now says so.** An adjustment carries a
+ * direction the caller chooses, a transfer is two rows with opposite signs, and a reversal takes
+ * its classification from the movement it undoes; none of the three is a constant, so each
+ * derives its own inside its own method and none of them reads this.
+ *
+ * It is narrowed to the two kinds `record` actually serves rather than left covering all five,
+ * because a row nobody reads is a row nobody checks: the `reversal` entry that used to sit here
+ * said `stock-in`, which is right for reversing an issue and wrong for reversing a receipt, and
+ * nothing caught it because nothing looked at it. A wrong constant that reads as authoritative
+ * is worse than no constant.
  */
 const SHAPE = {
   receipt: { classification: 'stock-in', direction: 'up' },
   issue: { classification: 'stock-out', direction: 'down' },
-  adjustment: { classification: 'stock-in', direction: 'up' },
-  transfer: { classification: 'transfer', direction: 'up' },
 } as const satisfies Record<
-  MovementKind,
+  RecordedDirectly,
   { classification: MovementClassification; direction: 'up' | 'down' }
 >;
+
+/** The kinds `record` is called with. The other three each have an endpoint of their own. */
+type RecordedDirectly = Extract<MovementKind, 'receipt' | 'issue'>;
 
 interface MovementRow {
   id: string;
@@ -472,6 +756,7 @@ interface MovementRow {
   value: Prisma.Decimal | null;
   reason: string | null;
   transferId: string | null;
+  reversedMovementId: string | null;
   recordedById: string;
   recordedByName: string;
   recordedAt: Date;
@@ -518,9 +803,58 @@ function describe(row: MovementRow, resolved: Resolved): MovementSummary {
 
     reason: row.reason ?? null,
     transferId: row.transferId ?? null,
+    reversedMovementId: row.reversedMovementId ?? null,
 
     recordedById: row.recordedById,
     recordedByName: row.recordedByName,
     recordedAt: row.recordedAt.toISOString(),
   };
+}
+
+/**
+ * Per-resource in-memory locking manager (Ticket 12: Concurrency Hardening).
+ *
+ * Why this approach:
+ * - Default Postgres READ COMMITTED transactions suffer from lost updates when two concurrent
+ *   requests read-then-update `StockLevel` for the same product and location.
+ * - `check-tenancy.mjs` strictly prohibits `$queryRaw` / `$executeRaw` (`SELECT ... FOR UPDATE`)
+ *   in `src/` to prevent raw SQL tenant isolation leaks.
+ * - `ResourceLockManager` serializes operations targeting the same product & location key
+ *   (`${productId}:${locationId}`), guaranteeing exact sequential stock level calculations.
+ * - Multi-resource operations (transfers and twin reversals) sort keys lexicographically before
+ *   acquiring locks to guarantee deadlock-free execution.
+ * - Concurrent operations on different products run in parallel with zero blocking.
+ */
+class ResourceLockManager {
+  private locks = new Map<string, Promise<void>>();
+
+  async acquire<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
+    const sortedKeys = Array.from(new Set(keys)).sort();
+    return this.acquireNext(sortedKeys, 0, fn);
+  }
+
+  private async acquireNext<T>(keys: string[], index: number, fn: () => Promise<T>): Promise<T> {
+    if (index >= keys.length) {
+      return fn();
+    }
+    const key = keys[index]!;
+    const currentLock = this.locks.get(key) ?? Promise.resolve();
+
+    let resolveAcquired!: () => void;
+    const newLock = new Promise<void>((resolve) => {
+      resolveAcquired = resolve;
+    });
+
+    this.locks.set(key, currentLock.then(() => newLock));
+
+    try {
+      await currentLock;
+      return await this.acquireNext(keys, index + 1, fn);
+    } finally {
+      resolveAcquired();
+      if (this.locks.get(key) === newLock) {
+        this.locks.delete(key);
+      }
+    }
+  }
 }

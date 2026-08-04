@@ -1066,6 +1066,152 @@ describe('stock movements', () => {
     });
   });
 
+  describe('reversals', () => {
+    it('reverses a receipt, creating a new reversal ledger entry and restoring stock level', async () => {
+      const { tenant, product, location } = await ready();
+      const rec = await receive(tenant, {
+        productId: product.id,
+        locationId: location.id,
+        quantity: '10',
+      });
+
+      const rev = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.reversal(rec.id)))
+        .expect(201);
+
+      expect(rev.body).toMatchObject({
+        kind: 'reversal',
+        classification: 'stock-out',
+        productId: product.id,
+        locationId: location.id,
+        quantity: '-10',
+        reversedMovementId: rec.id,
+      });
+
+      const levels = (await stock(tenant)).items;
+      expect(levels[0]?.quantity).toBe('0');
+    });
+
+    it('reverses an issue, creating a stock-in reversal ledger entry and restoring stock level', async () => {
+      const { tenant, product, location } = await ready();
+      await receive(tenant, { productId: product.id, locationId: location.id, quantity: '10' });
+      const iss = await issue(tenant, {
+        productId: product.id,
+        locationId: location.id,
+        quantity: '4',
+      });
+
+      const rev = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.reversal(iss.id)))
+        .expect(201);
+
+      expect(rev.body).toMatchObject({
+        kind: 'reversal',
+        classification: 'stock-in',
+        quantity: '4',
+        reversedMovementId: iss.id,
+      });
+
+      const levels = (await stock(tenant)).items;
+      expect(levels[0]?.quantity).toBe('10');
+    });
+
+    it('reverses a transfer, atomically reversing both twin movements', async () => {
+      const tenant = await signUp();
+      const product = await addProduct(tenant, { cost: '5.00' });
+      const warehouse = await addLocation(tenant, 'WH-1');
+      const store = await addLocation(tenant, 'STORE-1');
+
+      await receive(tenant, { productId: product.id, locationId: warehouse.id, quantity: '10' });
+      const xfer = await transfer(tenant, {
+        productId: product.id,
+        fromLocationId: warehouse.id,
+        toLocationId: store.id,
+        quantity: '4',
+      });
+
+      const rev = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.reversal(xfer.from.id)))
+        .expect(201);
+
+      expect(rev.body).toMatchObject({
+        kind: 'reversal',
+        classification: 'transfer',
+        locationId: warehouse.id,
+        quantity: '4',
+        reversedMovementId: xfer.from.id,
+      });
+
+      const levels = await stock(tenant, { pageSize: 100 });
+      const byLocation = new Map(levels.items.map((item) => [item.locationId, item.quantity]));
+      expect(byLocation.get(warehouse.id)).toBe('10');
+      expect(byLocation.get(store.id)).toBe('0');
+    });
+
+    it('refuses to reverse a movement that has already been reversed', async () => {
+      const { tenant, product, location } = await ready();
+      const rec = await receive(tenant, {
+        productId: product.id,
+        locationId: location.id,
+        quantity: '10',
+      });
+
+      await tenant.as(app.http.post(MOVEMENT_PATHS.reversal(rec.id))).expect(201);
+
+      const refused = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.reversal(rec.id)))
+        .expect(409);
+
+      expect(refused.body.code).toBe(MOVEMENT_ERROR_CODES.alreadyReversed);
+    });
+  });
+
+  describe('negative stock policy', () => {
+    it('defaults to refusing negative stock in code', async () => {
+      const { tenant, product, location } = await ready();
+
+      // Attempting to issue stock when level is 0
+      const refused = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.issues))
+        .send({
+          productId: product.id,
+          locationId: location.id,
+          quantity: '5',
+        })
+        .expect(409);
+
+      expect(refused.body.code).toBe(MOVEMENT_ERROR_CODES.negativeStockRefused);
+    });
+
+    it('allows changing negative stock policy via settings endpoint', async () => {
+      const { tenant, product, location } = await ready();
+
+      // Check default settings
+      const getSettings = await tenant
+        .as(app.http.get(MOVEMENT_PATHS.settings))
+        .expect(200);
+      expect(getSettings.body).toEqual({ allowNegativeStock: false });
+
+      // Enable allowNegativeStock
+      const updateSettings = await tenant
+        .as(app.http.patch(MOVEMENT_PATHS.settings))
+        .send({ allowNegativeStock: true })
+        .expect(200);
+      expect(updateSettings.body).toEqual({ allowNegativeStock: true });
+
+      // Issuing stock now succeeds and drives stock negative
+      const iss = await issue(tenant, {
+        productId: product.id,
+        locationId: location.id,
+        quantity: '5',
+      });
+      expect(iss.quantity).toBe('-5');
+
+      const levels = (await stock(tenant)).items;
+      expect(levels[0]?.quantity).toBe('-5');
+    });
+  });
+
   describe('one company cannot see another’s stock', () => {
     it('is not a filter any of this code writes', async () => {
       const northwind = await signUp();
@@ -1107,6 +1253,284 @@ describe('stock movements', () => {
 
       // Untouched — a write that happened and was then refused would look identical from here.
       expect((await stock(northwind)).items[0]?.quantity).toBe('100');
+    });
+  });
+
+  describe('concurrency hardening and reconciliation check (Ticket 12)', () => {
+    it('handles concurrent movements against the same product and location without lost updates', async () => {
+      const { tenant, product, location } = await ready();
+      await tenant.as(app.http.patch(MOVEMENT_PATHS.settings)).send({ allowNegativeStock: true });
+
+      // Fire 10 concurrent movements against the same product & location simultaneously
+      await Promise.all([
+        receive(tenant, { productId: product.id, locationId: location.id, quantity: '10' }),
+        receive(tenant, { productId: product.id, locationId: location.id, quantity: '20' }),
+        receive(tenant, { productId: product.id, locationId: location.id, quantity: '30' }),
+        issue(tenant, { productId: product.id, locationId: location.id, quantity: '5' }),
+        issue(tenant, { productId: product.id, locationId: location.id, quantity: '15' }),
+        adjust(tenant, {
+          productId: product.id,
+          locationId: location.id,
+          quantity: '5',
+          reason: 'Count adjustment A',
+        }),
+        adjust(tenant, {
+          productId: product.id,
+          locationId: location.id,
+          quantity: '-2',
+          reason: 'Count adjustment B',
+        }),
+        receive(tenant, { productId: product.id, locationId: location.id, quantity: '12' }),
+        issue(tenant, { productId: product.id, locationId: location.id, quantity: '8' }),
+        receive(tenant, { productId: product.id, locationId: location.id, quantity: '3' }),
+      ]);
+
+      // Expected sum: 10 + 20 + 30 - 5 - 15 + 5 - 2 + 12 - 8 + 3 = 50
+      const levels = (await stock(tenant)).items;
+      expect(levels).toHaveLength(1);
+      expect(levels[0]?.quantity).toBe('50');
+
+      // Verify reconciliation check reports 100% agreement
+      const recon = await tenant
+        .as(app.http.get(STOCK_PATHS.reconciliation))
+        .expect(200);
+
+      expect(recon.body).toEqual({
+        reconciled: true,
+        divergenceCount: 0,
+        divergences: [],
+      });
+    });
+
+    it('handles concurrent movements across different products without blocking', async () => {
+      const tenant = await signUp();
+      const p1 = await addProduct(tenant, { code: 'PROD-1' });
+      const p2 = await addProduct(tenant, { code: 'PROD-2' });
+      const loc = await addLocation(tenant, 'WH-1');
+
+      await Promise.all([
+        receive(tenant, { productId: p1.id, locationId: loc.id, quantity: '10' }),
+        receive(tenant, { productId: p2.id, locationId: loc.id, quantity: '25' }),
+        receive(tenant, { productId: p1.id, locationId: loc.id, quantity: '5' }),
+        issue(tenant, { productId: p2.id, locationId: loc.id, quantity: '10' }),
+      ]);
+
+      const levels = await stock(tenant, { pageSize: 100 });
+      const byProduct = new Map(levels.items.map((i) => [i.productCode, i.quantity]));
+      expect(byProduct.get('PROD-1')).toBe('15');
+      expect(byProduct.get('PROD-2')).toBe('15');
+
+      const recon = await tenant
+        .as(app.http.get(STOCK_PATHS.reconciliation))
+        .expect(200);
+      expect(recon.body.reconciled).toBe(true);
+    });
+
+    it('handles concurrent transfers involving a shared location while conserving total stock', async () => {
+      const tenant = await signUp();
+      const product = await addProduct(tenant, { code: 'PROD-1' });
+      const locA = await addLocation(tenant, 'LOC-A');
+      const locB = await addLocation(tenant, 'LOC-B');
+      const locC = await addLocation(tenant, 'LOC-C');
+
+      await receive(tenant, { productId: product.id, locationId: locA.id, quantity: '100' });
+      // LOC-B is stocked up front so that every one of the three transfers below is valid
+      // whatever order they land in. Serialising concurrent work does not *order* it: the
+      // lock guarantees that two transfers sharing a location never interleave, and
+      // guarantees nothing about which goes first. A B→C transfer that depended on the A→B
+      // transfer having already happened would be refused whenever it won the lock on B
+      // first — an assertion about scheduling wearing the clothes of an assertion about
+      // stock. What is being proved here is that three transfers contending pairwise on
+      // three locations conserve the total and cannot deadlock, and that holds in all six
+      // orderings.
+      await receive(tenant, { productId: product.id, locationId: locB.id, quantity: '20' });
+
+      await Promise.all([
+        transfer(tenant, {
+          productId: product.id,
+          fromLocationId: locA.id,
+          toLocationId: locB.id,
+          quantity: '20',
+        }),
+        transfer(tenant, {
+          productId: product.id,
+          fromLocationId: locA.id,
+          toLocationId: locC.id,
+          quantity: '30',
+        }),
+        transfer(tenant, {
+          productId: product.id,
+          fromLocationId: locB.id,
+          toLocationId: locC.id,
+          quantity: '5',
+        }),
+      ]);
+
+      // locA: 100 - 20 - 30 = 50
+      // locB: 20 + 20 - 5 = 35
+      // locC: 30 + 5 = 35
+      // Total = 50 + 35 + 35 = 120, which is what was received and never more or less.
+      const levels = await stock(tenant, { pageSize: 100 });
+      const byLoc = new Map(levels.items.map((i) => [i.locationCode, i.quantity]));
+      expect(byLoc.get('LOC-A')).toBe('50');
+      expect(byLoc.get('LOC-B')).toBe('35');
+      expect(byLoc.get('LOC-C')).toBe('35');
+
+      const recon = await tenant
+        .as(app.http.get(STOCK_PATHS.reconciliation))
+        .expect(200);
+      expect(recon.body.reconciled).toBe(true);
+    });
+  });
+
+  describe('stock valuation (Ticket 13)', () => {
+    it('returns empty valuation state when company has no stock', async () => {
+      const tenant = await signUp();
+      const response = await tenant
+        .as(app.http.get(STOCK_PATHS.valuation))
+        .expect(200);
+
+      expect(response.body).toEqual({
+        totalValue: null,
+        costedProductCount: 0,
+        uncostedProductCount: 0,
+        totalProducts: 0,
+        byProduct: [],
+        byLocation: [],
+        movementAccounting: {
+          stockInValue: { amount: '0.00', currency: 'GBP' },
+          stockOutValue: { amount: '0.00', currency: 'GBP' },
+          netMovementValue: { amount: '0.00', currency: 'GBP' },
+          reconciled: true,
+        },
+      });
+    });
+
+    it('calculates total stock valuation and breakdowns by product and location using recorded cost', async () => {
+      const tenant = await signUp();
+      const widget = await addProduct(tenant, { code: 'WIDGET-1', name: 'Widget', cost: '12.50' });
+      const gadget = await addProduct(tenant, { code: 'GADGET-1', name: 'Gadget', cost: '40.00' });
+      const wh1 = await addLocation(tenant, 'WH-1');
+      const wh2 = await addLocation(tenant, 'WH-2');
+
+      // Receipt 10 Widgets to WH-1: 10 * 12.50 = 125.00
+      await receive(tenant, { productId: widget.id, locationId: wh1.id, quantity: '10' });
+      // Receipt 5 Gadgets to WH-2: 5 * 40.00 = 200.00
+      await receive(tenant, { productId: gadget.id, locationId: wh2.id, quantity: '5' });
+
+      const response = await tenant
+        .as(app.http.get(STOCK_PATHS.valuation))
+        .expect(200);
+
+      // Total valuation: 125.00 + 200.00 = 325.00
+      expect(response.body.totalValue).toEqual({ amount: '325.00', currency: 'GBP' });
+      expect(response.body.costedProductCount).toBe(2);
+      expect(response.body.uncostedProductCount).toBe(0);
+      expect(response.body.totalProducts).toBe(2);
+
+      // Product breakdown
+      const byProduct = response.body.byProduct;
+      expect(byProduct).toHaveLength(2);
+      expect(byProduct[0]).toMatchObject({
+        productCode: 'GADGET-1',
+        totalQuantity: '5',
+        totalValue: { amount: '200.00', currency: 'GBP' },
+        isCosted: true,
+      });
+      expect(byProduct[1]).toMatchObject({
+        productCode: 'WIDGET-1',
+        totalQuantity: '10',
+        totalValue: { amount: '125.00', currency: 'GBP' },
+        isCosted: true,
+      });
+
+      // Location breakdown
+      const byLocation = response.body.byLocation;
+      expect(byLocation).toHaveLength(2);
+      expect(byLocation[0].locationCode).toBe('WH-1');
+      expect(byLocation[0].totalValue).toEqual({ amount: '125.00', currency: 'GBP' });
+      expect(byLocation[1].locationCode).toBe('WH-2');
+      expect(byLocation[1].totalValue).toEqual({ amount: '200.00', currency: 'GBP' });
+
+      // Accounting reconciliation
+      expect(response.body.movementAccounting.reconciled).toBe(true);
+      expect(response.body.movementAccounting.netMovementValue).toEqual({ amount: '325.00', currency: 'GBP' });
+    });
+
+    it('shows products with no recorded cost as uncosted rather than counting them as zero', async () => {
+      const tenant = await signUp();
+      const costedItem = await addProduct(tenant, { code: 'COSTED-1', name: 'Costed Item', cost: '15.00' });
+      const uncostedItem = await addProduct(tenant, { code: 'UNCOSTED-1', name: 'Uncosted Item' }); // cost is null
+      const wh1 = await addLocation(tenant, 'WH-1');
+
+      await receive(tenant, { productId: costedItem.id, locationId: wh1.id, quantity: '4' }); // 4 * 15 = 60.00
+      await receive(tenant, { productId: uncostedItem.id, locationId: wh1.id, quantity: '10' }); // Uncosted
+
+      const response = await tenant
+        .as(app.http.get(STOCK_PATHS.valuation))
+        .expect(200);
+
+      // Total value counts costed item (60.00)
+      expect(response.body.totalValue).toEqual({ amount: '60.00', currency: 'GBP' });
+      expect(response.body.costedProductCount).toBe(1);
+      expect(response.body.uncostedProductCount).toBe(1);
+
+      const uncostedProd = response.body.byProduct.find((p: any) => p.productCode === 'UNCOSTED-1');
+      expect(uncostedProd).toMatchObject({
+        productCode: 'UNCOSTED-1',
+        totalQuantity: '10',
+        unitCost: null,
+        totalValue: null,
+        isCosted: false,
+      });
+    });
+
+    it('asserts that derived stock value equals sum of movement accounting values across long mixed movement sequences', async () => {
+      const tenant = await signUp();
+      await tenant.as(app.http.patch(MOVEMENT_PATHS.settings)).send({ allowNegativeStock: true });
+
+      const product = await addProduct(tenant, { code: 'PROD-A', name: 'Product A', cost: '25.00' });
+      const loc1 = await addLocation(tenant, 'LOC-1');
+      const loc2 = await addLocation(tenant, 'LOC-2');
+
+      // 1. Receipt 100 to LOC-1 (+2,500.00)
+      const r1 = await receive(tenant, { productId: product.id, locationId: loc1.id, quantity: '100' });
+      // 2. Issue 20 from LOC-1 (-500.00)
+      await issue(tenant, { productId: product.id, locationId: loc1.id, quantity: '20' });
+      // 3. Transfer 30 from LOC-1 to LOC-2 (LOC-1: -750.00, LOC-2: +750.00; net 0)
+      await transfer(tenant, { productId: product.id, fromLocationId: loc1.id, toLocationId: loc2.id, quantity: '30' });
+      // 4. Adjustment +10 to LOC-2 (+250.00)
+      await adjust(tenant, { productId: product.id, locationId: loc2.id, quantity: '10', reason: 'Found stock' });
+      // 5. Reverse initial receipt r1 (-100 * 25.00 = -2,500.00)
+      await tenant.as(app.http.post(MOVEMENT_PATHS.reversal(r1.id))).expect(201);
+
+      // Current stock levels:
+      // LOC-1: 100 - 20 - 30 - 100 (reversed) = -50
+      // LOC-2: 30 + 10 = 40
+      // Total Qty: -10 * 25.00 = -250.00
+      const response = await tenant
+        .as(app.http.get(STOCK_PATHS.valuation))
+        .expect(200);
+
+      expect(response.body.totalValue).toEqual({ amount: '-250.00', currency: 'GBP' });
+      expect(response.body.movementAccounting.netMovementValue).toEqual({ amount: '-250.00', currency: 'GBP' });
+      expect(response.body.movementAccounting.reconciled).toBe(true);
+    });
+
+    it('enforces strict company scoping for stock valuation', async () => {
+      const northwind = await signUp();
+      const acme = await signUp({ companyName: 'Acme', name: 'Bo', email: 'bo@acme.test' });
+
+      const prodNW = await addProduct(northwind, { code: 'NW-PROD', cost: '10.00' });
+      const locNW = await addLocation(northwind, 'NW-WH');
+      await receive(northwind, { productId: prodNW.id, locationId: locNW.id, quantity: '5' });
+
+      const nwValuation = await northwind.as(app.http.get(STOCK_PATHS.valuation)).expect(200);
+      expect(nwValuation.body.totalValue).toEqual({ amount: '50.00', currency: 'GBP' });
+
+      const acmeValuation = await acme.as(app.http.get(STOCK_PATHS.valuation)).expect(200);
+      expect(acmeValuation.body.totalValue).toBeNull();
+      expect(acmeValuation.body.totalProducts).toBe(0);
     });
   });
 });

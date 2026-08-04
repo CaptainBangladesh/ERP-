@@ -216,6 +216,8 @@ export const MOVEMENT_LIST: ListSpec = {
  * location holds — are the same list with one filter set, so there is one endpoint rather than
  * two. Sorting by quantity is what finds the thing you are about to run out of.
  */
+import { accepted, refused, rule, type FieldRule } from '../../platform/validation';
+
 export const STOCK_LIST: ListSpec = {
   defaultSort: STOCK_FIELDS.productId,
   fields: {
@@ -224,3 +226,12 @@ export const STOCK_LIST: ListSpec = {
     [STOCK_FIELDS.quantity]: { type: 'decimal', sortable: true, filterable: true },
   },
 };
+
+export const UpdateInventorySettingsBody = validator({
+  allowNegativeStock: rule<boolean>('Say whether negative stock is allowed (true or false).', (value) => {
+    if (typeof value !== 'boolean') {
+      return refused('Say whether negative stock is allowed (true or false).');
+    }
+    return accepted(value);
+  }),
+});

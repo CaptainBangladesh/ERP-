@@ -41,7 +41,8 @@ model Company {
   ownerUserId String? @unique @map("owner_user_id") @db.Uuid
   owner       User?   @relation("CompanyOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
 
-  users User[] @relation("CompanyMembers")
+  users            User[]            @relation("CompanyMembers")
+  inventorySetting InventorySetting?
 
   @@map("companies")
 }
@@ -672,9 +673,13 @@ model StockMovement {
   value    Decimal? @db.Decimal(14, 2)
 
   /// Reason for an adjustment movement. Null for receipts, issues, and transfers.
-  reason     String?
+  reason             String?
   /// Linked movement transfer identifier for transfers. Null for receipts, issues, and adjustments.
-  transferId String? @map("transfer_id") @db.Uuid
+  transferId         String?        @map("transfer_id") @db.Uuid
+  /// Identifier of the movement that this entry reverses. Null for original movements.
+  reversedMovementId String?        @unique @map("reversed_movement_id") @db.Uuid
+  reversedMovement   StockMovement? @relation("MovementReversals", fields: [reversedMovementId], references: [id], onDelete: Restrict)
+  reversalMovement   StockMovement? @relation("MovementReversals")
 
   /// Who did it. No foreign key to `users` — see the note above — and never null: a ledger
   /// entry nobody is accountable for is the one an auditor asks about.
@@ -715,6 +720,18 @@ model StockMovement {
   @@index([companyId, locationId, recordedAt])
   @@index([companyId, transferId])
   @@map("stock_movements")
+}
+
+/// Inventory-specific settings per tenant.
+model InventorySetting {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @unique @map("company_id") @db.Uuid
+  allowNegativeStock Boolean  @default(false) @map("allow_negative_stock")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("inventory_settings")
 }
 
 /// How much of one product is at one location — the running total of the ledger above.

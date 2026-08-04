@@ -130,3 +130,41 @@ export function transferSameLocation(): ApiException {
   );
 }
 
+/**
+ * A movement somebody is reversing twice.
+ *
+ * A conflict rather than a validation failure: the request is well formed and was refused by
+ * the state of the ledger, which is what 409 means. Reversing a reversal would net to nothing
+ * and leave three rows describing one mistake, so the answer is no rather than a fourth row.
+ */
+export function alreadyReversed(): ApiException {
+  return new ApiException(
+    MOVEMENT_ERROR_CODES.alreadyReversed,
+    'This movement has already been reversed and cannot be reversed again.',
+    HttpStatus.CONFLICT,
+  );
+}
+
+/**
+ * A movement that would take stock below zero, in a company that has said not to allow it.
+ *
+ * The message carries what is there and what was asked for, because the useful next act is
+ * almost always to correct the quantity rather than to change the policy — and somebody who
+ * has to reload a screen to find out how much is on the shelf has been refused twice. It names
+ * the setting as the reason so that the person who *does* want to change the policy knows
+ * there is one, without the message telling them to go and change it.
+ */
+export function negativeStockRefused(
+  locationName: string,
+  productCode: string,
+  currentQty: string,
+  requestedChange: string,
+): ApiException {
+  return new ApiException(
+    MOVEMENT_ERROR_CODES.negativeStockRefused,
+    `Stock at '${locationName}' for '${productCode}' is currently ${currentQty}. ` +
+      `Recording a decrease of ${requestedChange} would drive stock negative, which is disabled in company settings.`,
+    HttpStatus.CONFLICT,
+  );
+}
+

@@ -171,6 +171,8 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   // Emphatically *not* immutable: it is the running total of the table above, and a running
   // total is meant to change. The ledger is the record; this is the cache of it.
   StockLevel: { kind: 'company-owned' },
+
+  InventorySetting: { kind: 'company-owned' },
 };
 
 /**

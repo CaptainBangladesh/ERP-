@@ -48,6 +48,16 @@ export const MOVEMENTS_ROUTE = 'api/movements';
 
 export const STOCK_ROUTE = 'api/stock';
 
+/**
+ * How strict this company's inventory is — the one route here named for the module rather than
+ * for a resource, because what it configures is the module rather than a thing in it.
+ *
+ * A constant like its three siblings, so the manifest, the `@Controller` and the path below all
+ * read the same string. A route written out by hand in three places is three chances for the
+ * manifest's claim on a path to stop matching the path anybody serves.
+ */
+export const INVENTORY_SETTINGS_ROUTE = 'api/inventory/settings';
+
 export const LOCATION_PATHS = {
   locations: `/${LOCATIONS_ROUTE}`,
   location: (id: string) => `/${LOCATIONS_ROUTE}/${id}`,
@@ -68,10 +78,17 @@ export const MOVEMENT_PATHS = {
   issues: `/${MOVEMENTS_ROUTE}/issues`,
   adjustments: `/${MOVEMENTS_ROUTE}/adjustments`,
   transfers: `/${MOVEMENTS_ROUTE}/transfers`,
+  reversal: (id: string) => `/${MOVEMENTS_ROUTE}/${id}/reverse`,
+  // Not a movement, and here anyway: the negative-stock policy is what decides whether the
+  // four paths above succeed or refuse, so it is read by everything that writes one. Moving it
+  // to a `SETTINGS_PATHS` of its own would be a second import for one string.
+  settings: `/${INVENTORY_SETTINGS_ROUTE}`,
 } as const;
 
 export const STOCK_PATHS = {
   stock: `/${STOCK_ROUTE}`,
+  reconciliation: `/${STOCK_ROUTE}/reconcile`,
+  valuation: `/${STOCK_ROUTE}/valuation`,
 } as const;
 
 /**
@@ -158,7 +175,7 @@ export const LOCATION_ERROR_CODES = {
  * ledger that inferred meaning from the sign would have two kinds of increase it could not tell
  * apart the moment a second one existed.
  */
-export const MOVEMENT_KINDS = ['receipt', 'issue', 'adjustment', 'transfer'] as const;
+export const MOVEMENT_KINDS = ['receipt', 'issue', 'adjustment', 'transfer', 'reversal'] as const;
 
 export type MovementKind = (typeof MOVEMENT_KINDS)[number];
 
@@ -252,6 +269,14 @@ export interface TransferResponse {
   to: MovementSummary;
 }
 
+export interface InventorySettings {
+  allowNegativeStock: boolean;
+}
+
+export interface UpdateInventorySettingsRequest {
+  allowNegativeStock: boolean;
+}
+
 /**
  * One line of the ledger, as anything reading history sees it.
  *
@@ -290,6 +315,7 @@ export interface MovementSummary {
 
   reason: string | null;
   transferId: string | null;
+  reversedMovementId: string | null;
 
   recordedById: string;
   recordedByName: string;
@@ -324,6 +350,68 @@ export interface StockLevelSummary {
 
 export type StockListResponse = ListResponse<StockLevelSummary>;
 
+export interface StockDivergence {
+  productId: string;
+  locationId: string;
+  storedQuantity: string;
+  computedQuantity: string;
+}
+
+export interface ReconciliationResult {
+  reconciled: boolean;
+  divergenceCount: number;
+  divergences: StockDivergence[];
+}
+
+export interface ProductValuationSummary {
+  productId: string;
+  productCode: string;
+  productName: string;
+  unitCode: string;
+  unitCost: MoneyValue | null;
+  totalQuantity: string;
+  totalValue: MoneyValue | null;
+  isCosted: boolean;
+}
+
+export interface LocationValuationItem {
+  productId: string;
+  productCode: string;
+  productName: string;
+  unitCode: string;
+  unitCost: MoneyValue | null;
+  quantity: string;
+  value: MoneyValue | null;
+  isCosted: boolean;
+}
+
+export interface LocationValuationSummary {
+  locationId: string;
+  locationCode: string;
+  locationName: string;
+  totalValue: MoneyValue | null;
+  costedProductCount: number;
+  uncostedProductCount: number;
+  items: LocationValuationItem[];
+}
+
+export interface MovementAccountingSummary {
+  stockInValue: MoneyValue;
+  stockOutValue: MoneyValue;
+  netMovementValue: MoneyValue;
+  reconciled: boolean;
+}
+
+export interface StockValuationSummary {
+  totalValue: MoneyValue | null;
+  costedProductCount: number;
+  uncostedProductCount: number;
+  totalProducts: number;
+  byProduct: ProductValuationSummary[];
+  byLocation: LocationValuationSummary[];
+  movementAccounting: MovementAccountingSummary;
+}
+
 export const MOVEMENT_ERROR_CODES = {
   movementNotFound: 'movement_not_found',
   /** A movement naming a product this company does not have. */
@@ -346,6 +434,14 @@ export const MOVEMENT_ERROR_CODES = {
    * Transferring stock to the location it is already at.
    */
   transferSameLocation: 'transfer_same_location',
+  /**
+   * Reversing a movement that has already been reversed.
+   */
+  alreadyReversed: 'movement_already_reversed',
+  /**
+   * Refusing a movement that would drive a stock level below zero when negative stock policy is disabled.
+   */
+  negativeStockRefused: 'negative_stock_refused',
 } as const;
 
 // ─── what inventory tells the rest of the system ────────────────────────────────────
@@ -386,4 +482,5 @@ export interface StockMovementRecorded {
   recordedAt: string;
   reason?: string | null;
   transferId?: string | null;
+  reversedMovementId?: string | null;
 }

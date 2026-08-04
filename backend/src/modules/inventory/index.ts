@@ -22,4 +22,5 @@
  * including the services and the tables, so this file is the whole of what the rest of the
  * system may name.
  */
-export {};
+export { StockValuation } from './stock-valuation';
+export { InventoryModule } from './inventory.module';

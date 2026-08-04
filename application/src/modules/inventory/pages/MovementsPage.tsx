@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   LOCATION_PATHS,
@@ -15,6 +15,7 @@ import {
   type LocationListResponse,
   type MovementKind,
   type MovementListResponse,
+  type MovementResponse,
   type MovementSummary,
   type ProductListResponse,
 } from '@erp/shared';
@@ -66,7 +67,19 @@ export function MovementsPage() {
       api.get<LocationListResponse>(listPath(LOCATION_PATHS.locations, { pageSize: 100 })),
   });
 
-  const failure = movements.error instanceof ApiFailure ? movements.error : undefined;
+  const reverseMutation = useMutation({
+    mutationFn: (id: string) => api.post<MovementResponse>(MOVEMENT_PATHS.reversal(id)),
+    onSuccess: () => {
+      void movements.refetch();
+    },
+  });
+
+  const failure =
+    movements.error instanceof ApiFailure
+      ? movements.error
+      : reverseMutation.error instanceof ApiFailure
+        ? reverseMutation.error
+        : undefined;
 
   const columns = useMemo<Array<ColumnDef<MovementSummary, unknown>>>(
     () => [
@@ -96,11 +109,7 @@ export function MovementsPage() {
         id: MOVEMENT_FIELDS.productId,
         header: 'Product',
         enableSorting: false,
-        cell: ({ row }) => (
-          <span className="font-medium text-slate-900">
-            {row.original.productCode} — {row.original.productName}
-          </span>
-        ),
+        cell: ({ row }) => `${row.original.productCode} — ${row.original.productName}`,
       },
       {
         id: MOVEMENT_FIELDS.locationId,
@@ -114,9 +123,11 @@ export function MovementsPage() {
         enableSorting: false,
         cell: ({ row }) => (
           <span
-            className={`flex items-baseline gap-1 ${
-              row.original.quantity.startsWith('-') ? 'text-slate-600' : 'text-slate-900'
-            }`}
+            className={
+              row.original.classification === 'stock-in'
+                ? 'flex items-baseline gap-1 text-slate-900 font-medium'
+                : 'flex items-baseline gap-1 text-slate-600'
+            }
           >
             <QuantityText value={row.original.quantity} />
             {/* Frozen on the row rather than looked up: what a quantity was measured in is
@@ -139,6 +150,13 @@ export function MovementsPage() {
         header: 'Reason / Link',
         enableSorting: false,
         cell: ({ row }) => {
+          if (row.original.reversedMovementId) {
+            return (
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                Reversal ({row.original.reversedMovementId.slice(0, 8)})
+              </span>
+            );
+          }
           if (row.original.reason) {
             return <span className="text-slate-700">{row.original.reason}</span>;
           }
@@ -158,8 +176,26 @@ export function MovementsPage() {
         enableSorting: false,
         cell: ({ row }) => row.original.recordedByName,
       },
+      {
+        id: 'actions',
+        header: '',
+        enableSorting: false,
+        cell: ({ row }) => {
+          if (row.original.kind === 'reversal') return null;
+          return (
+            <button
+              type="button"
+              disabled={reverseMutation.isPending}
+              onClick={() => reverseMutation.mutate(row.original.id)}
+              className="rounded px-2 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50"
+            >
+              Reverse
+            </button>
+          );
+        },
+      },
     ],
-    [],
+    [reverseMutation],
   );
 
   return (
@@ -167,7 +203,7 @@ export function MovementsPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold text-slate-900">Movements</h1>
         <p className="text-sm text-slate-600">
-          Every receipt, issue, adjustment and transfer ever recorded, in order. Nothing here can be edited or removed
+          Every receipt, issue, adjustment, transfer and reversal ever recorded, in order. Nothing here can be edited or removed
           — a mistake is corrected by recording another movement, which is what keeps{' '}
           <a {...linkProps('/stock')} className="font-medium text-slate-900 underline">
             stock
@@ -259,6 +295,7 @@ const KIND_LABELS = {
   issue: 'Issued',
   adjustment: 'Adjusted',
   transfer: 'Transferred',
+  reversal: 'Reversed',
 } as const satisfies Record<MovementKind, string>;
 
 /**

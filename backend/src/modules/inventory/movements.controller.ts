@@ -75,6 +75,16 @@ export class MovementsController {
     return this.movements.recordTransfer(session.user, body);
   }
 
+  @Post(':id/reverse')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('inventory:movements:write')
+  async reverse(
+    @CurrentSession() session: RequestSession,
+    @Param('id') id: string,
+  ): Promise<MovementResponse> {
+    return this.movements.reverse(session.user, id);
+  }
+
 
   /**
    * History. The list endpoint hands its whole query object to the service and names no

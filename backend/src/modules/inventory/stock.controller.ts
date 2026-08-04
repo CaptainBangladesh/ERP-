@@ -1,21 +1,14 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { STOCK_ROUTE, type StockListResponse } from '@erp/shared';
+import { STOCK_ROUTE, type ReconciliationResult, type StockListResponse, type StockValuationSummary } from '@erp/shared';
 import { RequirePermission } from '../../platform/authorization';
 import { StockService } from './stock.service';
 
 /**
  * What there is, right now.
  *
- * One endpoint and one verb. Stock is never written through an API — it is written by recording
- * a movement, in the same transaction, and an endpoint that could set a level directly would be
- * a way to change what the business owns without saying what happened. Ticket 10's adjustment is
- * the supported way to make the number say something different, and it is a movement with a
- * mandatory reason precisely because that is the honest shape of it.
- *
- * Guarded by its own permission rather than by the movements one. Somebody who needs to know
- * what is on the shelf is not thereby somebody who should read the audit trail of everything
- * that has ever happened to it, and a warehouse manager reading levels all day is a different
- * job from a clerk recording arrivals.
+ * Stock levels are the running totals derived from recorded ledger movements.
+ * Includes on-demand reconciliation check endpoint `GET /api/stock/reconcile` (Ticket 12)
+ * and stock valuation endpoint `GET /api/stock/valuation` (Ticket 13).
  */
 @Controller(STOCK_ROUTE)
 export class StockController {
@@ -30,5 +23,23 @@ export class StockController {
   @RequirePermission('inventory:stock:read')
   async listStock(@Query() query: Record<string, unknown>): Promise<StockListResponse> {
     return this.stock.listStock(query);
+  }
+
+  /**
+   * On-demand reconciliation check to prove stored stock levels match the append-only ledger.
+   */
+  @Get('reconcile')
+  @RequirePermission('inventory:stock:read')
+  async reconcile(): Promise<ReconciliationResult> {
+    return this.stock.reconcile();
+  }
+
+  /**
+   * Calculates total stock valuation across the company, broken down by product and location (Ticket 13).
+   */
+  @Get('valuation')
+  @RequirePermission('inventory:stock:read')
+  async getValuation(): Promise<StockValuationSummary> {
+    return this.stock.getValuation();
   }
 }

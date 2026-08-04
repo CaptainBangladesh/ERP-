@@ -45,6 +45,7 @@ describe('MovementsPage', () => {
       value: { amount: '125.00', currency: 'GBP' },
       reason: null,
       transferId: null,
+      reversedMovementId: null,
       recordedById: 'u1',
       recordedByName: 'Ada Okafor',
       recordedAt: '2026-08-03T09:30:00.000Z',
@@ -122,7 +123,40 @@ describe('MovementsPage', () => {
         '£125.00',
         '—',
         'Ada Okafor',
+        'Reverse',
       ]);
+    });
+
+    it('reverses a movement when the reverse button is clicked', async () => {
+      signedInWith();
+      let reversedId: string | undefined;
+
+      server.use(
+        http.get(MOVEMENT_PATHS.movements, () =>
+          HttpResponse.json(page([movement({ id: 'm1', kind: 'receipt' })])),
+        ),
+        http.post('*/movements/:id/reverse', async ({ params }) => {
+          reversedId = params.id as string;
+          return HttpResponse.json(
+            movement({
+              id: 'm2',
+              kind: 'reversal',
+              classification: 'stock-out',
+              quantity: '-10',
+              reversedMovementId: 'm1',
+            }),
+            { status: 201 },
+          );
+        }),
+      );
+
+      const { user } = renderPage(<MovementsPage />, { token: 'a-token', path: '/movements' });
+
+      await waitFor(() => expect(screen.getAllByRole('row')).toHaveLength(2));
+      const btn = screen.getByRole('button', { name: /reverse/i });
+      await user.click(btn);
+
+      await waitFor(() => expect(reversedId).toBe('m1'));
     });
 
     it('shows adjustment reason and transfer linkage in history', async () => {

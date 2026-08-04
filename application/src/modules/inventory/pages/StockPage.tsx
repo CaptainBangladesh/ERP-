@@ -120,12 +120,20 @@ export function StockPage() {
       {
         id: STOCK_FIELDS.quantity,
         header: 'Held',
-        cell: ({ row }) => (
-          <span className="flex items-baseline gap-1">
-            <QuantityText value={row.original.quantity} />
-            <span className="text-slate-500">{row.original.unitCode}</span>
-          </span>
-        ),
+        cell: ({ row }) => {
+          const isNegative = row.original.quantity.startsWith('-');
+          return (
+            <span className={`flex items-baseline gap-1 ${isNegative ? 'text-red-600 font-semibold' : ''}`}>
+              <QuantityText value={row.original.quantity} />
+              <span className={isNegative ? 'text-red-500' : 'text-slate-500'}>{row.original.unitCode}</span>
+              {isNegative && (
+                <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
+                  Negative
+                </span>
+              )}
+            </span>
+          );
+        },
       },
     ],
     [],
@@ -134,7 +142,17 @@ export function StockPage() {
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-slate-900">Stock</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-slate-900">Stock</h1>
+          <div className="flex items-center gap-4">
+            <a {...linkProps('/valuation')} className="text-sm font-medium text-slate-700 hover:text-slate-900 underline">
+              Valuation
+            </a>
+            <a {...linkProps('/inventory/settings')} className="text-sm font-medium text-slate-700 hover:text-slate-900 underline">
+              Settings
+            </a>
+          </div>
+        </div>
         <p className="text-sm text-slate-600">
           What this company holds, and where. Every figure here is the running total of the{' '}
           <a {...linkProps('/movements')} className="font-medium text-slate-900 underline">
