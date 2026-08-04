@@ -12,7 +12,23 @@
       "Bash(git add *)",
       "Bash(grep -v \"^$\")",
       "Bash(npx tsc *)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime, @{n='Cmd';e={\\(Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($_.Id\\)\"\\).CommandLine}} | Format-List)",
+      "Bash(node scripts/check-tenancy.mjs)",
+      "Bash(python -c ' *)",
+      "Bash(python -)",
+      "Bash(docker compose *)",
+      "Bash(git mv *)",
+      "Bash(\"/c/Program Files/Docker/Docker/Docker Desktop.exe\")",
+      "Bash(git commit *)",
+      "PowerShell(Stop-Process -Id 23460 -Force)",
+      "PowerShell(Get-Process -Id 23460 -ErrorAction SilentlyContinue)",
+      "Bash(grep -Ev \"^$|^>\")",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(git grep *)",
+      "Bash(python \"C:/Users/ishfa/AppData/Local/Temp/claude/c--Users-ishfa-Pictures-New-appilication/e2cf46d2-6e55-4088-94db-e6da23a21137/scratchpad/refix.py\")",
+      "Bash(python \"C:/Users/ishfa/AppData/Local/Temp/claude/c--Users-ishfa-Pictures-New-appilication/e2cf46d2-6e55-4088-94db-e6da23a21137/scratchpad/refix2.py\")",
+      "Bash(DATABASE_URL=\"postgresql://erp:erp_local_dev@localhost:55432/erp_test?schema=public\" npx prisma migrate reset --force --skip-generate)"
     ],
     "additionalDirectories": [
       "c:\\Users\\ishfa\\Pictures\\New appilication\\packages\\dist"

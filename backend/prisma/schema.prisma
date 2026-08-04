@@ -671,6 +671,11 @@ model StockMovement {
   /// Ticket 13's valuation is the assertion that they do.
   value    Decimal? @db.Decimal(14, 2)
 
+  /// Reason for an adjustment movement. Null for receipts, issues, and transfers.
+  reason     String?
+  /// Linked movement transfer identifier for transfers. Null for receipts, issues, and adjustments.
+  transferId String? @map("transfer_id") @db.Uuid
+
   /// Who did it. No foreign key to `users` — see the note above — and never null: a ledger
   /// entry nobody is accountable for is the one an auditor asks about.
   recordedById String @map("recorded_by_id") @db.Uuid
@@ -708,6 +713,7 @@ model StockMovement {
   /// "What has happened to this product?" — the question the product's own history screen asks.
   @@index([companyId, productId, recordedAt])
   @@index([companyId, locationId, recordedAt])
+  @@index([companyId, transferId])
   @@map("stock_movements")
 }
 

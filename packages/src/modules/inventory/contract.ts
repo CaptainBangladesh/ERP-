@@ -66,6 +66,8 @@ export const MOVEMENT_PATHS = {
   movement: (id: string) => `/${MOVEMENTS_ROUTE}/${id}`,
   receipts: `/${MOVEMENTS_ROUTE}/receipts`,
   issues: `/${MOVEMENTS_ROUTE}/issues`,
+  adjustments: `/${MOVEMENTS_ROUTE}/adjustments`,
+  transfers: `/${MOVEMENTS_ROUTE}/transfers`,
 } as const;
 
 export const STOCK_PATHS = {
@@ -156,7 +158,7 @@ export const LOCATION_ERROR_CODES = {
  * ledger that inferred meaning from the sign would have two kinds of increase it could not tell
  * apart the moment a second one existed.
  */
-export const MOVEMENT_KINDS = ['receipt', 'issue'] as const;
+export const MOVEMENT_KINDS = ['receipt', 'issue', 'adjustment', 'transfer'] as const;
 
 export type MovementKind = (typeof MOVEMENT_KINDS)[number];
 
@@ -178,7 +180,7 @@ export type MovementKind = (typeof MOVEMENT_KINDS)[number];
  * inventory. Ticket 10's transfer is the interesting third case: both sides are inventory, so
  * it posts nothing at all, which is a classification this list will need and does not have yet.
  */
-export const MOVEMENT_CLASSIFICATIONS = ['stock-in', 'stock-out'] as const;
+export const MOVEMENT_CLASSIFICATIONS = ['stock-in', 'stock-out', 'transfer'] as const;
 
 export type MovementClassification = (typeof MOVEMENT_CLASSIFICATIONS)[number];
 
@@ -225,6 +227,31 @@ export interface RecordIssueRequest {
   quantity: string;
 }
 
+/** Physical count discrepancy adjustment. */
+export interface RecordAdjustmentRequest {
+  productId: string;
+  locationId: string;
+  /** Signed decimal text: positive to raise stock, negative to lower stock. Never zero. */
+  quantity: string;
+  /** Mandatory reason explaining discrepancy. */
+  reason: string;
+}
+
+/** Transferring stock between locations. */
+export interface RecordTransferRequest {
+  productId: string;
+  fromLocationId: string;
+  toLocationId: string;
+  /** Decimal text, greater than zero. */
+  quantity: string;
+}
+
+/** Twin linked ledger entries resulting from a transfer. */
+export interface TransferResponse {
+  from: MovementSummary;
+  to: MovementSummary;
+}
+
 /**
  * One line of the ledger, as anything reading history sees it.
  *
@@ -260,6 +287,9 @@ export interface MovementSummary {
   unitCost: MoneyValue | null;
   /** Signed, matching the quantity, so the ledger's values sum to what the stock is worth. */
   value: MoneyValue | null;
+
+  reason: string | null;
+  transferId: string | null;
 
   recordedById: string;
   recordedByName: string;
@@ -312,6 +342,10 @@ export const MOVEMENT_ERROR_CODES = {
    * afterwards the status would be a label rather than a rule.
    */
   locationNotInUse: 'location_not_in_use',
+  /**
+   * Transferring stock to the location it is already at.
+   */
+  transferSameLocation: 'transfer_same_location',
 } as const;
 
 // ─── what inventory tells the rest of the system ────────────────────────────────────
@@ -350,4 +384,6 @@ export interface StockMovementRecorded {
   recordedById: string;
   /** ISO 8601. */
   recordedAt: string;
+  reason?: string | null;
+  transferId?: string | null;
 }

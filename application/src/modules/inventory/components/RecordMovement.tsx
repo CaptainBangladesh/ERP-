@@ -7,10 +7,13 @@ import {
   type MovementKind,
   type MovementResponse,
   type ProductSummary,
+  type RecordAdjustmentRequest,
   type RecordIssueRequest,
   type RecordReceiptRequest,
+  type RecordTransferRequest,
+  type TransferResponse,
 } from '@erp/shared';
-import { FormError, QuantityInput, Select } from '@erp/shared/ui';
+import { Field, FormError, QuantityInput, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 
 /**
@@ -36,7 +39,7 @@ export function RecordMovement({
   locations,
   onRecorded,
 }: {
-  kind: MovementKind;
+  kind: Extract<MovementKind, 'receipt' | 'issue'>;
   /** Only what can actually be moved — the parent filters, so this cannot offer a refusal. */
   products: ProductSummary[];
   locations: LocationSummary[];
@@ -158,6 +161,254 @@ export function RecordMovement({
 }
 
 /**
+ * Recording a stock adjustment when a physical count disagrees with the system.
+ */
+export function RecordAdjustment({
+  products,
+  locations,
+  onRecorded,
+}: {
+  products: ProductSummary[];
+  locations: LocationSummary[];
+  onRecorded: () => void;
+}) {
+  const [productId, setProductId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [reason, setReason] = useState('');
+
+  const record = useMutation({
+    mutationFn: () => {
+      const body: RecordAdjustmentRequest = { productId, locationId, quantity, reason };
+      return api.post<MovementResponse>(MOVEMENT_PATHS.adjustments, body);
+    },
+    onSuccess: () => {
+      setQuantity('');
+      setReason('');
+      onRecorded();
+    },
+  });
+
+  const failure = record.error instanceof ApiFailure ? record.error : undefined;
+  const fields = failure?.fields ?? {};
+
+  const chosen = products.find((product) => product.id === productId);
+  const hintText = chosen
+    ? `Measured in ${chosen.unitCode}. Positive to raise, negative to lower.`
+    : 'Positive to raise, negative to lower.';
+
+  return (
+    <form
+      noValidate
+      aria-labelledby="record-adjustment"
+      className="flex flex-col gap-4 rounded-md border border-slate-200 bg-white p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        record.mutate();
+      }}
+    >
+      <div className="flex flex-col gap-1">
+        <h2 id="record-adjustment" className="text-sm font-medium text-slate-900">
+          Record an adjustment
+        </h2>
+        <p className="text-sm text-slate-600">
+          Physical count disagrees with the system. Explain discrepancy with a reason.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-4">
+        <div className="min-w-56 flex-1">
+          <Select
+            id="adjustment-product"
+            label="Product"
+            value={productId}
+            placeholder="Choose a product…"
+            error={fields.productId}
+            options={products.map((product) => ({
+              value: product.id,
+              label: `${product.code} — ${product.name}`,
+            }))}
+            onChange={setProductId}
+          />
+        </div>
+        <div className="min-w-56 flex-1">
+          <Select
+            id="adjustment-location"
+            label="Location"
+            value={locationId}
+            placeholder="Choose a location…"
+            error={fields.locationId}
+            options={locations.map((location) => ({
+              value: location.id,
+              label: `${location.code} — ${location.name}`,
+            }))}
+            onChange={setLocationId}
+          />
+        </div>
+        <div className="min-w-40 flex-1">
+          <QuantityInput
+            id="adjustment-quantity"
+            label="Quantity (+ / -)"
+            value={quantity}
+            error={fields.quantity}
+            hint={hintText}
+            onChange={setQuantity}
+          />
+        </div>
+      </div>
+
+      <div>
+        <Field
+          id="adjustment-reason"
+          label="Reason"
+          value={reason}
+          error={fields.reason}
+          onChange={setReason}
+        />
+      </div>
+
+      {failure && failure.code !== ERROR_CODES.validationFailed && (
+        <FormError>{failure.message}</FormError>
+      )}
+
+      <div>
+        <button
+          type="submit"
+          disabled={record.isPending}
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        >
+          {record.isPending ? 'Recording…' : 'Record adjustment'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Transferring stock of a product from one location to another.
+ */
+export function RecordTransfer({
+  products,
+  locations,
+  onRecorded,
+}: {
+  products: ProductSummary[];
+  locations: LocationSummary[];
+  onRecorded: () => void;
+}) {
+  const [productId, setProductId] = useState('');
+  const [fromLocationId, setFromLocationId] = useState('');
+  const [toLocationId, setToLocationId] = useState('');
+  const [quantity, setQuantity] = useState('');
+
+  const record = useMutation({
+    mutationFn: () => {
+      const body: RecordTransferRequest = { productId, fromLocationId, toLocationId, quantity };
+      return api.post<TransferResponse>(MOVEMENT_PATHS.transfers, body);
+    },
+    onSuccess: () => {
+      setQuantity('');
+      onRecorded();
+    },
+  });
+
+  const failure = record.error instanceof ApiFailure ? record.error : undefined;
+  const fields = failure?.fields ?? {};
+
+  const chosen = products.find((product) => product.id === productId);
+
+  return (
+    <form
+      noValidate
+      aria-labelledby="record-transfer"
+      className="flex flex-col gap-4 rounded-md border border-slate-200 bg-white p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        record.mutate();
+      }}
+    >
+      <div className="flex flex-col gap-1">
+        <h2 id="record-transfer" className="text-sm font-medium text-slate-900">
+          Record a transfer
+        </h2>
+        <p className="text-sm text-slate-600">
+          Move stock between locations without changing total inventory held.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-4">
+        <div className="min-w-56 flex-1">
+          <Select
+            id="transfer-product"
+            label="Product"
+            value={productId}
+            placeholder="Choose a product…"
+            error={fields.productId}
+            options={products.map((product) => ({
+              value: product.id,
+              label: `${product.code} — ${product.name}`,
+            }))}
+            onChange={setProductId}
+          />
+        </div>
+        <div className="min-w-44 flex-1">
+          <Select
+            id="transfer-from-location"
+            label="From"
+            value={fromLocationId}
+            placeholder="Origin location…"
+            error={fields.fromLocationId}
+            options={locations.map((location) => ({
+              value: location.id,
+              label: `${location.code} — ${location.name}`,
+            }))}
+            onChange={setFromLocationId}
+          />
+        </div>
+        <div className="min-w-44 flex-1">
+          <Select
+            id="transfer-to-location"
+            label="To"
+            value={toLocationId}
+            placeholder="Destination location…"
+            error={fields.toLocationId}
+            options={locations.map((location) => ({
+              value: location.id,
+              label: `${location.code} — ${location.name}`,
+            }))}
+            onChange={setToLocationId}
+          />
+        </div>
+        <div className="min-w-40 flex-1">
+          <QuantityInput
+            id="transfer-quantity"
+            label="Quantity"
+            value={quantity}
+            error={fields.quantity}
+            hint={chosen ? `Measured in ${chosen.unitCode}.` : undefined}
+            onChange={setQuantity}
+          />
+        </div>
+      </div>
+
+      {failure && failure.code !== ERROR_CODES.validationFailed && (
+        <FormError>{failure.message}</FormError>
+      )}
+
+      <div>
+        <button
+          type="submit"
+          disabled={record.isPending}
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        >
+          {record.isPending ? 'Recording…' : 'Record transfer'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
  * The two forms in the words of the job rather than of the schema.
  *
  * "Record a receipt" and "Record an issue" are what the ledger calls them and what a person
@@ -180,7 +431,7 @@ const WORDS = {
     pending: 'Recording',
   },
 } as const satisfies Record<
-  MovementKind,
+  Extract<MovementKind, 'receipt' | 'issue'>,
   {
     heading: string;
     explanation: string;
@@ -189,3 +440,4 @@ const WORDS = {
     pending: string;
   }
 >;
+

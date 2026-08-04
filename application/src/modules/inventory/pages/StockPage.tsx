@@ -21,10 +21,10 @@ import { ApiFailure, api } from '../../../api/client';
 import { linkProps } from '../../../app/location';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
-import { RecordMovement } from '../components/RecordMovement';
+import { RecordAdjustment, RecordMovement, RecordTransfer } from '../components/RecordMovement';
 
 /**
- * What there is, and the two ways to change it.
+ * What there is, and the ways to change it.
  *
  * The stock figures and the forms that move stock are on one screen deliberately: recording a
  * receipt and then seeing the number go up is one action from the user's side, and splitting it
@@ -279,6 +279,16 @@ function Recording({
       />
       <RecordMovement
         kind="issue"
+        products={products}
+        locations={locations}
+        onRecorded={onRecorded}
+      />
+      <RecordAdjustment
+        products={products}
+        locations={locations}
+        onRecorded={onRecorded}
+      />
+      <RecordTransfer
         products={products}
         locations={locations}
         onRecorded={onRecorded}

@@ -160,6 +160,32 @@ describe('stock movements', () => {
     return response.body as MovementResponse;
   }
 
+  async function adjust(
+    tenant: Tenant,
+    body: { productId: string; locationId: string; quantity: string; reason: string },
+    status = 201,
+  ): Promise<MovementResponse> {
+    const response = await tenant
+      .as(app.http.post(MOVEMENT_PATHS.adjustments))
+      .send(body)
+      .expect(status);
+
+    return response.body as MovementResponse;
+  }
+
+  async function transfer(
+    tenant: Tenant,
+    body: { productId: string; fromLocationId: string; toLocationId: string; quantity: string },
+    status = 201,
+  ): Promise<{ from: MovementResponse; to: MovementResponse }> {
+    const response = await tenant
+      .as(app.http.post(MOVEMENT_PATHS.transfers))
+      .send(body)
+      .expect(status);
+
+    return response.body as { from: MovementResponse; to: MovementResponse };
+  }
+
   async function stock(tenant: Tenant, query = {}): Promise<StockListResponse> {
     const response = await tenant.as(app.http.get(listPath(STOCK_PATHS.stock, query))).expect(200);
     return response.body as StockListResponse;
@@ -877,6 +903,166 @@ describe('stock movements', () => {
         .expect(409);
 
       expect(refused.body.message).toContain('2 products');
+    });
+  });
+
+  describe('adjustments', () => {
+    it('records an adjustment raising stock with a mandatory reason', async () => {
+      const { tenant, product, location } = await ready();
+
+      const movement = await adjust(tenant, {
+        productId: product.id,
+        locationId: location.id,
+        quantity: '5',
+        reason: 'Found extra stock during annual count',
+      });
+
+      expect(movement).toMatchObject({
+        kind: 'adjustment',
+        classification: 'stock-in',
+        quantity: '5',
+        reason: 'Found extra stock during annual count',
+      });
+
+      const levels = (await stock(tenant)).items;
+      expect(levels[0]?.quantity).toBe('5');
+    });
+
+    it('records an adjustment lowering stock', async () => {
+      const { tenant, product, location } = await ready();
+      await receive(tenant, { productId: product.id, locationId: location.id, quantity: '10' });
+
+      const movement = await adjust(tenant, {
+        productId: product.id,
+        locationId: location.id,
+        quantity: '-3',
+        reason: 'Damaged item written off',
+      });
+
+      expect(movement).toMatchObject({
+        kind: 'adjustment',
+        classification: 'stock-out',
+        quantity: '-3',
+        reason: 'Damaged item written off',
+      });
+
+      const levels = (await stock(tenant)).items;
+      expect(levels[0]?.quantity).toBe('7');
+    });
+
+    it('refuses an adjustment without a reason', async () => {
+      const { tenant, product, location } = await ready();
+
+      const refused = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.adjustments))
+        .send({
+          productId: product.id,
+          locationId: location.id,
+          quantity: '5',
+          reason: '  ',
+        })
+        .expect(422);
+
+      expect(refused.body.fields).toHaveProperty('reason');
+    });
+
+    it('refuses an adjustment with zero quantity', async () => {
+      const { tenant, product, location } = await ready();
+
+      const refused = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.adjustments))
+        .send({
+          productId: product.id,
+          locationId: location.id,
+          quantity: '0',
+          reason: 'Routine check',
+        })
+        .expect(422);
+
+      expect(refused.body.fields).toHaveProperty('quantity');
+    });
+  });
+
+  describe('transfers', () => {
+    it('transfers stock from one location to another, conserving total stock', async () => {
+      const tenant = await signUp();
+      const product = await addProduct(tenant, { cost: '10.00' });
+      const warehouse = await addLocation(tenant, 'WH-1');
+      const store = await addLocation(tenant, 'STORE-1');
+
+      await receive(tenant, { productId: product.id, locationId: warehouse.id, quantity: '20' });
+
+      const result = await transfer(tenant, {
+        productId: product.id,
+        fromLocationId: warehouse.id,
+        toLocationId: store.id,
+        quantity: '6',
+      });
+
+      expect(result.from).toMatchObject({
+        kind: 'transfer',
+        classification: 'transfer',
+        locationId: warehouse.id,
+        quantity: '-6',
+      });
+      expect(result.to).toMatchObject({
+        kind: 'transfer',
+        classification: 'transfer',
+        locationId: store.id,
+        quantity: '6',
+      });
+      expect(result.from.transferId).toBe(result.to.transferId);
+      expect(result.from.transferId).not.toBeNull();
+
+      const levels = await stock(tenant, { pageSize: 100 });
+      const byLocation = new Map(levels.items.map((item) => [item.locationId, item.quantity]));
+      expect(byLocation.get(warehouse.id)).toBe('14');
+      expect(byLocation.get(store.id)).toBe('6');
+    });
+
+    it('refuses a transfer to the location it came from', async () => {
+      const { tenant, product, location } = await ready();
+      await receive(tenant, { productId: product.id, locationId: location.id, quantity: '10' });
+
+      const refused = await tenant
+        .as(app.http.post(MOVEMENT_PATHS.transfers))
+        .send({
+          productId: product.id,
+          fromLocationId: location.id,
+          toLocationId: location.id,
+          quantity: '2',
+        })
+        .expect(409);
+
+      expect(refused.body.code).toBe(MOVEMENT_ERROR_CODES.transferSameLocation);
+    });
+
+    it('proves a failed transfer leaves no partial change', async () => {
+      const tenant = await signUp();
+      const product = await addProduct(tenant, { cost: '5.00' });
+      const warehouse = await addLocation(tenant, 'WH-1');
+
+      await receive(tenant, { productId: product.id, locationId: warehouse.id, quantity: '10' });
+
+      // Transfer to non-existent destination location
+      await tenant
+        .as(app.http.post(MOVEMENT_PATHS.transfers))
+        .send({
+          productId: product.id,
+          fromLocationId: warehouse.id,
+          toLocationId: '00000000-0000-4000-8000-000000000000',
+          quantity: '5',
+        })
+        .expect(404);
+
+      // Verify no changes were made to stock or movements
+      const levels = await stock(tenant);
+      expect(levels.items).toHaveLength(1);
+      expect(levels.items[0]?.quantity).toBe('10');
+
+      const ledger = await history(tenant);
+      expect(ledger.items).toHaveLength(1);
+      expect(ledger.items[0]?.kind).toBe('receipt');
     });
   });
 

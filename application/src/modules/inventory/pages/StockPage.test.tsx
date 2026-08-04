@@ -455,4 +455,73 @@ describe('StockPage', () => {
       expect(form.queryByRole('button', { name: /record issue/i })).not.toBeInTheDocument();
     });
   });
+
+  describe('recording an adjustment', () => {
+    it('posts an adjustment with product, location, quantity and mandatory reason', async () => {
+      signedInWith();
+      backend();
+
+      let sent: unknown;
+      server.use(
+        http.post(MOVEMENT_PATHS.adjustments, async ({ request }) => {
+          sent = await request.json();
+          return HttpResponse.json({ id: 'm3' }, { status: 201 });
+        }),
+      );
+
+      const { user } = renderPage(<StockPage />, { token: 'a-token', path: '/stock' });
+
+      const form = within(await screen.findByRole('form', { name: /record an adjustment/i }));
+      await user.selectOptions(form.getByLabelText(/^product$/i), 'p-widget-1');
+      await user.selectOptions(form.getByLabelText(/^location$/i), 'l-wh-1');
+      await user.type(form.getByLabelText(/^quantity/i), '-2');
+      await user.type(form.getByLabelText(/^reason$/i), 'Annual count discrepancy');
+      await user.click(form.getByRole('button', { name: /record adjustment/i }));
+
+      await waitFor(() =>
+        expect(sent).toEqual({
+          productId: 'p-widget-1',
+          locationId: 'l-wh-1',
+          quantity: '-2',
+          reason: 'Annual count discrepancy',
+        }),
+      );
+    });
+  });
+
+  describe('recording a transfer', () => {
+    it('posts a transfer with product, from location, to location, and quantity', async () => {
+      signedInWith();
+      backend({ locations: [location('WH-1'), location('STORE-1')] });
+
+      let sent: unknown;
+      server.use(
+        http.post(MOVEMENT_PATHS.transfers, async ({ request }) => {
+          sent = await request.json();
+          return HttpResponse.json(
+            { from: { id: 'm4' }, to: { id: 'm5' } },
+            { status: 201 },
+          );
+        }),
+      );
+
+      const { user } = renderPage(<StockPage />, { token: 'a-token', path: '/stock' });
+
+      const form = within(await screen.findByRole('form', { name: /record a transfer/i }));
+      await user.selectOptions(form.getByLabelText(/^product$/i), 'p-widget-1');
+      await user.selectOptions(form.getByLabelText(/^from$/i), 'l-wh-1');
+      await user.selectOptions(form.getByLabelText(/^to$/i), 'l-store-1');
+      await user.type(form.getByLabelText(/^quantity$/i), '5');
+      await user.click(form.getByRole('button', { name: /record transfer/i }));
+
+      await waitFor(() =>
+        expect(sent).toEqual({
+          productId: 'p-widget-1',
+          fromLocationId: 'l-wh-1',
+          toLocationId: 'l-store-1',
+          quantity: '5',
+        }),
+      );
+    });
+  });
 });

@@ -146,6 +146,50 @@ export const RecordMovementBody = validator({
   quantity: QUANTITY,
 });
 
+const ADJUSTMENT_QUANTITY = decimal({
+  missing: 'Enter a quantity.',
+  invalid: 'Enter a quantity, such as 5 or -3.',
+  scale: QUANTITY_SCALE,
+});
+
+const REASON = {
+  missing: 'Enter a reason.',
+  maxLength: 500,
+  tooLong: 'Use 500 characters or fewer.',
+} as const;
+
+export const RecordAdjustmentBody = validator({
+  productId: identifier(PRODUCT),
+  locationId: identifier(LOCATION),
+  quantity: ADJUSTMENT_QUANTITY,
+  reason: text(REASON),
+}).and((values, report) => {
+  if (values.quantity.equals(Decimal.ZERO)) {
+    report(
+      'quantity',
+      'Enter a quantity greater or less than zero — an adjustment of nothing is not an adjustment.',
+    );
+  }
+});
+
+const FROM_LOCATION = {
+  missing: 'Choose an origin location.',
+  invalid: 'That is not a location.',
+} as const;
+
+const TO_LOCATION = {
+  missing: 'Choose a destination location.',
+  invalid: 'That is not a location.',
+} as const;
+
+export const RecordTransferBody = validator({
+  productId: identifier(PRODUCT),
+  fromLocationId: identifier(FROM_LOCATION),
+  toLocationId: identifier(TO_LOCATION),
+  quantity: QUANTITY,
+});
+
+
 /**
  * What a caller may ask of the ledger.
  *

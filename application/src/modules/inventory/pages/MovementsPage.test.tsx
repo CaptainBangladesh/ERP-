@@ -43,6 +43,8 @@ describe('MovementsPage', () => {
       quantity: '10',
       unitCost: { amount: '12.50', currency: 'GBP' },
       value: { amount: '125.00', currency: 'GBP' },
+      reason: null,
+      transferId: null,
       recordedById: 'u1',
       recordedByName: 'Ada Okafor',
       recordedAt: '2026-08-03T09:30:00.000Z',
@@ -118,8 +120,37 @@ describe('MovementsPage', () => {
         'WH-1 — Main warehouse',
         '10each',
         '£125.00',
+        '—',
         'Ada Okafor',
       ]);
+    });
+
+    it('shows adjustment reason and transfer linkage in history', async () => {
+      signedInWith();
+      backend([
+        movement({
+          id: 'm1',
+          kind: 'adjustment',
+          classification: 'stock-in',
+          quantity: '5',
+          reason: 'Stock count discrepancy',
+        }),
+        movement({
+          id: 'm2',
+          kind: 'transfer',
+          classification: 'transfer',
+          quantity: '-5',
+          transferId: '12345678-aaaa-bbbb-cccc-ddddeeeeffff',
+        }),
+      ]);
+
+      renderPage(<MovementsPage />, { token: 'a-token', path: '/movements' });
+
+      await waitFor(() => expect(screen.getAllByRole('row')).toHaveLength(3));
+      const [adjRow, xferRow] = renderedRows();
+
+      expect(adjRow).toContain('Stock count discrepancy');
+      expect(xferRow).toContain('Transfer (12345678)');
     });
 
     it('shows an issue as a negative quantity, which is how the ledger records it', async () => {

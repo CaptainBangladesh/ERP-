@@ -3,12 +3,13 @@ import {
   MOVEMENTS_ROUTE,
   type MovementListResponse,
   type MovementResponse,
+  type TransferResponse,
 } from '@erp/shared';
 import { CurrentSession, type RequestSession } from '../../platform/auth';
 import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { MovementsService } from './movements.service';
-import { RecordMovementBody } from './schemas';
+import { RecordAdjustmentBody, RecordMovementBody, RecordTransferBody } from './schemas';
 
 /**
  * The ledger, as an API.
@@ -53,6 +54,27 @@ export class MovementsController {
   ): Promise<MovementResponse> {
     return this.movements.record('issue', session.user, body);
   }
+
+  @Post('adjustments')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('inventory:movements:write')
+  async recordAdjustment(
+    @CurrentSession() session: RequestSession,
+    @Body(validated(RecordAdjustmentBody)) body: Valid<typeof RecordAdjustmentBody>,
+  ): Promise<MovementResponse> {
+    return this.movements.recordAdjustment(session.user, body);
+  }
+
+  @Post('transfers')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('inventory:movements:write')
+  async recordTransfer(
+    @CurrentSession() session: RequestSession,
+    @Body(validated(RecordTransferBody)) body: Valid<typeof RecordTransferBody>,
+  ): Promise<TransferResponse> {
+    return this.movements.recordTransfer(session.user, body);
+  }
+
 
   /**
    * History. The list endpoint hands its whole query object to the service and names no

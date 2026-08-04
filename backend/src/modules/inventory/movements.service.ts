@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
@@ -25,8 +26,9 @@ import {
   movementNotFound,
   movementProductNotFound,
   productNotStockable,
+  transferSameLocation,
 } from './refusals';
-import { MOVEMENT_LIST, RecordMovementBody } from './schemas';
+import { MOVEMENT_LIST, RecordAdjustmentBody, RecordMovementBody, RecordTransferBody } from './schemas';
 
 /**
  * The ledger: what moved, where, how much, who did it and when.
@@ -182,6 +184,233 @@ export class MovementsService {
     return describe(movement, await this.references.resolve([movement]));
   }
 
+  async recordAdjustment(
+    actor: Actor,
+    input: Valid<typeof RecordAdjustmentBody>,
+  ): Promise<MovementResponse> {
+    const product = await this.products.product(input.productId);
+    if (!product) throw movementProductNotFound();
+    if (!product.stockable) throw productNotStockable(product.name);
+
+    const location = await this.prisma.location.findFirst({ where: { id: input.locationId } });
+    if (!location) throw locationNotFound();
+    if (location.status !== 'active') throw locationNotInUse(location.name);
+
+    const quantity = input.quantity;
+    const classification: MovementClassification = quantity.compare(Decimal.ZERO) > 0
+      ? 'stock-in'
+      : 'stock-out';
+
+    const unitCost = product.cost;
+    const value = unitCost
+      ? Money.fromValue(unitCost).times(quantity).round('half-even')
+      : undefined;
+
+    const movement = await this.prisma.$transaction(async (tx) => {
+      const written = await tx.stockMovement.create({
+        data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+          kind: 'adjustment',
+          classification,
+          productId: input.productId,
+          locationId: input.locationId,
+          quantity: quantity.toString(),
+          unitCode: product.unitCode,
+          unitCost: unitCost?.amount,
+          value: value?.toValue().amount,
+          reason: input.reason,
+          recordedById: actor.id,
+          recordedByName: actor.name,
+        }),
+      });
+
+      const level = await tx.stockLevel.findFirst({
+        where: { productId: input.productId, locationId: input.locationId },
+        select: { id: true, quantity: true },
+      });
+
+      if (level) {
+        await tx.stockLevel.update({
+          where: { id: level.id },
+          data: { quantity: Decimal.parse(exactly(level.quantity)).plus(quantity).toString() },
+        });
+      } else {
+        await tx.stockLevel.create({
+          data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+            productId: input.productId,
+            locationId: input.locationId,
+            quantity: quantity.toString(),
+          }),
+        });
+      }
+
+      return written;
+    });
+
+    this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
+      movementId: movement.id,
+      kind: 'adjustment',
+      classification,
+      productId: movement.productId,
+      locationId: movement.locationId,
+      quantity: quantity.toString(),
+      value: value?.toValue() ?? null,
+      recordedById: movement.recordedById,
+      recordedAt: movement.recordedAt.toISOString(),
+      reason: input.reason,
+    });
+
+    return describe(movement, await this.references.resolve([movement]));
+  }
+
+  async recordTransfer(
+    actor: Actor,
+    input: Valid<typeof RecordTransferBody>,
+  ): Promise<{ from: MovementResponse; to: MovementResponse }> {
+    if (input.fromLocationId === input.toLocationId) {
+      throw transferSameLocation();
+    }
+
+    const product = await this.products.product(input.productId);
+    if (!product) throw movementProductNotFound();
+    if (!product.stockable) throw productNotStockable(product.name);
+
+    const fromLocation = await this.prisma.location.findFirst({
+      where: { id: input.fromLocationId },
+    });
+    if (!fromLocation) throw locationNotFound();
+    if (fromLocation.status !== 'active') throw locationNotInUse(fromLocation.name);
+
+    const toLocation = await this.prisma.location.findFirst({
+      where: { id: input.toLocationId },
+    });
+    if (!toLocation) throw locationNotFound();
+    if (toLocation.status !== 'active') throw locationNotInUse(toLocation.name);
+
+    const transferId = randomUUID();
+    const outQuantity = input.quantity.negated();
+    const inQuantity = input.quantity;
+
+    const unitCost = product.cost;
+    const outValue = unitCost
+      ? Money.fromValue(unitCost).times(outQuantity).round('half-even')
+      : undefined;
+    const inValue = unitCost
+      ? Money.fromValue(unitCost).times(inQuantity).round('half-even')
+      : undefined;
+
+    const [outMovement, inMovement] = await this.prisma.$transaction(async (tx) => {
+      const outWritten = await tx.stockMovement.create({
+        data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+          kind: 'transfer',
+          classification: 'transfer',
+          productId: input.productId,
+          locationId: input.fromLocationId,
+          quantity: outQuantity.toString(),
+          unitCode: product.unitCode,
+          unitCost: unitCost?.amount,
+          value: outValue?.toValue().amount,
+          transferId,
+          recordedById: actor.id,
+          recordedByName: actor.name,
+        }),
+      });
+
+      const fromLevel = await tx.stockLevel.findFirst({
+        where: { productId: input.productId, locationId: input.fromLocationId },
+        select: { id: true, quantity: true },
+      });
+
+      if (fromLevel) {
+        await tx.stockLevel.update({
+          where: { id: fromLevel.id },
+          data: {
+            quantity: Decimal.parse(exactly(fromLevel.quantity)).plus(outQuantity).toString(),
+          },
+        });
+      } else {
+        await tx.stockLevel.create({
+          data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+            productId: input.productId,
+            locationId: input.fromLocationId,
+            quantity: outQuantity.toString(),
+          }),
+        });
+      }
+
+      const inWritten = await tx.stockMovement.create({
+        data: companyApplied<Prisma.StockMovementUncheckedCreateInput>({
+          kind: 'transfer',
+          classification: 'transfer',
+          productId: input.productId,
+          locationId: input.toLocationId,
+          quantity: inQuantity.toString(),
+          unitCode: product.unitCode,
+          unitCost: unitCost?.amount,
+          value: inValue?.toValue().amount,
+          transferId,
+          recordedById: actor.id,
+          recordedByName: actor.name,
+        }),
+      });
+
+      const toLevel = await tx.stockLevel.findFirst({
+        where: { productId: input.productId, locationId: input.toLocationId },
+        select: { id: true, quantity: true },
+      });
+
+      if (toLevel) {
+        await tx.stockLevel.update({
+          where: { id: toLevel.id },
+          data: {
+            quantity: Decimal.parse(exactly(toLevel.quantity)).plus(inQuantity).toString(),
+          },
+        });
+      } else {
+        await tx.stockLevel.create({
+          data: companyApplied<Prisma.StockLevelUncheckedCreateInput>({
+            productId: input.productId,
+            locationId: input.toLocationId,
+            quantity: inQuantity.toString(),
+          }),
+        });
+      }
+
+      return [outWritten, inWritten];
+    });
+
+    this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
+      movementId: outMovement.id,
+      kind: 'transfer',
+      classification: 'transfer',
+      productId: outMovement.productId,
+      locationId: outMovement.locationId,
+      quantity: outQuantity.toString(),
+      value: outValue?.toValue() ?? null,
+      recordedById: outMovement.recordedById,
+      recordedAt: outMovement.recordedAt.toISOString(),
+      transferId,
+    });
+
+    this.events.emit<StockMovementRecorded>(INVENTORY_EVENTS.movementRecorded, {
+      movementId: inMovement.id,
+      kind: 'transfer',
+      classification: 'transfer',
+      productId: inMovement.productId,
+      locationId: inMovement.locationId,
+      quantity: inQuantity.toString(),
+      value: inValue?.toValue() ?? null,
+      recordedById: inMovement.recordedById,
+      recordedAt: inMovement.recordedAt.toISOString(),
+      transferId,
+    });
+
+    const resolved = await this.references.resolve([outMovement, inMovement]);
+    return {
+      from: describe(outMovement, resolved),
+      to: describe(inMovement, resolved),
+    };
+  }
+
   async listMovements(query: Record<string, unknown>): Promise<MovementListResponse> {
     const slice = listQuery(query, MOVEMENT_LIST);
 
@@ -224,6 +453,8 @@ export interface Actor {
 const SHAPE = {
   receipt: { classification: 'stock-in', direction: 'up' },
   issue: { classification: 'stock-out', direction: 'down' },
+  adjustment: { classification: 'stock-in', direction: 'up' },
+  transfer: { classification: 'transfer', direction: 'up' },
 } as const satisfies Record<
   MovementKind,
   { classification: MovementClassification; direction: 'up' | 'down' }
@@ -239,6 +470,8 @@ interface MovementRow {
   unitCode: string;
   unitCost: Prisma.Decimal | null;
   value: Prisma.Decimal | null;
+  reason: string | null;
+  transferId: string | null;
   recordedById: string;
   recordedByName: string;
   recordedAt: Date;
@@ -282,6 +515,9 @@ function describe(row: MovementRow, resolved: Resolved): MovementSummary {
 
     unitCost: Money.wire(exactly(row.unitCost)),
     value: Money.wire(exactly(row.value)),
+
+    reason: row.reason ?? null,
+    transferId: row.transferId ?? null,
 
     recordedById: row.recordedById,
     recordedByName: row.recordedByName,

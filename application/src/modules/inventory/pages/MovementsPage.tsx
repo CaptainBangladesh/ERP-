@@ -135,6 +135,24 @@ export function MovementsPage() {
         cell: ({ row }) => <MoneyText value={row.original.value} hidden="No cost recorded" />,
       },
       {
+        id: 'reason',
+        header: 'Reason / Link',
+        enableSorting: false,
+        cell: ({ row }) => {
+          if (row.original.reason) {
+            return <span className="text-slate-700">{row.original.reason}</span>;
+          }
+          if (row.original.transferId) {
+            return (
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+                Transfer ({row.original.transferId.slice(0, 8)})
+              </span>
+            );
+          }
+          return <span className="text-slate-400">—</span>;
+        },
+      },
+      {
         id: 'recordedByName',
         header: 'Recorded by',
         enableSorting: false,
@@ -149,7 +167,7 @@ export function MovementsPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold text-slate-900">Movements</h1>
         <p className="text-sm text-slate-600">
-          Every receipt and issue ever recorded, in order. Nothing here can be edited or removed
+          Every receipt, issue, adjustment and transfer ever recorded, in order. Nothing here can be edited or removed
           — a mistake is corrected by recording another movement, which is what keeps{' '}
           <a {...linkProps('/stock')} className="font-medium text-slate-900 underline">
             stock
@@ -239,6 +257,8 @@ export function MovementsPage() {
 const KIND_LABELS = {
   receipt: 'Received',
   issue: 'Issued',
+  adjustment: 'Adjusted',
+  transfer: 'Transferred',
 } as const satisfies Record<MovementKind, string>;
 
 /**

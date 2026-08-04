@@ -118,3 +118,15 @@ export function locationNotInUse(name: string): ApiException {
     HttpStatus.CONFLICT,
   );
 }
+
+/**
+ * Transferring stock to the same location it is already at.
+ */
+export function transferSameLocation(): ApiException {
+  return new ApiException(
+    MOVEMENT_ERROR_CODES.transferSameLocation,
+    'Stock cannot be transferred to the location it is already at. Choose a different destination location.',
+    HttpStatus.CONFLICT,
+  );
+}
+
