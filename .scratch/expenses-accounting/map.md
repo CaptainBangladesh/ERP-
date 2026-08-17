@@ -52,6 +52,11 @@ each fired as its own subagent per the usual protocol.
   attributing inbound mail by sender lookup against `User.email` rather than a per-company alias,
   and splitting capture (channel-specific) from extraction/draft-creation (shared with ticket 04).
   Full findings in `research/05-email-gateway.md`.
+- [04 — OCR receipt capture](issues/04-ocr-capture.md) — genuine greenfield (no upload/storage/
+  image infra exists); recommend a third-party receipt-extraction API (AWS Textract, Azure
+  Document Intelligence, or Google Document AI — near-identical at ~$0.01/page, pick by cloud)
+  over self-hosting, with a mandatory human review gate between extraction and confirmation.
+  Confirms ticket 05's shared extraction-layer split. Full findings in `research/04-ocr-capture.md`.
 
 ## Not yet specified
 
