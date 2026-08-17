@@ -47,6 +47,11 @@ each fired as its own subagent per the usual protocol.
   triggered an insert); recommend lazy/pending-draft materialization on the next authenticated
   request rather than building the platform's first real scheduler. Full findings in
   `research/06-recurring-scheduler.md`.
+- [05 — Email-gateway receipt capture](issues/05-email-gateway.md) — this platform's first real
+  transactional-email vendor relationship (outbound today is a logging stub); recommend
+  attributing inbound mail by sender lookup against `User.email` rather than a per-company alias,
+  and splitting capture (channel-specific) from extraction/draft-creation (shared with ticket 04).
+  Full findings in `research/05-email-gateway.md`.
 
 ## Not yet specified
 
