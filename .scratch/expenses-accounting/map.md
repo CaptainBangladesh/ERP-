@@ -42,6 +42,12 @@ each fired as its own subagent per the usual protocol.
 
 <!-- one line per closed ticket, appended on resolution -->
 
+- [06 — Recurring-expense scheduling](issues/06-recurring-scheduler.md) — `check:conformance`
+  does not actually forbid background writes (it's 21 static text rules, none about who
+  triggered an insert); recommend lazy/pending-draft materialization on the next authenticated
+  request rather than building the platform's first real scheduler. Full findings in
+  `research/06-recurring-scheduler.md`.
+
 ## Not yet specified
 
 - **Approval workflow** — levels, thresholds (e.g. a second tier above some amount), who holds
@@ -53,9 +59,9 @@ each fired as its own subagent per the usual protocol.
   hard block. Distinct from budgets below. Depends on the category model (02).
 - **Budgets** — an aggregate spend cap per category/period, with some kind of overspend signal.
   Distinct from spend policies above. Depends on the category model (02).
-- **Recurring expense rules** — cadence, template, what "due" means. Depends on the category
-  model (02) and the scheduler research (06) — the mechanism has to exist before the rules
-  engine can be designed around it.
+- **Recurring expense rules** — cadence, template, what "due" means, and confirming the
+  lazy/pending-draft materialization shape ticket 06 recommended. Depends on the category model
+  (02) only now that 06 has resolved.
 - **Accounting module shape** — chart of accounts, journal-entry model, how it consumes
   Expenses'/Inventory's events without depending on them, and its own tier (see Notes above).
   Depends on the payee model (01), since payee type shapes the payable side of the ledger, and
