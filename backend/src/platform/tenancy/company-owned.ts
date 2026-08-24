@@ -179,6 +179,21 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   // nothing here is restricted or immutable, because reassigning a Lead is an ordinary edit
   // and a colleague who may see the pipeline may see all of it.
   Lead: { kind: 'company-owned' },
+
+  // Ordinary company-owned tables, both of them. Nothing is restricted — a colleague who may
+  // see the pipeline may see all of it, amount included — and nothing is immutable: renaming a
+  // Stage or correcting a Deal's amount is an ordinary edit, not a ledger entry. `Stage.order`'s
+  // uniqueness and its `outcome` invariant are both cross-row, so both live in `StagesService`
+  // rather than here, the same way `Lead.priorStatus` lives in `LeadsService`.
+  Stage: { kind: 'company-owned' },
+
+  Deal: { kind: 'company-owned' },
+
+  Activity: { kind: 'company-owned' },
+
+  WorkflowRule: { kind: 'company-owned' },
+
+  Notification: { kind: 'company-owned' },
 };
 
 /**

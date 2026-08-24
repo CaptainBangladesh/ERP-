@@ -9,7 +9,7 @@ is how a Deal closes, with no separate close action. Deleting a Stage that still
 refused. Full field list and the Stage/Deal contract are in [the spec](../spec.md)'s "Stage and
 Deal schema and endpoints" section.
 
-Runs independently of Lead management (09) — a Deal only needs an existing Party; its optional
+Runs independently of Lead management (02) — a Deal only needs an existing Party; its optional
 `originLeadId` is a plain nullable field with no FK, so it doesn't require Lead's table to exist
 functionally, only for the field to be populated when both happen to be built.
 

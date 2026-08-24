@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  CRM_EVENTS,
   LEAD_ERROR_CODES,
   type LeadListResponse,
   type LeadResponse,
@@ -10,11 +11,13 @@ import {
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
 import { defined } from '../../prisma/columns';
+import { DomainEvents } from '../../platform/events';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { PartyDirectory } from '../parties';
 import { CreateLeadBody, LEAD_LIST, QualifyLeadBody, UpdateLeadBody } from './schemas';
+import { WorkflowRulesService } from './workflow-rules.service';
 
 /**
  * A prospect, before there is a `Party` to hold it.
@@ -34,6 +37,8 @@ export class LeadsService {
   constructor(
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly parties: PartyDirectory,
+    private readonly workflowRulesService: WorkflowRulesService,
+    private readonly events: DomainEvents,
   ) {}
 
   async createLead(input: Valid<typeof CreateLeadBody>): Promise<LeadResponse> {
@@ -66,7 +71,11 @@ export class LeadsService {
     return describe(await this.requireLead(id));
   }
 
-  async changeLead(id: string, input: Valid<typeof UpdateLeadBody>): Promise<LeadResponse> {
+  async changeLead(
+    id: string,
+    input: Valid<typeof UpdateLeadBody>,
+    actor?: { userId: string; name: string },
+  ): Promise<LeadResponse> {
     await this.requireLead(id);
 
     const lead = await this.prisma.lead.update({
@@ -81,6 +90,15 @@ export class LeadsService {
         ...defined('assignedToUserId', input.assignedToUserId),
       },
     });
+
+    if (input.status !== undefined) {
+      await this.workflowRulesService.evaluateRules({
+        triggerType: 'lead.status_changed',
+        leadId: lead.id,
+        toStatus: lead.status,
+        actor: actor ?? { userId: '00000000-0000-0000-0000-000000000000', name: 'System' },
+      });
+    }
 
     return describe(lead);
   }
@@ -98,7 +116,11 @@ export class LeadsService {
    * overwrite) and for one that is currently disqualified (reopen it first, so a status that
    * looks like progress cannot also be a status recorded while nobody meant to pursue it).
    */
-  async qualifyLead(id: string, input: Valid<typeof QualifyLeadBody>): Promise<LeadResponse> {
+  async qualifyLead(
+    id: string,
+    input: Valid<typeof QualifyLeadBody>,
+    actor?: { userId: string; name: string },
+  ): Promise<LeadResponse> {
     const lead = await this.requireLead(id);
 
     if (lead.status === 'disqualified') throw leadNotQualifiable('It is disqualified. Reopen it first.');
@@ -112,6 +134,18 @@ export class LeadsService {
       data: { partyId: input.partyId, status: 'qualified' },
     });
 
+    await this.workflowRulesService.evaluateRules({
+      triggerType: 'lead.status_changed',
+      leadId: qualified.id,
+      toStatus: 'qualified',
+      actor: actor ?? { userId: '00000000-0000-0000-0000-000000000000', name: 'System' },
+    });
+
+    this.events.emit(CRM_EVENTS.leadQualified, {
+      leadId: qualified.id,
+      partyId: input.partyId,
+    });
+
     return describe(qualified);
   }
 
@@ -122,13 +156,24 @@ export class LeadsService {
    * lets `reopen` restore the exact state disqualifying interrupted instead of guessing that
    * every Lead starts over as `new`.
    */
-  async disqualifyLead(id: string): Promise<LeadResponse> {
+  async disqualifyLead(id: string, actor?: { userId: string; name: string }): Promise<LeadResponse> {
     const lead = await this.requireLead(id);
     if (lead.status === 'disqualified') throw leadAlreadyDisqualified();
 
     const disqualified = await this.prisma.lead.update({
       where: { id },
       data: { status: 'disqualified', priorStatus: lead.status },
+    });
+
+    await this.workflowRulesService.evaluateRules({
+      triggerType: 'lead.status_changed',
+      leadId: disqualified.id,
+      toStatus: 'disqualified',
+      actor: actor ?? { userId: '00000000-0000-0000-0000-000000000000', name: 'System' },
+    });
+
+    this.events.emit(CRM_EVENTS.leadDisqualified, {
+      leadId: disqualified.id,
     });
 
     return describe(disqualified);
@@ -139,13 +184,20 @@ export class LeadsService {
    * never `'new'` by default — so a Lead that was `contacted` when it was set aside comes
    * back `contacted`, not reset to the beginning of its own history.
    */
-  async reopenLead(id: string): Promise<LeadResponse> {
+  async reopenLead(id: string, actor?: { userId: string; name: string }): Promise<LeadResponse> {
     const lead = await this.requireLead(id);
     if (lead.status !== 'disqualified') throw leadNotDisqualified();
 
     const reopened = await this.prisma.lead.update({
       where: { id },
       data: { status: lead.priorStatus ?? 'new', priorStatus: null },
+    });
+
+    await this.workflowRulesService.evaluateRules({
+      triggerType: 'lead.status_changed',
+      leadId: reopened.id,
+      toStatus: reopened.status,
+      actor: actor ?? { userId: '00000000-0000-0000-0000-000000000000', name: 'System' },
     });
 
     return describe(reopened);

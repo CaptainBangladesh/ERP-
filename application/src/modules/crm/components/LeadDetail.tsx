@@ -26,6 +26,7 @@ import { ApiFailure, api } from '../../../api/client';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
 import { LEAD_SOURCE_LABELS, LEAD_STATUS_LABELS } from '../labels';
+import { ActivityTimeline } from './ActivityTimeline';
 
 /**
  * The role a qualified Lead's Party is tagged with. A new role string, not `customer` — a
@@ -221,6 +222,8 @@ export function LeadDetail({
           }
         />
       )}
+
+      <ActivityTimeline parentKind="lead" parentId={leadId} />
     </section>
   );
 }

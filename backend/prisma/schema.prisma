@@ -814,9 +814,165 @@ model Lead {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  activities Activity[]
+
   @@index([companyId])
   /// The list's default order, within a company — the `(company_id, <default sort>)` shape
   /// every list endpoint's default sort wants, so that offset paging is an index walk.
   @@index([companyId, name])
   @@map("leads")
 }
+
+/// A company's own pipeline, one row per column on the deals board.
+///
+/// No seed data — a fresh company has zero Stages, and the board's empty state is "create your
+/// first stage" (mirroring Expenses' Category discipline). `deleteStage` refuses to remove one
+/// still holding Deals; `changeStage` refuses a second `'won'` or a second `'lost'` per company.
+/// Both are cross-row invariants, so both are enforced in `StagesService` rather than here.
+model Stage {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  name String
+
+  /// Board position within the company. Not a `@@unique([companyId, order])` — a reorder is a
+  /// swap between two rows, and an immediate (non-deferrable) unique index would refuse the
+  /// first of the two writes before the second could land. `StagesService` renumbers every
+  /// Stage in the company to consecutive integers on every reorder instead, which is what
+  /// actually keeps this column unique — the same "cross-row invariant, application layer"
+  /// reasoning the spec gives for `outcome` below, applied to the other one that needs it.
+  order Int
+
+  /// `'won' | 'lost' | null` — null for every in-flight stage. At most one Stage may hold each
+  /// of `'won'`/`'lost'` per company: a cross-row invariant Postgres cannot express as a simple
+  /// constraint, so `StagesService` enforces it instead.
+  outcome String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  deals Deal[]
+
+  @@index([companyId])
+  /// The list's default order, within a company — the `(company_id, <default sort>)` shape
+  /// every list endpoint's default sort wants, so that offset paging is an index walk.
+  @@index([companyId, order])
+  @@map("stages")
+}
+
+/// A sale in progress against a real `Party`, moving between Stages on the board.
+///
+/// Landing on a Stage whose `outcome` is `'won'` or `'lost'` is how a Deal closes — there is no
+/// separate close endpoint, and no `outcome`/`status` column here to drift from the Stage's own:
+/// `DealsService` always reads it off the Stage a Deal currently sits in.
+model Deal {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  /// Mandatory. No FK — resolved through `PartyDirectory`, parties' public surface, exactly as
+  /// `Lead.partyId` is.
+  partyId String @map("party_id") @db.Uuid
+
+  /// Mandatory, and — unlike `partyId` — a real FK: a Stage is this module's own table, so
+  /// nothing stops the key from crossing the boundary the way one to `parties` would.
+  /// `onDelete: Restrict` is belt-and-suspenders under `StagesService`'s own occupancy check,
+  /// matching `Product.unitId`'s and `StockMovement.locationId`'s FKs within their own modules.
+  stageId String @map("stage_id") @db.Uuid
+  stage   Stage  @relation(fields: [stageId], references: [id], onDelete: Restrict)
+
+  name String
+
+  /// This platform's exact `MoneyValue`, stored the way `Product.cost` is: a bare `numeric`
+  /// column and no currency column beside it, because currency is fixed to `DEFAULT_CURRENCY`
+  /// platform-wide (ADR 0004) rather than chosen per Deal.
+  amount Decimal @db.Decimal(14, 2)
+
+  expectedCloseDate DateTime? @map("expected_close_date") @db.Date
+
+  /// A plain platform User reference, no FK. Live and reassignable, exactly like
+  /// `Lead.assignedToUserId` — the frontend resolves it via `GET /api/identity/users`, because
+  /// identity's public surface is deliberately empty and no module may depend on it.
+  assignedToUserId String? @map("assigned_to_user_id") @db.Uuid
+
+  /// Optional and informational only — traces a win back to the Lead it came from, without ever
+  /// requiring one. No FK: qualifying a Lead never creates a Deal, so this is always a separate,
+  /// explicit act, and nothing here assumes the named Lead still exists.
+  originLeadId String? @map("origin_lead_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  activities Activity[]
+
+  @@index([companyId])
+  @@index([companyId, name])
+  @@index([stageId])
+  @@map("deals")
+}
+
+/// An interaction, note or task logged against a Lead, Deal or Party.
+model Activity {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  type      String
+  notes     String
+  occurredAt DateTime @default(now()) @map("occurred_at")
+  dueAt     DateTime? @map("due_at")
+  completedAt DateTime? @map("completed_at")
+
+  createdByUserId String @map("created_by_user_id") @db.Uuid
+  createdByName   String @map("created_by_name")
+
+  leadId  String? @map("lead_id") @db.Uuid
+  lead    Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  dealId  String? @map("deal_id") @db.Uuid
+  deal    Deal?   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  partyId String? @map("party_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([companyId, leadId, occurredAt])
+  @@index([companyId, dealId, occurredAt])
+  @@index([companyId, partyId, occurredAt])
+  @@map("activities")
+}
+
+/// Event-triggered no-code automation rules for CRM events (Deal stage changed, Lead status changed).
+model WorkflowRule {
+  id            String   @id @default(uuid()) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  name          String
+  triggerType   String   @map("trigger_type")
+  triggerConfig Json?    @map("trigger_config")
+  actionType    String   @map("action_type")
+  actionConfig  Json     @map("action_config")
+  enabled       Boolean  @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@map("workflow_rules")
+}
+
+/// In-app notification record generated by notify_user workflow rule action or system events.
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@index([companyId, userId, read])
+  @@map("notifications")
+}
+
+
+

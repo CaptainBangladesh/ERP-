@@ -42,6 +42,37 @@ each fired as its own subagent per the usual protocol.
 
 <!-- one line per closed ticket, appended on resolution -->
 
+- [Spec — Expense capture, categorization & reporting](spec.md) — second cut, now consolidating
+  tickets 01, 02, 03, 04, 05, 06 into one implementable PRD (`Status: ready-for-agent`): the
+  `expenses` module's payee/submitter shape, categories (with optional onboarding templates),
+  first-class `ExpenseReport` grouping, the shared draft/extraction pipeline for OCR and email
+  capture, lazy recurring materialization, and the create/confirm flow tying all of it together
+  end-to-end through a submitted report. Approval workflow and Accounting remain fog and are
+  explicitly out of scope.
+- [03 — Expense report grouping](issues/03-report-grouping.md) — `ExpenseReport` is a first-class
+  record (name + mandatory `startDate`/`endDate`, no Project/Trip reference — that module doesn't
+  exist), not a query grouping, because a batch needs somewhere to hold "this was submitted."
+  `status`: `draft | submitted | approved | rejected` (vocabulary reserved now, transition logic
+  is the approval ticket's job). `ExpenseRecord.reportId` is mandatory — a line is grouped into a
+  report before it can move past draft. Unblocks the approval workflow fog item: it now acts on
+  `ExpenseReport`, not on individual lines.
+- [02 — Category model](issues/02-category-model.md) — `Category` is a distinct model Expenses
+  owns (no `dependsOn: products` — a classification tag isn't a catalogued, priced, stockable
+  thing). Flat list per company: `name` (unique per company), `classification` (string,
+  `StockMovement.classification`-style, Accounting's to refine later), `status`
+  (active/inactive, nothing deleted). `ExpenseRecord.categoryId` is mandatory. Industry templates
+  are static config in code, copied into real `Category` rows via an explicit onboarding action
+  (not seed data) — optional and never gates Core functionality; no ongoing link after copying.
+- [01 — Payee model](issues/01-payee-model.md) — a submission can name a payee different from the
+  submitter (office-manager-files-for-others is real usage), so both are tracked: a frozen
+  submitter pair (matching `StockMovement`'s actor freeze) plus a `payeeType` discriminator with
+  per-type nullable cross-module references (`payeeEmployeeId` via a new minimal `hrm`
+  `EmployeeDirectory`, `payeePartyId` via `PartyDirectory`/`supplier` role, or a free-text memo for
+  company-paid). Expenses gains `dependsOn: ['hrm', 'parties']`; HRM must first publish
+  `EmployeeDirectory`, mirroring `PartyDirectory` exactly. No role auto-tagging from Expenses'
+  backend (matches Products' precedent) — a picked non-vendor party is tagged via Parties' own
+  `POST /parties/:id/roles` endpoint called from the frontend. Confidential employees follow
+  existing HRM restriction unchanged, no exception carved for Expenses.
 - [06 — Recurring-expense scheduling](issues/06-recurring-scheduler.md) — `check:conformance`
   does not actually forbid background writes (it's 21 static text rules, none about who
   triggered an insert); recommend lazy/pending-draft materialization on the next authenticated
@@ -61,17 +92,20 @@ each fired as its own subagent per the usual protocol.
 ## Not yet specified
 
 - **Approval workflow** — levels, thresholds (e.g. a second tier above some amount), who holds
-  the approve/reject permission. Depends on the payee model (01) and expense report grouping
-  (03) — approval likely acts on whatever unit those decide.
+  the approve/reject permission. Depends on the payee model (01, resolved) and expense report
+  grouping (03, resolved) — now unblocked on both; acts on `ExpenseReport` (03's answer), branches
+  on `payeeType` (01's answer). Ready to ticket.
 - **Mileage tracking** — rate configuration (flat vs. per-vehicle), unit (km/mi), who sets the
-  rate. Depends on the category model (02).
+  rate. Depended on the category model (02) — now resolved; ready to ticket.
 - **Spend policies** — a per-line limit enforced at submission (e.g. "max $50/meal"), flag vs.
-  hard block. Distinct from budgets below. Depends on the category model (02).
+  hard block. Distinct from budgets below. Depended on the category model (02) — now resolved;
+  ready to ticket.
 - **Budgets** — an aggregate spend cap per category/period, with some kind of overspend signal.
-  Distinct from spend policies above. Depends on the category model (02).
+  Distinct from spend policies above. Depended on the category model (02) — now resolved; ready
+  to ticket.
 - **Recurring expense rules** — cadence, template, what "due" means, and confirming the
-  lazy/pending-draft materialization shape ticket 06 recommended. Depends on the category model
-  (02) only now that 06 has resolved.
+  lazy/pending-draft materialization shape ticket 06 recommended. Depended on the category model
+  (02) — now resolved; ready to ticket.
 - **Accounting module shape** — chart of accounts, journal-entry model, how it consumes
   Expenses'/Inventory's events without depending on them, and its own tier (see Notes above).
   Depends on the payee model (01), since payee type shapes the payable side of the ledger, and

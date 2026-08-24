@@ -1,18 +1,27 @@
 import {
+  ACTIVITY_PATHS,
   AUTH_PATHS,
   LEAD_ERROR_CODES,
   LEAD_PATHS,
   PARTY_PATHS,
+  WORKFLOW_RULE_PATHS,
   listPath,
+  type ActivityListResponse,
+  type ActivityResponse,
   type AuthenticatedSession,
+  type CreateActivityRequest,
   type CreateLeadRequest,
   type CreatePartyRequest,
+  type CreateWorkflowRuleRequest,
   type LeadListResponse,
   type LeadResponse,
+  type NotificationListResponse,
   type PartyResponse,
   type QualifyLeadRequest,
   type SignUpRequest,
   type UpdateLeadRequest,
+  type WorkflowRuleListResponse,
+  type WorkflowRuleResponse,
 } from '@erp/shared';
 import { createTestApp, resetDatabase, type TestApp } from './harness/test-app';
 
@@ -382,6 +391,246 @@ describe('crm', () => {
         .as(app.http.post(LEAD_PATHS.qualify(theirs.id)))
         .send({ action: 'link', partyId: theirs.id } satisfies QualifyLeadRequest)
         .expect(404);
+    });
+  });
+
+  describe('activities', () => {
+    it('logs an activity against a lead and reads it back', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      const logged = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({
+          type: 'call',
+          notes: 'Discovery call held with Priya.',
+          leadId: lead.id,
+        } satisfies CreateActivityRequest)
+        .expect(201);
+
+      expect((logged.body as ActivityResponse).createdByName).toBe('Ada Okafor');
+
+      const list = await tenant
+        .as(app.http.get(ACTIVITY_PATHS.leadActivities(lead.id)))
+        .expect(200);
+
+      expect((list.body as ActivityListResponse).items).toHaveLength(1);
+    });
+
+    it('enforces the exactly-one-parent rule', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({
+          type: 'call',
+          notes: 'Invalid activity',
+        })
+        .expect(422);
+
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({
+          type: 'call',
+          notes: 'Invalid double parent',
+          leadId: lead.id,
+          dealId: '00000000-0000-0000-0000-000000000001',
+        })
+        .expect(422);
+    });
+
+    it('completes and reopens a task activity', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      const created = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({
+          type: 'task',
+          notes: 'Send quote',
+          leadId: lead.id,
+        } satisfies CreateActivityRequest)
+        .expect(201);
+
+      const actId = (created.body as ActivityResponse).id;
+
+      const completed = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.completeTask(actId)))
+        .expect(200);
+
+      expect((completed.body as ActivityResponse).completedAt).not.toBeNull();
+
+      const reopened = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.reopenTask(actId)))
+        .expect(200);
+
+      expect((reopened.body as ActivityResponse).completedAt).toBeNull();
+    });
+  });
+
+  describe('workflow rules', () => {
+    it('creates, lists, updates, and deletes a workflow rule', async () => {
+      const tenant = await signUp();
+
+      const created = await tenant
+        .as(app.http.post(WORKFLOW_RULE_PATHS.rules))
+        .send({
+          name: 'Notify on Stage Change',
+          triggerType: 'deal.stage_changed',
+          triggerConfig: { toStageId: 'stage-123' },
+          actionType: 'notify_user',
+          actionConfig: { userId: tenant.session.user.id },
+          enabled: true,
+        } satisfies CreateWorkflowRuleRequest)
+        .expect(201);
+
+      const rule = created.body as WorkflowRuleResponse;
+      expect(rule.name).toBe('Notify on Stage Change');
+      expect(rule.enabled).toBe(true);
+
+      const listed = await tenant
+        .as(app.http.get(WORKFLOW_RULE_PATHS.rules))
+        .expect(200);
+
+      expect((listed.body as WorkflowRuleListResponse).items).toHaveLength(1);
+
+      const updated = await tenant
+        .as(app.http.patch(WORKFLOW_RULE_PATHS.rule(rule.id)))
+        .send({ enabled: false })
+        .expect(200);
+
+      expect((updated.body as WorkflowRuleResponse).enabled).toBe(false);
+
+      await tenant
+        .as(app.http.delete(WORKFLOW_RULE_PATHS.rule(rule.id)))
+        .expect(204);
+    });
+
+    it('refuses update_field targeting stageId or status', async () => {
+      const tenant = await signUp();
+
+      const refused = await tenant
+        .as(app.http.post(WORKFLOW_RULE_PATHS.rules))
+        .send({
+          name: 'Invalid update_field',
+          triggerType: 'deal.stage_changed',
+          actionType: 'update_field',
+          actionConfig: { field: 'stageId', value: 'stage-456' },
+        })
+        .expect(422);
+
+      expect(refused.body.fields).toHaveProperty('actionConfig');
+    });
+
+    it('evaluates matching rules on lead status change and creates a task activity', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      await tenant
+        .as(app.http.post(WORKFLOW_RULE_PATHS.rules))
+        .send({
+          name: 'Task on Contacted',
+          triggerType: 'lead.status_changed',
+          triggerConfig: { toStatus: 'contacted' },
+          actionType: 'create_task',
+          actionConfig: { notes: 'Follow up with lead', dueInDays: 3 },
+          enabled: true,
+        } satisfies CreateWorkflowRuleRequest)
+        .expect(201);
+
+      await change(tenant, lead.id, { status: 'contacted' });
+
+      const list = await tenant
+        .as(app.http.get(ACTIVITY_PATHS.leadActivities(lead.id)))
+        .expect(200);
+
+      const items = (list.body as ActivityListResponse).items;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.type).toBe('task');
+      expect(items[0]!.notes).toBe('Follow up with lead');
+    });
+
+    it('fires multiple matching rules and ignores disabled rules', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      // Active rule 1: notify_user
+      await tenant
+        .as(app.http.post(WORKFLOW_RULE_PATHS.rules))
+        .send({
+          name: 'Rule 1 Notify',
+          triggerType: 'lead.status_changed',
+          triggerConfig: { toStatus: 'contacted' },
+          actionType: 'notify_user',
+          actionConfig: { userId: tenant.session.user.id },
+          enabled: true,
+        })
+        .expect(201);
+
+      // Active rule 2: create_task
+      await tenant
+        .as(app.http.post(WORKFLOW_RULE_PATHS.rules))
+        .send({
+          name: 'Rule 2 Task',
+          triggerType: 'lead.status_changed',
+          triggerConfig: { toStatus: 'contacted' },
+          actionType: 'create_task',
+          actionConfig: { notes: 'Automated task' },
+          enabled: true,
+        })
+        .expect(201);
+
+      // Disabled rule: create_task
+      await tenant
+        .as(app.http.post(WORKFLOW_RULE_PATHS.rules))
+        .send({
+          name: 'Rule 3 Disabled',
+          triggerType: 'lead.status_changed',
+          triggerConfig: { toStatus: 'contacted' },
+          actionType: 'create_task',
+          actionConfig: { notes: 'Should not create' },
+          enabled: false,
+        })
+        .expect(201);
+
+      await change(tenant, lead.id, { status: 'contacted' });
+
+      const notifications = await tenant
+        .as(app.http.get(WORKFLOW_RULE_PATHS.notifications))
+        .expect(200);
+
+      expect((notifications.body as NotificationListResponse).items).toHaveLength(1);
+
+      const list = await tenant
+        .as(app.http.get(ACTIVITY_PATHS.leadActivities(lead.id)))
+        .expect(200);
+
+      const items = (list.body as ActivityListResponse).items;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.notes).toBe('Automated task');
+    });
+
+    it('enforces tenant isolation on workflow rules', async () => {
+      const northwind = await signUp();
+      const acme = await signUp({ companyName: 'Acme', name: 'Bo Lindqvist', email: 'bo@acme.test' });
+
+      const rule = await northwind
+        .as(app.http.post(WORKFLOW_RULE_PATHS.rules))
+        .send({
+          name: 'Northwind Rule',
+          triggerType: 'lead.status_changed',
+          actionType: 'notify_user',
+          actionConfig: {},
+        })
+        .expect(201);
+
+      const ruleId = (rule.body as WorkflowRuleResponse).id;
+
+      await acme.as(app.http.get(WORKFLOW_RULE_PATHS.rule(ruleId))).expect(404);
+
+      const acmeRules = await acme.as(app.http.get(WORKFLOW_RULE_PATHS.rules)).expect(200);
+      expect((acmeRules.body as WorkflowRuleListResponse).items).toEqual([]);
     });
   });
 });
