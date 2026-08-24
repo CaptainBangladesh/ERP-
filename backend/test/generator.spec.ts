@@ -134,6 +134,26 @@ describe('the module generator', () => {
         delegate: 'stockMovement',
       });
     });
+
+    it('gives the PATHS collection key its own name when the module name has no plural of its own', () => {
+      // 'crm' camelCases to the same string as its own singular record delegate — 'crm' and
+      // 'crm' — which would otherwise make `{ crm: ..., crm: (id) => ... }` an object with one
+      // key, not two, and a duplicate-property error in TypeScript besides.
+      expect(namesOf('crm')).toMatchObject({ delegate: 'crm', plural: 'crms' });
+
+      // A module a person actually named as a plural is untouched: the collection key stays
+      // the word they typed rather than a regularised plural of the record.
+      expect(namesOf('products')).toMatchObject({ delegate: 'product', plural: 'products' });
+      expect(namesOf('parties')).toMatchObject({ delegate: 'party', plural: 'parties' });
+    });
+
+    it('writes a contract whose PATHS has two distinct keys even for a collision-prone name', () => {
+      const plan = planModule(request({ name: 'crm' }));
+      const contract = plan.files.find((file) => file.path.endsWith('modules/crm/contract.ts'));
+
+      expect(contract?.text).toContain('crms: `/${CRM_ROUTE}`');
+      expect(contract?.text).toContain('crm: (id: string) =>');
+    });
   });
 
   /**

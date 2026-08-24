@@ -173,6 +173,12 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   StockLevel: { kind: 'company-owned' },
 
   InventorySetting: { kind: 'company-owned' },
+
+  // ─── crm ──
+  // A live, reassignable reference (`assignedToUserId`) rather than an actor-freeze pair:
+  // nothing here is restricted or immutable, because reassigning a Lead is an ordinary edit
+  // and a colleague who may see the pipeline may see all of it.
+  Lead: { kind: 'company-owned' },
 };
 
 /**

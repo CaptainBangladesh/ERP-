@@ -30,6 +30,17 @@ export interface ModuleNames {
   readonly words: string;
   /** `product` — the same, for the record. */
   readonly recordWords: string;
+  /**
+   * The collection key in a generated `_PATHS` object — `products` for a `products` module.
+   *
+   * Ordinarily this is just the module's own name, camelCased. It takes the record's regular
+   * plural instead only when that would collide with `delegate` — an acronym-like module name
+   * such as `crm`, or a compound one like `field-service`, camelCases to the same string as
+   * its own singular record delegate, and `{ crm: ..., crm: (id) => ... }` is not an object
+   * with two keys, it is one key whichever was written second. Every other module's name is
+   * already the plural an English speaker would write, so this changes nothing for them.
+   */
+  readonly plural: string;
 }
 
 export const MODULE_NAME = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -41,6 +52,8 @@ export function namesOf(name: string, record?: string): ModuleNames {
   const parts = name.split('-');
   const pascal = parts.map(capitalise).join('');
   const primary = record ?? singular(pascal);
+  const delegate = primary.charAt(0).toLowerCase() + primary.slice(1);
+  const asWritten = camel(name);
 
   return {
     name,
@@ -48,11 +61,30 @@ export function namesOf(name: string, record?: string): ModuleNames {
     constant: parts.map((part) => part.toUpperCase()).join('_'),
     record: primary,
     recordConstant: shout(primary),
-    delegate: primary.charAt(0).toLowerCase() + primary.slice(1),
+    delegate,
     table: parts.join('_'),
     words: parts.join(' '),
     recordWords: words(primary),
+    plural: asWritten === delegate ? pluralise(delegate) : asWritten,
   };
+}
+
+/** `field-service` → `fieldService`. The module's own name, with its dashes folded in. */
+export function camel(name: string): string {
+  const [first = '', ...rest] = name.split('-');
+  return first + rest.map(capitalise).join('');
+}
+
+/**
+ * Enough English to be right about the record nouns this system actually uses, and no more —
+ * the plural counterpart to `singular`, kept just as narrow. Only reached when the module's
+ * own name already collides with its record delegate, so being wrong about an irregular
+ * plural here costs one odd-looking object key, not a build that will not compile.
+ */
+function pluralise(word: string): string {
+  if (/[^aeiou]y$/.test(word)) return `${word.slice(0, -1)}ies`;
+  if (/(s|x|z|ch|sh)$/.test(word)) return `${word}es`;
+  return `${word}s`;
 }
 
 /**

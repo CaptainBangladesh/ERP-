@@ -1,5 +1,5 @@
 import type { ModuleTier } from '@erp/shared';
-import type { ModuleNames } from './module-name';
+import { camel, type ModuleNames } from './module-name';
 
 /**
  * What a new module is on the day it is created.
@@ -382,7 +382,7 @@ export const ${names.constant}_MODULE = '${names.name}';
 export const ${names.constant}_ROUTE = 'api/${names.name}';
 
 export const ${names.recordConstant}_PATHS = {
-  ${camel(names.name)}: \`/\${${names.constant}_ROUTE}\`,
+  ${names.plural}: \`/\${${names.constant}_ROUTE}\`,
   ${names.delegate}: (id: string) => \`/\${${names.constant}_ROUTE}/\${id}\`,
 } as const;
 
@@ -491,7 +491,7 @@ export function ${names.pascal}Page() {
     // and the shared builder sorts its parameters so one request is always one key.
     queryKey: ['${names.name}', 'list', listQueryString(query)],
     queryFn: () =>
-      api.get<${names.record}ListResponse>(listPath(${names.recordConstant}_PATHS.${camel(names.name)}, query)),
+      api.get<${names.record}ListResponse>(listPath(${names.recordConstant}_PATHS.${names.plural}, query)),
   });
 
   const failure = ${camel(names.name)}.error instanceof ApiFailure ? ${camel(names.name)}.error : undefined;
@@ -566,7 +566,7 @@ function Add${names.record}({ onAdded }: { onAdded: (created: ${names.record}Res
 
   const add = useMutation({
     mutationFn: () =>
-      api.post<${names.record}Response>(${names.recordConstant}_PATHS.${camel(names.name)}, {
+      api.post<${names.record}Response>(${names.recordConstant}_PATHS.${names.plural}, {
         name,
       } satisfies Create${names.record}Request),
     onSuccess: (created) => {
@@ -648,7 +648,7 @@ describe('${names.pascal}Page', () => {
     const asked: string[] = [];
 
     server.use(
-      http.get(${names.recordConstant}_PATHS.${camel(names.name)}, ({ request }) => {
+      http.get(${names.recordConstant}_PATHS.${names.plural}, ({ request }) => {
         const url = new URL(request.url);
         asked.push(url.search);
         return HttpResponse.json(respond(url.searchParams));
@@ -691,10 +691,10 @@ describe('${names.pascal}Page', () => {
     let created = false;
 
     server.use(
-      http.get(${names.recordConstant}_PATHS.${camel(names.name)}, () =>
+      http.get(${names.recordConstant}_PATHS.${names.plural}, () =>
         HttpResponse.json(created ? page([row('First')]) : page([])),
       ),
-      http.post(${names.recordConstant}_PATHS.${camel(names.name)}, async ({ request }) => {
+      http.post(${names.recordConstant}_PATHS.${names.plural}, async ({ request }) => {
         sent = await request.json();
         created = true;
         return HttpResponse.json(row('First'), { status: 201 });
@@ -713,8 +713,8 @@ describe('${names.pascal}Page', () => {
 
   it('puts a server message beside the input it belongs to', async () => {
     server.use(
-      http.get(${names.recordConstant}_PATHS.${camel(names.name)}, () => HttpResponse.json(page([]))),
-      http.post(${names.recordConstant}_PATHS.${camel(names.name)}, () =>
+      http.get(${names.recordConstant}_PATHS.${names.plural}, () => HttpResponse.json(page([]))),
+      http.post(${names.recordConstant}_PATHS.${names.plural}, () =>
         HttpResponse.json(
           {
             code: 'validation_failed',
@@ -799,7 +799,7 @@ describe('${names.name}', () => {
 
   async function add(tenant: Tenant, name: string): Promise<${names.record}Response> {
     const response = await tenant
-      .as(app.http.post(${names.recordConstant}_PATHS.${camel(names.name)}))
+      .as(app.http.post(${names.recordConstant}_PATHS.${names.plural}))
       .send({ name })
       .expect(201);
 
@@ -811,7 +811,7 @@ describe('${names.name}', () => {
     await add(tenant, 'First');
 
     const response = await tenant
-      .as(app.http.get(listPath(${names.recordConstant}_PATHS.${camel(names.name)}, { pageSize: 10 })))
+      .as(app.http.get(listPath(${names.recordConstant}_PATHS.${names.plural}, { pageSize: 10 })))
       .expect(200);
 
     const listed = response.body as ${names.record}ListResponse;
@@ -823,7 +823,7 @@ describe('${names.name}', () => {
     const tenant = await signUp();
 
     const refused = await tenant
-      .as(app.http.post(${names.recordConstant}_PATHS.${camel(names.name)}))
+      .as(app.http.post(${names.recordConstant}_PATHS.${names.plural}))
       .send({ name: '' })
       .expect(422);
 
@@ -853,7 +853,7 @@ describe('${names.name}', () => {
     const theirs = await add(northwind, 'Theirs');
     await add(acme, 'Ours');
 
-    const listed = await acme.as(app.http.get(${names.recordConstant}_PATHS.${camel(names.name)})).expect(200);
+    const listed = await acme.as(app.http.get(${names.recordConstant}_PATHS.${names.plural})).expect(200);
     expect((listed.body as ${names.record}ListResponse).items.map((item) => item.name)).toEqual(['Ours']);
 
     // By its own identifier, which is the case a list filter would not cover: the id is real,
@@ -938,11 +938,6 @@ export function sharedBarrelExport(names: ModuleNames): string {
 
 function quote(value: string): string {
   return `'${value}'`;
-}
-
-function camel(name: string): string {
-  const [first = '', ...rest] = name.split('-');
-  return first + rest.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('');
 }
 
 function sentenceCase(words: string): string {

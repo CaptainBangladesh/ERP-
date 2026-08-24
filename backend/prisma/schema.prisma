@@ -769,3 +769,54 @@ model StockLevel {
   @@index([companyId, locationId])
   @@map("stock_levels")
 }
+
+// ─── crm ───────────────────────────────────────────────────────────────────────────
+// Owned by the crm module. See backend/src/modules/crm.
+//
+// As everywhere else, `companyId` is a plain column with no foreign key to `companies`:
+// keys stay inside a module, and scoping is the tenancy extension's rather than the schema's.
+
+/// A not-yet-qualified prospect. Its own record, not a `Party` — no address-book entry
+/// exists yet, which is exactly what qualifying produces.
+model Lead {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  name String
+
+  /// Free text — no `Party` exists yet to hold a real organisation record.
+  organisationName String? @map("organisation_name")
+  email            String?
+  phone            String?
+
+  /// `'referral' | 'inbound' | 'outbound' | 'event' | 'other'` — a plain wire-contract value
+  /// like `Party.kind`, not a Postgres enum, so a company's real source vocabulary is never
+  /// fixed at ship time.
+  source String
+
+  /// `'new' | 'contacted' | 'qualified' | 'disqualified'`.
+  status String @default("new")
+
+  /// The status held immediately before disqualification, restored by `reopen`. Null except
+  /// while disqualified — stored rather than inferred, so reopening never has to guess.
+  priorStatus String? @map("prior_status")
+
+  /// A plain platform `User` reference, no FK. Live and reassignable, unlike an actor-freeze
+  /// column: the frontend resolves it by calling identity's `GET /api/identity/users`
+  /// directly, because identity's public surface is deliberately empty and no module —
+  /// crm included — may depend on it.
+  assignedToUserId String? @map("assigned_to_user_id") @db.Uuid
+
+  /// Set once qualification links or creates a `Party`. No FK — resolved through
+  /// `PartyDirectory`, parties' public surface.
+  partyId String? @map("party_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  /// The list's default order, within a company — the `(company_id, <default sort>)` shape
+  /// every list endpoint's default sort wants, so that offset paging is an index walk.
+  @@index([companyId, name])
+  @@map("leads")
+}
