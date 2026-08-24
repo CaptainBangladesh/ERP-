@@ -5,37 +5,59 @@ import { api } from '../api/client';
 import { useSession } from '../session/SessionProvider';
 import { linkProps, useLocationPath } from './location';
 
-function getCrmIcon(label: string) {
-  switch (label.toLowerCase()) {
-    case 'dashboard':
+function renderSidebarIcon(key: string, isActive: boolean) {
+  const colorClass = isActive ? 'stroke-teal-600 font-semibold' : 'stroke-slate-400 group-hover:stroke-slate-600';
+
+  switch (key) {
+    case 'deals':
       return (
-        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
+          <circle cx="12" cy="12" r="8.5" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v9m-2.5-6.5c0-1.2 1.12-2 2.5-2s2.5.8 2.5 2-1.12 2-2.5 2m-2.5 0c0 1.2 1.12 2 2.5 2s2.5-.8 2.5-2m-5 0h5" />
         </svg>
       );
     case 'leads':
       return (
-        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="8" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4m10-10h-4M6 12H2" />
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
+          <circle cx="12" cy="12" r="5" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v3m0 14v3m10-10h-3M7 12H4" />
         </svg>
       );
-    case 'deals':
+    case 'contacts':
       return (
-        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 8v2m0-8e-3.156-1.042-4.108-2.613-4.108-4.288 0-1.674 1.509-3.246 4.108-4.288m0 8.576V20m0-16V4" />
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        </svg>
+      );
+    case 'accounts':
+      return (
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5m0 0v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+        </svg>
+      );
+    case 'activities':
+      return (
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+        </svg>
+      );
+    case 'sales dashboard':
+    case 'dashboard':
+      return (
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
         </svg>
       );
     case 'workflow rules':
     case 'workflow':
       return (
-        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
           <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
       );
     default:
       return (
-        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
           <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
         </svg>
       );
@@ -128,7 +150,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   >
                     {crmEntries.map((item) => (
                       <a
-                        key={`dropdown:${item.module}:${item.path}`}
+                        key={`dropdown:${item.module}:${item.path}:${item.label}`}
                         {...linkProps(item.path)}
                         onClick={() => setOpenCrmDropdown(false)}
                         aria-current={item.path === path ? 'page' : undefined}
@@ -138,7 +160,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                             : 'flex items-center gap-2.5 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-slate-900'
                         }
                       >
-                        {getCrmIcon(item.label)}
+                        {renderSidebarIcon(item.label.toLowerCase(), item.path === path)}
                         <span>{item.label}</span>
                       </a>
                     ))}
@@ -165,28 +187,21 @@ export function AppShell({ children }: { children: ReactNode }) {
       {isCrmActive && crmEntries.length > 0 ? (
         <div className="mx-auto flex max-w-7xl min-h-[calc(100vh-57px)]">
           <aside aria-label="CRM Sidebar" className="w-56 shrink-0 border-r border-slate-200 bg-white p-4">
-            <div className="flex items-center justify-between px-3 py-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                CRM
-              </span>
-            </div>
-            <nav className="mt-2 space-y-1">
+            <nav className="space-y-1">
               {crmEntries.map((item) => {
                 const isActive = item.path === path;
                 return (
                   <a
-                    key={`sidebar:${item.module}:${item.path}`}
+                    key={`sidebar:${item.module}:${item.path}:${item.label}`}
                     {...linkProps(item.path)}
                     aria-current={isActive ? 'page' : undefined}
                     className={
                       isActive
-                        ? 'flex items-center gap-2.5 px-3 py-2 text-sm font-semibold text-slate-900 bg-slate-100 rounded-lg shadow-xs'
-                        : 'flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-lg transition-colors'
+                        ? 'group flex items-center gap-2.5 px-3 py-2 text-sm font-semibold text-teal-600 bg-teal-50/60 rounded-lg'
+                        : 'group flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-lg transition-colors'
                     }
                   >
-                    <span className={isActive ? 'text-slate-900' : 'text-slate-400'}>
-                      {getCrmIcon(item.label)}
-                    </span>
+                    {renderSidebarIcon(item.label.toLowerCase(), isActive)}
                     <span>{item.label}</span>
                   </a>
                 );
