@@ -5,6 +5,43 @@ import { api } from '../api/client';
 import { useSession } from '../session/SessionProvider';
 import { linkProps, useLocationPath } from './location';
 
+function getCrmIcon(label: string) {
+  switch (label.toLowerCase()) {
+    case 'dashboard':
+      return (
+        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+        </svg>
+      );
+    case 'leads':
+      return (
+        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="8" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4m10-10h-4M6 12H2" />
+        </svg>
+      );
+    case 'deals':
+      return (
+        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 8v2m0-8e-3.156-1.042-4.108-2.613-4.108-4.288 0-1.674 1.509-3.246 4.108-4.288m0 8.576V20m0-16V4" />
+        </svg>
+      );
+    case 'workflow rules':
+    case 'workflow':
+      return (
+        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+      );
+    default:
+      return (
+        <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      );
+  }
+}
+
 /**
  * The frame around every signed-in screen: who you are, where you can go, and the way out.
  */
@@ -20,7 +57,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const entries = navigation.data?.entries ?? [];
 
-  // Group CRM items together into one 'CRM' group, while keeping all other module items flat.
   const { crmEntries, nonCrmEntries } = useMemo(() => {
     const crm: NavigationEntry[] = [];
     const others: NavigationEntry[] = [];
@@ -36,21 +72,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [entries]);
 
   const isCrmActive = useMemo(() => {
-    return crmEntries.some(
-      (item) => item.path === path || (item.path !== '/' && path.startsWith(item.path)),
-    ) || path.startsWith('/crm');
+    return (
+      crmEntries.some(
+        (item) => item.path === path || (item.path !== '/' && path.startsWith(item.path)),
+      ) || path.startsWith('/crm')
+    );
   }, [crmEntries, path]);
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
+      <header className="border-b border-slate-200 bg-white sticky top-0 z-40">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
           <span className="font-semibold text-slate-900">
             {session?.company.name ?? ''}
           </span>
 
           <nav aria-label="Main" className="flex items-center gap-4">
-            {/* Render non-CRM top-level links */}
             {nonCrmEntries.map((entry) => (
               <a
                 key={`${entry.module}:${entry.path}`}
@@ -66,7 +103,6 @@ export function AppShell({ children }: { children: ReactNode }) {
               </a>
             ))}
 
-            {/* Render CRM Group Dropdown if CRM entries exist */}
             {crmEntries.length > 0 && (
               <div className="relative inline-block text-left">
                 <button
@@ -75,8 +111,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                   aria-expanded={openCrmDropdown}
                   className={
                     isCrmActive
-                      ? 'flex items-center gap-1 text-sm font-semibold text-slate-900'
-                      : 'flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900'
+                      ? 'flex items-center gap-1 text-sm font-semibold text-slate-900 bg-slate-100 rounded-md px-2.5 py-1'
+                      : 'flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900 rounded-md px-2.5 py-1'
                   }
                 >
                   <span>CRM</span>
@@ -98,11 +134,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                         aria-current={item.path === path ? 'page' : undefined}
                         className={
                           item.path === path
-                            ? 'block px-4 py-2 text-sm font-medium text-slate-900 bg-slate-100'
-                            : 'block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                            ? 'flex items-center gap-2.5 px-4 py-2 text-sm font-medium text-slate-900 bg-slate-100'
+                            : 'flex items-center gap-2.5 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 hover:text-slate-900'
                         }
                       >
-                        {item.label}
+                        {getCrmIcon(item.label)}
+                        <span>{item.label}</span>
                       </a>
                     ))}
                   </div>
@@ -122,39 +159,46 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </div>
         </div>
-
-        {/* Secondary Sub-Nav Bar for CRM tabs when active in CRM */}
-        {isCrmActive && crmEntries.length > 0 && (
-          <div className="bg-slate-100/80 border-t border-slate-200">
-            <div className="mx-auto flex max-w-5xl items-center gap-2 px-6 py-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 mr-2">
-                CRM
-              </span>
-              <div className="flex items-center gap-1">
-                {crmEntries.map((item) => {
-                  const isActive = item.path === path;
-                  return (
-                    <a
-                      key={`sub:${item.module}:${item.path}`}
-                      {...linkProps(item.path)}
-                      aria-current={isActive ? 'page' : undefined}
-                      className={
-                        isActive
-                          ? 'px-3 py-1 text-xs font-semibold text-slate-900 bg-white rounded-md shadow-sm border border-slate-200'
-                          : 'px-3 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-white/60 rounded-md transition-colors'
-                      }
-                    >
-                      {item.label}
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
       </header>
 
-      <main className="mx-auto max-w-5xl p-6">{children}</main>
+      {/* Sidebar Layout for CRM pages */}
+      {isCrmActive && crmEntries.length > 0 ? (
+        <div className="mx-auto flex max-w-7xl min-h-[calc(100vh-57px)]">
+          <aside aria-label="CRM Sidebar" className="w-56 shrink-0 border-r border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                CRM
+              </span>
+            </div>
+            <nav className="mt-2 space-y-1">
+              {crmEntries.map((item) => {
+                const isActive = item.path === path;
+                return (
+                  <a
+                    key={`sidebar:${item.module}:${item.path}`}
+                    {...linkProps(item.path)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={
+                      isActive
+                        ? 'flex items-center gap-2.5 px-3 py-2 text-sm font-semibold text-slate-900 bg-slate-100 rounded-lg shadow-xs'
+                        : 'flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-lg transition-colors'
+                    }
+                  >
+                    <span className={isActive ? 'text-slate-900' : 'text-slate-400'}>
+                      {getCrmIcon(item.label)}
+                    </span>
+                    <span>{item.label}</span>
+                  </a>
+                );
+              })}
+            </nav>
+          </aside>
+
+          <main className="flex-1 p-6">{children}</main>
+        </div>
+      ) : (
+        <main className="mx-auto max-w-5xl p-6">{children}</main>
+      )}
     </div>
   );
 }
