@@ -1,6 +1,89 @@
 import { HttpStatus } from '@nestjs/common';
-import { DEAL_ERROR_CODES, STAGE_ERROR_CODES } from '@erp/shared';
+import {
+  CAPTURE_SOURCE_ERROR_CODES,
+  DEAL_ERROR_CODES,
+  LEAD_FIELD_ERROR_CODES,
+  LEAD_GROUP_ERROR_CODES,
+  LEAD_IMPORT_ERROR_CODES,
+  LEAD_SOURCE_ERROR_CODES,
+  STAGE_ERROR_CODES,
+} from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
+import { FieldException } from '../../http/validation-exception';
+
+// ─── board organisation ─────────────────────────────────────────────────────────────
+
+export function leadGroupNotFound(): ApiException {
+  return new ApiException(
+    LEAD_GROUP_ERROR_CODES.leadGroupNotFound,
+    'That lead group does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+/**
+ * Deleting a group Leads still sit in. Says what is in the way and what to do about it, the
+ * same shape `stageHasDeals` takes: a Lead pointing at a group that no longer exists is a Lead
+ * that has fallen off the board without anybody being told.
+ */
+export function leadGroupHasLeads(count: number): ApiException {
+  return new ApiException(
+    LEAD_GROUP_ERROR_CODES.leadGroupHasLeads,
+    `${count} lead${count === 1 ? '' : 's'} still sit${count === 1 ? 's' : ''} in this group. ` +
+    `Move ${count === 1 ? 'it' : 'them'} to another group first, then delete this one.`,
+    HttpStatus.CONFLICT,
+  );
+}
+
+export function leadSourceNotFound(): ApiException {
+  return new ApiException(
+    LEAD_SOURCE_ERROR_CODES.leadSourceNotFound,
+    'That lead source does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+/**
+ * Deleting a source Leads still name. Renaming is never refused — the id is what a Lead points
+ * at, so fixing a label costs nothing; it is only *removing* the row that would leave a Lead
+ * attributed to a channel that has no name.
+ */
+export function leadSourceHasLeads(count: number): ApiException {
+  return new ApiException(
+    LEAD_SOURCE_ERROR_CODES.leadSourceHasLeads,
+    `${count} lead${count === 1 ? '' : 's'} still come${count === 1 ? 's' : ''} from this source. ` +
+    `Rename it instead, or move ${count === 1 ? 'that lead' : 'those leads'} to another source first.`,
+    HttpStatus.CONFLICT,
+  );
+}
+
+// ─── custom lead fields ─────────────────────────────────────────────────────────────
+
+export function leadFieldNotFound(): ApiException {
+  return new ApiException(
+    LEAD_FIELD_ERROR_CODES.leadFieldNotFound,
+    'That custom field does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+/**
+ * A `customValues` entry that its own definition refuses — the wrong type, a `select` value
+ * outside its options, or a required field left empty. One refusal carrying every complaint at
+ * once, keyed by field key, so a form can mark all of its bad inputs in one round trip rather
+ * than one per save.
+ */
+export function invalidLeadFieldValues(problems: Record<string, string>): FieldException {
+  const keys = Object.keys(problems);
+  return new FieldException(
+    LEAD_FIELD_ERROR_CODES.invalidLeadFieldValue,
+    keys.length === 1
+      ? problems[keys[0]!]!
+      : `${keys.length} custom fields need attention before this can be saved.`,
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    problems,
+  );
+}
 
 /**
  * Everything Stage and Deal refuse, together in one file rather than at the bottom of whichever
@@ -39,7 +122,7 @@ export function duplicateStageOutcome(outcome: 'won' | 'lost'): ApiException {
   return new ApiException(
     STAGE_ERROR_CODES.duplicateStageOutcome,
     `Another stage already means '${outcome}'. Only one stage per company may mean ${outcome} ` +
-      `— change that one first if this is the one that should.`,
+    `— change that one first if this is the one that should.`,
     HttpStatus.CONFLICT,
   );
 }
@@ -53,7 +136,7 @@ export function stageHasDeals(count: number): ApiException {
   return new ApiException(
     STAGE_ERROR_CODES.stageHasDeals,
     `${count} deal${count === 1 ? '' : 's'} still sit${count === 1 ? 's' : ''} in this stage. ` +
-      `Move ${count === 1 ? 'it' : 'them'} to another stage first, then delete this one.`,
+    `Move ${count === 1 ? 'it' : 'them'} to another stage first, then delete this one.`,
     HttpStatus.CONFLICT,
   );
 }
@@ -95,3 +178,107 @@ export function dealPartyNotFound(): ApiException {
     HttpStatus.NOT_FOUND,
   );
 }
+
+// ─── lead imports ───────────────────────────────────────────────────────────────────
+
+export function leadImportNotFound(): ApiException {
+  return new ApiException(
+    LEAD_IMPORT_ERROR_CODES.importNotFound,
+    'That lead import does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+export function invalidMapping(): ApiException {
+  return new ApiException(
+    LEAD_IMPORT_ERROR_CODES.invalidMapping,
+    'The column mapping provided is invalid.',
+    HttpStatus.BAD_REQUEST,
+  );
+}
+
+// ─── capture sources ────────────────────────────────────────────────────────────────
+
+export function captureSourceNotFound(): ApiException {
+  return new ApiException(
+    CAPTURE_SOURCE_ERROR_CODES.sourceNotFound,
+    'That capture source does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+export function invalidCaptureToken(): ApiException {
+  return new ApiException(
+    CAPTURE_SOURCE_ERROR_CODES.invalidCaptureToken,
+    'Invalid or inactive capture link.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+export function rateLimitExceeded(): ApiException {
+  return new ApiException(
+    CAPTURE_SOURCE_ERROR_CODES.rateLimitExceeded,
+    'Rate limit exceeded. Please try again later.',
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
+}
+
+export function unconfiguredField(key: string): ApiException {
+  return new ApiException(
+    CAPTURE_SOURCE_ERROR_CODES.unconfiguredField,
+    `Submission named field '${key}' which is not in this source's configured field list.`,
+    HttpStatus.BAD_REQUEST,
+  );
+}
+
+// ─── email campaigns ─────────────────────────────────────────────────────────────────
+
+export function campaignNotFound(): ApiException {
+  return new ApiException(
+    'campaign_not_found',
+    'That email campaign does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+export function campaignNotDraft(): ApiException {
+  return new ApiException(
+    'campaign_not_draft',
+    'Campaigns can only be modified while in draft status.',
+    HttpStatus.BAD_REQUEST,
+  );
+}
+
+export function campaignNotMaterialized(): ApiException {
+  return new ApiException(
+    'campaign_not_materialized',
+    'Campaign recipients must be materialized before sending.',
+    HttpStatus.BAD_REQUEST,
+  );
+}
+
+export function campaignAlreadySent(): ApiException {
+  return new ApiException(
+    'campaign_already_sent',
+    'This campaign has already completed sending.',
+    HttpStatus.BAD_REQUEST,
+  );
+}
+
+export function unsubscribeNotFound(): ApiException {
+  return new ApiException(
+    'unsubscribe_not_found',
+    'That unsubscribe token or record does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+export function invalidOpenToken(): ApiException {
+  return new ApiException(
+    'invalid_open_token',
+    'Invalid or expired tracking pixel token.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+

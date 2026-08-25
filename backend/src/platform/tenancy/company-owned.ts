@@ -180,6 +180,22 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   // and a colleague who may see the pipeline may see all of it.
   Lead: { kind: 'company-owned' },
 
+  // The Leads board's own organisation: swimlanes, the company's channel vocabulary, its
+  // captions for the four fixed statuses, and the custom fields it has defined. All four are
+  // ordinary company-owned tables — nothing restricted, nothing immutable.
+  LeadGroup: { kind: 'company-owned' },
+  LeadSource: { kind: 'company-owned' },
+  LeadStatusLabel: { kind: 'company-owned' },
+  LeadFieldDefinition: { kind: 'company-owned' },
+  LeadImport: { kind: 'company-owned' },
+  CaptureSource: { kind: 'company-owned' },
+  MailboxConnection: { kind: 'company-owned' },
+  MailboxAuthState: { kind: 'company-owned' },
+  EmailTemplate: { kind: 'company-owned' },
+  Campaign: { kind: 'company-owned' },
+  CampaignRecipient: { kind: 'company-owned' },
+  Unsubscribe: { kind: 'company-owned' },
+
   // Ordinary company-owned tables, both of them. Nothing is restricted — a colleague who may
   // see the pipeline may see all of it, amount included — and nothing is immutable: renaming a
   // Stage or correcting a Deal's amount is an ordinary edit, not a ledger entry. `Stage.order`'s

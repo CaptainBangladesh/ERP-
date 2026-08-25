@@ -50,6 +50,32 @@ export function optional<T>(inner: FieldRule<T>): FieldRule<T | undefined> {
   return { ...inner, required: false, absent: undefined };
 }
 
+/**
+ * The same field, allowed to be absent *or* explicitly emptied.
+ *
+ * `optional` gives a field two answers — absent, or a value — and refuses a blank. That is
+ * right for anything that must always hold something once it is set. A nullable column needs
+ * a third answer: "there is no longer a value here". Somebody clearing a wrong phone number
+ * out of a cell has to be able to say so, and under `optional` they cannot: a blank string is
+ * refused and a `null` is read as absent, so the old number stays.
+ *
+ * Here a blank parses to `null`, which `defined()` writes to the column. Everything else still
+ * goes through the inner rule, so an emptied field is the only new thing accepted — a
+ * malformed email is refused exactly as before.
+ *
+ * Only for columns that are genuinely nullable. A lead's name is `optional` on update and
+ * must stay that way; a lead with no name is not a lead.
+ */
+export function clearable<T>(inner: FieldRule<T>): FieldRule<T | null | undefined> {
+  return {
+    ...inner,
+    required: false,
+    absent: undefined,
+    read: (value) =>
+      typeof value === 'string' && value.trim().length === 0 ? accepted(null) : inner.read(value),
+  };
+}
+
 /** The same field, taking a stated value when absent. */
 export function withDefault<T>(inner: FieldRule<T>, absent: T): FieldRule<T> {
   return { ...inner, required: false, absent };

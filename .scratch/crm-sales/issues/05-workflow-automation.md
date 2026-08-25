@@ -16,18 +16,23 @@ real write once ticket 04's `Activity` model exists.
 
 **Blocked by:** 02, 03
 
-- [ ] `WorkflowRule` model + migration: name, triggerType, triggerConfig, actionType,
+- [x] `WorkflowRule` model + migration: name, triggerType, triggerConfig, actionType,
       actionConfig, enabled.
-- [ ] Rule CRUD, permissioned under `crm:workflow-rules:*`.
-- [ ] Evaluation hook wired into the Deal stage-change and Lead status-change endpoints, firing
+- [x] Rule CRUD, permissioned under `crm:workflow-rules:*`.
+- [x] Evaluation hook wired into the Deal stage-change and Lead status-change endpoints, firing
       all matching enabled rules after the triggering write commits (non-transactional,
       best-effort — a failing action doesn't undo the triggering change).
-- [ ] `notify_user` action writes an in-app notification record the named user sees; no
+- [x] `notify_user` action writes an in-app notification record the named user sees; no
       email/push delivery.
-- [ ] `update_field` action refuses targeting `Deal.stageId` or `Lead.status`.
-- [ ] `create_task` action creates (or, if 11 hasn't landed, stubs) a task-type Activity.
-- [ ] Structured-form rule configuration screen (trigger dropdown + condition + action dropdown +
+- [x] `update_field` action refuses targeting `Deal.stageId` or `Lead.status`.
+- [x] `create_task` action creates (or, if 11 hasn't landed, stubs) a task-type Activity.
+- [x] Structured-form rule configuration screen (trigger dropdown + condition + action dropdown +
       action fields) — no visual/drag builder in this ticket.
-- [ ] HTTP integration tests covering: a rule firing on a matching change and not on a
+- [x] HTTP integration tests covering: a rule firing on a matching change and not on a
       non-matching one, multiple rules matching one trigger all firing, a disabled rule never
       firing, `update_field`'s stageId/status refusal, and tenant isolation.
+
+## Comments
+
+**2026-08-23 — resolved.** Implemented `WorkflowRule` model, `WorkflowRulesService` evaluation engine triggered synchronously on deal stage / lead status changes, `notify_user` writing to `Notification` model, `update_field` validation refusing recursive triggers, `create_task` creating task activities, frontend `WorkflowRulesPage`, and comprehensive tests in `crm.spec.ts` and `WorkflowRulesPage.test.tsx`.
+

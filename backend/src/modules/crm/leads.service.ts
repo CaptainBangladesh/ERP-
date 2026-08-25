@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   CRM_EVENTS,
   LEAD_ERROR_CODES,
+  type LeadCustomValues,
   type LeadListResponse,
   type LeadResponse,
   type LeadSource,
@@ -39,7 +40,7 @@ export class LeadsService {
     private readonly parties: PartyDirectory,
     private readonly workflowRulesService: WorkflowRulesService,
     private readonly events: DomainEvents,
-  ) {}
+  ) { }
 
   async createLead(input: Valid<typeof CreateLeadBody>): Promise<LeadResponse> {
     const lead = await this.prisma.lead.create({
@@ -48,7 +49,8 @@ export class LeadsService {
         organisationName: input.organisationName ?? null,
         email: input.email ?? null,
         phone: input.phone ?? null,
-        source: input.source,
+        sourceId: input.sourceId ?? null,
+        groupId: input.groupId ?? null,
         assignedToUserId: input.assignedToUserId ?? null,
       }),
     });
@@ -84,8 +86,9 @@ export class LeadsService {
         ...defined('name', input.name),
         ...defined('organisationName', input.organisationName),
         ...defined('email', input.email),
-        ...defined('phone', input.phone),
-        ...defined('source', input.source),
+        ...defined('source', (input as any).source),
+        ...defined('sourceId', (input as any).sourceId),
+        ...defined('groupId', (input as any).groupId),
         ...defined('status', input.status),
         ...defined('assignedToUserId', input.assignedToUserId),
       },
@@ -208,31 +211,29 @@ export class LeadsService {
     if (!lead) throw leadNotFound();
     return lead;
   }
+
+  async deleteLead(id: string): Promise<void> {
+    const lead = await this.requireLead(id);
+    await this.prisma.lead.delete({ where: { id: lead.id } });
+  }
 }
 
-function describe(row: {
-  id: string;
-  name: string;
-  organisationName: string | null;
-  email: string | null;
-  phone: string | null;
-  source: string;
-  status: string;
-  assignedToUserId: string | null;
-  partyId: string | null;
-}): LeadSummary {
+function describe(row: any): LeadSummary {
   return {
     id: row.id,
     name: row.name,
     organisationName: row.organisationName,
     email: row.email,
     phone: row.phone,
-    // The columns are text rather than Postgres enums, so the wire type is asserted here, at
-    // the one boundary where the two representations meet.
-    source: row.source as LeadSource,
+    source: (row.source || 'inbound') as LeadSource,
+    sourceId: row.sourceId ?? null,
+    sourceName: row.sourceRelation?.name || row.sourceName || null,
     status: row.status as LeadStatus,
     assignedToUserId: row.assignedToUserId,
     partyId: row.partyId,
+    groupId: row.groupId ?? null,
+    groupName: row.group?.name || null,
+    customValues: (row.customValues as LeadCustomValues) || {},
   };
 }
 

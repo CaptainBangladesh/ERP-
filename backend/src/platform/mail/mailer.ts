@@ -1,8 +1,8 @@
-/** One message, plain text. Nothing here renders HTML — there is no template engine to own. */
 export interface MailMessage {
   readonly to: string;
   readonly subject: string;
   readonly body: string;
+  readonly html?: string;
 }
 
 /**

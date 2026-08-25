@@ -15,18 +15,23 @@ functionally, only for the field to be populated when both happen to be built.
 
 **Blocked by:** 01
 
-- [ ] `Stage` model + migration: name, order (unique per company), `outcome` (`won`/`lost`/null,
+- [x] `Stage` model + migration: name, order (unique per company), `outcome` (`won`/`lost`/null,
       at most one of each per company, enforced at the application layer).
-- [ ] `Deal` model + migration: partyId (mandatory), stageId (mandatory), name, amount
+- [x] `Deal` model + migration: partyId (mandatory), stageId (mandatory), name, amount
       (`MoneyValue`, decimal text over the wire), expectedCloseDate, assignedToUserId,
       originLeadId (nullable, no FK).
-- [ ] Stage CRUD (create/reorder/rename/set outcome), refusing deletion while any Deal occupies it,
+- [x] Stage CRUD (create/reorder/rename/set outcome), refusing deletion while any Deal occupies it,
       refusing a second Stage with the same non-null `outcome` in one company.
-- [ ] Deal CRUD, including moving between Stages.
-- [ ] Deals board screen: Stages as columns (with "edit labels" to rename/reorder/add), Deals as
+- [x] Deal CRUD, including moving between Stages.
+- [x] Deals board screen: Stages as columns (with "edit labels" to rename/reorder/add), Deals as
       cards moving between them, empty state when a company has zero Stages ("create your first
       stage").
-- [ ] Assignment picker resolves users via `GET /api/identity/users`, same pattern as ticket 09.
-- [ ] HTTP integration tests covering Stage CRUD (including the deletion-refusal and
+- [x] Assignment picker resolves users via `GET /api/identity/users`, same pattern as ticket 09.
+- [x] HTTP integration tests covering Stage CRUD (including the deletion-refusal and
       single-outcome-per-type refusal), Deal creation/movement, amount round-tripping as exact
       decimal text (not a JSON number), and tenant isolation.
+
+## Comments
+
+**2026-08-23 — resolved.** Implemented `Stage` and `Deal` models, backend controllers/services, frontend `DealsPage` with interactive board and label editing, and comprehensive HTTP integration tests (`crm-deals.spec.ts`, `DealsPage.test.tsx`). All structural checks and tests passing cleanly.
+

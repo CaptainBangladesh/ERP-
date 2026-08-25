@@ -68,8 +68,10 @@ builder UI and the deals board once their tickets unblock.
 
 ## Decisions so far
 
-<!-- one line per closed ticket, appended on resolution -->
-
+- [06 — Pipeline dashboards & events](issues/06-pipeline-dashboards-and-events.md) — built `DashboardService`/`DashboardController` with aggregate Prisma queries for stage value, win/loss rate, activity metrics, emitted post-commit `crm.*` domain events, and frontend `DashboardPage`.
+- [05 — Workflow automation rules](issues/05-workflow-automation.md) — built `WorkflowRule` model, `WorkflowRulesService` synchronous evaluation engine for stage and status changes, `notify_user`/`update_field`/`create_task` actions, frontend `WorkflowRulesPage`, and integration tests.
+- [04 — Activity logging](issues/04-activity-logging.md) — built `Activity` model, `ActivitiesService`/`ActivitiesController`, append-only log/read/complete endpoints, and shared `ActivityTimeline` UI component embedded on Lead, Deal, and Party pages.
+- [03 — Deal & pipeline management](issues/03-deal-pipeline-management.md) — built `Stage` and `Deal` models, stage/deal CRUD with single win/loss outcome enforcement, deletion safety, exact `MoneyValue` amounts, assignment via identity users list, and frontend `DealsPage` board view with inline label editing.
 - [02 — Lead management](issues/02-lead-management.md) — built directly on ticket 01's scaffold
   in the same session. Full lifecycle (`new` → `contacted` → `qualified`/`disqualified`, with
   `reopen` restoring the stored prior status rather than guessing), `qualify` accepting

@@ -4,15 +4,20 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DealsPage } from './pages/DealsPage';
 import { LeadsPage } from './pages/LeadsPage';
 import { WorkflowRulesPage } from './pages/WorkflowRulesPage';
+import { CaptureSourcesPage } from './pages/CaptureSourcesPage';
+import { CampaignsPage } from './pages/CampaignsPage';
+import { PublicFormRoute } from '../../pages/PublicFormPage';
 
 export const manifest: FrontendModuleManifest = {
   name: CRM_MODULE,
   routes: [
     { path: '/crm/dashboard', component: DashboardPage },
     { path: '/crm/leads', component: LeadsPage },
+    { path: '/crm/capture-sources', component: CaptureSourcesPage },
+    { path: '/crm/campaigns', component: CampaignsPage },
     { path: '/crm/deals', component: DealsPage },
     { path: '/crm/workflow-rules', component: WorkflowRulesPage },
+    { path: '/public/crm/form', component: PublicFormRoute, public: true },
   ],
 };
-
 

@@ -95,6 +95,8 @@ export const LEAD_FIELDS = {
   organisationName: 'organisationName',
   email: 'email',
   source: 'source',
+  sourceId: 'sourceId',
+  groupId: 'groupId',
   status: 'status',
   assignedToUserId: 'assignedToUserId',
   createdAt: 'createdAt',
@@ -123,26 +125,31 @@ export const DEAL_FIELDS = {
   createdAt: 'createdAt',
 } as const;
 
+export type LeadCustomValues = Record<string, string | number | boolean | null | string[]>;
+
 export interface CreateLeadRequest {
   name: string;
-  /** Free text — no `Party` exists yet to hold a real organisation record. */
-  organisationName?: string;
-  email?: string;
-  phone?: string;
-  source: LeadSource;
-  /** A plain platform User id, resolved and displayed by the frontend. No FK, no lookup here. */
-  assignedToUserId?: string;
-}
-
-/** A change. Every field optional, at least one required — absent means "do not touch it". */
-export interface UpdateLeadRequest {
-  name?: string;
   organisationName?: string;
   email?: string;
   phone?: string;
   source?: LeadSource;
-  status?: SettableLeadStatus;
+  sourceId?: string;
+  groupId?: string;
   assignedToUserId?: string;
+  customValues?: LeadCustomValues;
+}
+
+export interface UpdateLeadRequest {
+  name?: string;
+  organisationName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  source?: LeadSource;
+  sourceId?: string | null;
+  status?: SettableLeadStatus;
+  assignedToUserId?: string | null;
+  groupId?: string | null;
+  customValues?: LeadCustomValues;
 }
 
 export interface QualifyLeadRequest {
@@ -158,10 +165,14 @@ export interface LeadSummary {
   email: string | null;
   phone: string | null;
   source: LeadSource;
+  sourceId?: string | null;
+  sourceName?: string | null;
   status: LeadStatus;
   assignedToUserId: string | null;
-  /** Set once qualification links or creates a Party. Null until then. */
   partyId: string | null;
+  groupId?: string | null;
+  groupName?: string | null;
+  customValues?: LeadCustomValues;
 }
 
 export type LeadResponse = LeadSummary;
@@ -473,6 +484,7 @@ export const DASHBOARD_PATHS = {
   pipelineValue: `/${CRM_ROUTE}/dashboard/pipeline-value`,
   winLossRate: `/${CRM_ROUTE}/dashboard/win-loss-rate`,
   activityCounts: `/${CRM_ROUTE}/dashboard/activity-counts`,
+  leadSourcePerformance: `/${CRM_ROUTE}/dashboard/lead-source-performance`,
 } as const;
 
 export interface PipelineValueStageSummary {
@@ -575,6 +587,536 @@ export interface DealLostEventPayload {
   partyId: string;
   stageId: string;
   amount: MoneyValue;
+}
+
+export const LEAD_GROUP_PATHS = {
+  leadGroups: `/${CRM_ROUTE}/lead-groups`,
+  leadGroup: (id: string) => `/${CRM_ROUTE}/lead-groups/${id}`,
+} as const;
+
+export const LEAD_SOURCE_PATHS = {
+  leadSources: `/${CRM_ROUTE}/lead-sources`,
+  leadSource: (id: string) => `/${CRM_ROUTE}/lead-sources/${id}`,
+} as const;
+
+export const LEAD_STATUS_LABEL_PATHS = {
+  labels: `/${CRM_ROUTE}/lead-status-labels`,
+  label: (status: LeadStatus) => `/${CRM_ROUTE}/lead-status-labels/${status}`,
+} as const;
+
+export const LEAD_FIELD_PATHS = {
+  leadFields: `/${CRM_ROUTE}/lead-fields`,
+  leadField: (id: string) => `/${CRM_ROUTE}/lead-fields/${id}`,
+  archive: (id: string) => `/${CRM_ROUTE}/lead-fields/${id}/archive`,
+  restore: (id: string) => `/${CRM_ROUTE}/lead-fields/${id}/restore`,
+} as const;
+
+export const LEAD_IMPORT_PATHS = {
+  dryRun: `/${CRM_ROUTE}/lead-imports/dry-run`,
+  commit: `/${CRM_ROUTE}/lead-imports/commit`,
+  imports: `/${CRM_ROUTE}/lead-imports`,
+  import: (id: string) => `/${CRM_ROUTE}/lead-imports/${id}`,
+} as const;
+
+export const MAILBOX_PATHS = {
+  mailboxes: `/${CRM_ROUTE}/mailboxes`,
+  connections: `/${CRM_ROUTE}/mailboxes`,
+  connectUrl: `/${CRM_ROUTE}/mailboxes/connect-url`,
+  callback: `/${CRM_ROUTE}/mailboxes/callback`,
+  revoke: (id: string) => `/${CRM_ROUTE}/mailboxes/${id}/revoke`,
+  disconnect: (id: string) => `/${CRM_ROUTE}/mailboxes/${id}/revoke`,
+} as const;
+
+export const LEAD_EMAIL_PATHS = {
+  send: (id: string) => `/${CRM_ROUTE}/leads/${id}/send-email`,
+  sendEmail: (id: string) => `/${CRM_ROUTE}/leads/${id}/send-email`,
+  preview: `/${CRM_ROUTE}/email-templates/preview`,
+} as const;
+
+export const EMAIL_TEMPLATE_PATHS = {
+  templates: `/${CRM_ROUTE}/email-templates`,
+  template: (id: string) => `/${CRM_ROUTE}/email-templates/${id}`,
+  preview: (id: string) => `/${CRM_ROUTE}/email-templates/${id}/preview`,
+} as const;
+
+export const CAMPAIGN_PATHS = {
+  campaigns: `/${CRM_ROUTE}/campaigns`,
+  campaign: (id: string) => `/${CRM_ROUTE}/campaigns/${id}`,
+  materialize: (id: string) => `/${CRM_ROUTE}/campaigns/${id}/materialize`,
+  recipients: (id: string) => `/${CRM_ROUTE}/campaigns/${id}/recipients`,
+  sendBatch: (id: string) => `/${CRM_ROUTE}/campaigns/${id}/send-batch`,
+  publicOpenPixel: (token: string) => `/api/public/campaigns/open/${token}`,
+  publicUnsubscribe: (token: string) => `/api/public/campaigns/unsubscribe/${token}`,
+} as const;
+
+export const CAPTURE_SOURCE_PATHS = {
+  sources: `/${CRM_ROUTE}/capture-sources`,
+  source: (id: string) => `/${CRM_ROUTE}/capture-sources/${id}`,
+  publicSubmit: (slug: string) => `/api/public/capture/${slug}`,
+  publicForm: (slug: string) => `/api/public/capture/${slug}`,
+  rotateToken: (id: string) => `/${CRM_ROUTE}/capture-sources/${id}/rotate-token`,
+} as const;
+
+export interface LeadGroupSummary {
+  id: string;
+  name: string;
+  color: string;
+  order: number;
+  leadCount: number;
+}
+
+export type LeadGroupListResponse = ListResponse<LeadGroupSummary>;
+export type LeadGroupResponse = LeadGroupSummary;
+
+export interface LeadSourceSummary {
+  id: string;
+  name: string;
+  order: number;
+  leadCount: number;
+}
+
+export type LeadSourceListResponse = ListResponse<LeadSourceSummary>;
+export type LeadSourceResponse = LeadSourceSummary;
+
+export interface LeadStatusLabelSummary {
+  status: LeadStatus;
+  label: string;
+  color: string;
+}
+
+export type UpdateLeadStatusLabelRequest = Partial<Omit<LeadStatusLabelSummary, 'status'>>;
+
+export interface LeadStatusLabelListResponse {
+  items: LeadStatusLabelSummary[];
+}
+
+export const LEAD_STATUS_LABEL_DEFAULTS: Record<LeadStatus, { label: string; color: string }> = {
+  new: { label: 'New', color: '#579bfc' },
+  contacted: { label: 'Contacted', color: '#9d5bf0' },
+  qualified: { label: 'Qualified', color: '#00c875' },
+  disqualified: { label: 'Disqualified', color: '#e2445c' },
+};
+
+export type LeadFieldType = 'text' | 'number' | 'date' | 'select' | 'boolean' | 'multiselect' | 'checkbox';
+
+export const LEAD_FIELD_TYPES = ['text', 'number', 'date', 'select', 'boolean', 'multiselect', 'checkbox'] as const;
+
+export interface CreateLeadFieldRequest {
+  key?: string;
+  label: string;
+  type: LeadFieldType;
+  required?: boolean;
+  options?: string[];
+}
+
+export interface LeadFieldSummary {
+  id: string;
+  key: string;
+  label: string;
+  type: LeadFieldType;
+  required: boolean;
+  order: number;
+  options: string[] | null;
+  archivedAt: string | null;
+}
+
+export type LeadFieldListResponse = ListResponse<LeadFieldSummary>;
+export type LeadFieldResponse = LeadFieldSummary;
+
+export interface SendLeadEmailResponse {
+  success: boolean;
+  messageId?: string;
+}
+
+export const LEAD_SOURCE_FIELDS = {
+  name: 'name',
+  order: 'order',
+  createdAt: 'createdAt',
+} as const;
+
+export const LEAD_FIELD_ERROR_CODES = {
+  leadFieldNotFound: 'lead_field_not_found',
+  duplicateKey: 'duplicate_key',
+  keyReserved: 'key_reserved',
+  invalidLeadFieldValue: 'invalid_lead_field_value',
+} as const;
+
+export const LEAD_GROUP_ERROR_CODES = {
+  leadGroupNotFound: 'lead_group_not_found',
+  leadGroupNotEmpty: 'lead_group_not_empty',
+  leadGroupHasLeads: 'lead_group_has_leads',
+} as const;
+
+export const LEAD_SOURCE_ERROR_CODES = {
+  leadSourceNotFound: 'lead_source_not_found',
+  leadSourceNotEmpty: 'lead_source_not_empty',
+  leadSourceHasLeads: 'lead_source_has_leads',
+} as const;
+
+export const CAPTURE_SOURCE_ERROR_CODES = {
+  captureSourceNotFound: 'capture_source_not_found',
+  sourceNotFound: 'source_not_found',
+  invalidSlug: 'invalid_slug',
+  invalidCaptureToken: 'invalid_capture_token',
+  rateLimitExceeded: 'rate_limit_exceeded',
+  unconfiguredField: 'unconfigured_field',
+} as const;
+
+export const MAILBOX_ERROR_CODES = {
+  mailboxNotFound: 'mailbox_not_found',
+  connectionFailed: 'connection_failed',
+  authStateNotFound: 'auth_state_not_found',
+  mailboxNotConnected: 'mailbox_not_connected',
+  invalidAuthState: 'invalid_auth_state',
+} as const;
+
+export const EMAIL_TEMPLATE_ERROR_CODES = {
+  templateNotFound: 'template_not_found',
+  invalidTemplateTags: 'invalid_template_tags',
+} as const;
+
+export const CAMPAIGN_ERROR_CODES = {
+  campaignNotFound: 'campaign_not_found',
+  campaignNotDraft: 'campaign_not_draft',
+  campaignNotMaterialized: 'campaign_not_materialized',
+  campaignAlreadySent: 'campaign_already_sent',
+} as const;
+
+export interface ConnectMailboxUrlResponse {
+  url: string;
+  state?: string;
+  stateToken?: string;
+}
+
+export type MailboxStatus = 'active' | 'revoked';
+
+export interface PublicUnsubscribeResponse {
+  success: true;
+}
+
+export interface LeadImportRejectedRow {
+  row: number;
+  field: string;
+  message: string;
+}
+
+export interface LeadImportDryRunResponse {
+  accepted: number;
+  rejected: LeadImportRejectedRow[];
+}
+
+export interface LeadImportCommitResponse {
+  accepted: number;
+  rejected: LeadImportRejectedRow[];
+  importId: string;
+}
+
+export interface LeadImportSummary {
+  id: string;
+  filename: string;
+  rowCount: number;
+  acceptedCount: number;
+  importedByUserId: string;
+  importedByName: string;
+  createdAt: string;
+}
+
+export type LeadImportListResponse = ListResponse<LeadImportSummary>;
+
+export const LEAD_IMPORT_ERROR_CODES = {
+  invalidFileType: 'invalid_file_type',
+  fileTooLarge: 'file_too_large',
+  missingFile: 'missing_file',
+  importNotFound: 'import_not_found',
+  invalidMapping: 'invalid_mapping',
+} as const;
+
+export type LeadFieldValue = string | number | boolean | null | string[];
+
+export type MailboxProvider = 'gmail' | 'outlook';
+
+export interface MailboxConnectionSummary {
+  id: string;
+  userId?: string;
+  provider: MailboxProvider;
+  emailAddress: string;
+  displayName: string;
+  status?: string;
+  connectedAt?: string;
+  revokedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CreateEmailTemplateRequest {
+  name: string;
+  subject: string;
+  body: string;
+}
+
+export type PreviewTemplateResponse = EmailTemplatePreviewResponse;
+
+export interface MailboxConnectionListResponse {
+  items: MailboxConnectionSummary[];
+  page?: {
+    totalCount: number;
+    pageSize: number;
+    cursor: string | null;
+    nextCursor: string | null;
+  };
+}
+
+export interface EmailTemplateSummary {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+  createdByUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailTemplateListResponse {
+  items: EmailTemplateSummary[];
+  page?: {
+    totalCount: number;
+    pageSize: number;
+    cursor: string | null;
+    nextCursor: string | null;
+  };
+}
+export type EmailTemplateResponse = EmailTemplateSummary;
+
+export interface CreateLeadGroupRequest {
+  name: string;
+  color?: string;
+  order?: number;
+}
+
+export interface UpdateLeadGroupRequest {
+  name?: string;
+  color?: string;
+  order?: number;
+}
+
+export interface CreateLeadSourceRequest {
+  name: string;
+  order?: number;
+}
+
+export interface UpdateLeadSourceRequest {
+  name?: string;
+  order?: number;
+}
+
+export interface UpdateLeadFieldRequest {
+  label?: string;
+  required?: boolean;
+  order?: number;
+  options?: string[];
+}
+
+export type CaptureSourceConfig = FormConfig;
+export type CaptureSourceKind = 'webform' | 'form' | string;
+
+export interface EmailTemplatePreviewResponse {
+  subject: string;
+  body?: string;
+  htmlBody?: string;
+  textBody?: string;
+}
+
+export type CampaignStatus = 'draft' | 'sending' | 'completed';
+export type CampaignRecipientStatus = 'pending' | 'sent' | 'failed' | 'excluded' | 'unsubscribed';
+
+export interface CreateCampaignRequest {
+  name: string;
+  mailboxConnectionId: string;
+  templateId: string;
+  segmentConfig?: Record<string, unknown>;
+}
+
+export interface CampaignSummary {
+  id: string;
+  name: string;
+  status: CampaignStatus;
+  mailboxConnectionId: string;
+  templateId: string;
+  totalLeadsCount: number;
+  sentCount: number;
+  excludedCount?: number;
+  openedCount: number;
+  openRate: number;
+  segmentConfig?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CampaignListResponse = ListResponse<CampaignSummary>;
+export type CampaignResponse = CampaignSummary;
+
+export interface CampaignRecipientSummary {
+  id: string;
+  campaignId?: string;
+  leadId: string;
+  leadName: string;
+  emailAddress: string;
+  status: CampaignRecipientStatus;
+  excludeReason: string | null;
+  sentAt: string | null;
+  openedAt: string | null;
+  openCount?: number;
+  openToken?: string;
+  unsubscribeToken?: string;
+}
+
+export interface CampaignRecipientListResponse {
+  items: CampaignRecipientSummary[];
+  page?: number;
+  totalCount?: number;
+}
+
+export type CampaignSegmentConfig = Record<string, unknown>;
+
+export type LeadSourcePerformanceRow = LeadSourcePerformanceSummary;
+
+export interface WebhookConfig {
+  url: string;
+  secret?: string;
+}
+
+export interface CreateCaptureSourceRequest {
+  name: string;
+  kind?: CaptureSourceKind;
+  type?: string;
+  config?: FormConfig;
+  defaultGroupId?: string;
+  defaultSourceId?: string;
+  defaultAssignedToUserId?: string;
+}
+
+export interface UpdateCaptureSourceRequest {
+  name?: string;
+  config?: FormConfig;
+  defaultGroupId?: string;
+  defaultSourceId?: string;
+  defaultAssignedToUserId?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateEmailTemplateRequest {
+  name?: string;
+  subject?: string;
+  body?: string;
+}
+
+export interface SendLeadEmailRequest {
+  mailboxConnectionId: string;
+  toEmail?: string;
+  subject?: string;
+  body?: string;
+  htmlBody?: string;
+  templateId?: string;
+}
+
+export interface SendLeadEmailResponse {
+  success: boolean;
+  messageId?: string;
+  activityId?: string;
+}
+
+export interface SendCampaignBatchResponse {
+  batchSent: number;
+  remainingPending: number;
+  status: CampaignStatus;
+  campaignId?: string;
+}
+
+export interface FormConfigField {
+  key: string;
+  label: string;
+  required: boolean;
+  order?: number;
+  type?: string;
+  placeholder?: string;
+  options?: string[];
+  columnName?: string;
+}
+
+export interface FormSubmitBehavior {
+  confirmationMessage?: string;
+  redirectUrl?: string;
+  kind?: 'message' | 'redirect';
+  url?: string;
+  text?: string;
+}
+
+export interface FormTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  fields: FormConfigField[];
+  createdAt?: string;
+}
+
+export interface FormConfig {
+  title?: string;
+  description?: string;
+  fields?: FormConfigField[];
+  submitBehavior?: FormSubmitBehavior;
+  fieldMapping?: Record<string, string>;
+}
+
+export interface CaptureSourceSummary {
+  id: string;
+  type?: 'webform' | string;
+  kind?: string;
+  name: string;
+  slug?: string;
+  token?: string;
+  enabled?: boolean;
+  defaultGroupId?: string;
+  defaultSourceId?: string;
+  defaultAssignedToUserId?: string | null;
+  submissionCount: number;
+  lastSubmissionAt: string | null;
+  config: FormConfig;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type CaptureSourceListResponse = ListResponse<CaptureSourceSummary>;
+export type CaptureSourceResponse = CaptureSourceSummary;
+
+export interface PublicFormConfigResponse {
+  name: string;
+  slug: string;
+  config: FormConfig;
+  fields?: FormConfigField[];
+  submitBehavior?: FormSubmitBehavior;
+}
+
+export interface CaptureSubmitResponse {
+  success: true;
+  submitBehavior: FormSubmitBehavior;
+}
+
+export interface LeadSourcePerformanceSummary {
+  sourceId: string | null;
+  sourceName: string;
+  totalLeads?: number;
+  qualifiedCount?: number;
+  disqualifiedCount?: number;
+  conversionRate?: number;
+  producedCount?: number;
+  convertedCount?: number;
+}
+
+export interface LeadSourcePerformanceResponse {
+  items?: LeadSourcePerformanceSummary[];
+  sources?: LeadSourcePerformanceSummary[];
+  totalProduced?: number | LeadSourcePerformanceSummary;
+  totalConverted?: number | LeadSourcePerformanceSummary;
 }
 
 

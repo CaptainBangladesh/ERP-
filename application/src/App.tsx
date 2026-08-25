@@ -1,5 +1,6 @@
 import { AppProviders } from './providers/AppProviders';
 import { AppRoutes } from './app/AppRoutes';
+import { ErrorBoundary } from './app/ErrorBoundary';
 
 /**
  * The application: providers, then whatever screen the modules declared for this path.
@@ -9,8 +10,10 @@ import { AppRoutes } from './app/AppRoutes';
  */
 export function App() {
   return (
-    <AppProviders>
-      <AppRoutes />
-    </AppProviders>
+    <ErrorBoundary>
+      <AppProviders>
+        <AppRoutes />
+      </AppProviders>
+    </ErrorBoundary>
   );
 }

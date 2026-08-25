@@ -5,6 +5,7 @@ import {
   DASHBOARD_PATHS,
   DEAL_PATHS,
   LEAD_PATHS,
+  LEAD_SOURCE_PATHS,
   PARTY_PATHS,
   STAGE_PATHS,
   type ActivityCountsResponse,
@@ -13,10 +14,13 @@ import {
   type CreateActivityRequest,
   type CreateDealRequest,
   type CreateLeadRequest,
+  type CreateLeadSourceRequest,
   type CreatePartyRequest,
   type CreateStageRequest,
   type DealResponse,
   type LeadResponse,
+  type LeadSourcePerformanceResponse,
+  type LeadSourceResponse,
   type PartyResponse,
   type PipelineValueResponse,
   type QualifyLeadRequest,
@@ -68,10 +72,12 @@ describe('crm: pipeline dashboards and domain events', () => {
     return { session, as: (request) => request.set('Authorization', `Bearer ${session.token}`) };
   }
 
+  let eventLeadSeq = 0;
   async function addLead(tenant: Tenant, body: Partial<CreateLeadRequest> = {}): Promise<LeadResponse> {
+    eventLeadSeq++;
     const response = await tenant
       .as(app.http.post(LEAD_PATHS.leads))
-      .send({ name: 'Acme Prospect', source: 'inbound', ...body } satisfies CreateLeadRequest)
+      .send({ name: `Acme Prospect ${eventLeadSeq}`, ...body } satisfies CreateLeadRequest)
       .expect(201);
     return response.body as LeadResponse;
   }
@@ -193,6 +199,101 @@ describe('crm: pipeline dashboards and domain events', () => {
       const pvB = pvResB.body as PipelineValueResponse;
       expect(pvB.stages).toHaveLength(0);
       expect(pvB.totalInFlightDeals).toBe(0);
+    });
+  });
+
+  describe('lead source performance', () => {
+    async function addSource(tenant: Tenant, name: string): Promise<LeadSourceResponse> {
+      const response = await tenant
+        .as(app.http.post(LEAD_SOURCE_PATHS.leadSources))
+        .send({ name } satisfies CreateLeadSourceRequest)
+        .expect(201);
+      return response.body as LeadSourceResponse;
+    }
+
+    async function performance(tenant: Tenant): Promise<LeadSourcePerformanceResponse> {
+      const response = await tenant
+        .as(app.http.get(DASHBOARD_PATHS.leadSourcePerformance))
+        .expect(200);
+      return response.body as LeadSourcePerformanceResponse;
+    }
+
+    /**
+     * The question this report exists to answer: not "which channel is loudest" but "which
+     * channel is worth spending on". A source that produced three and converted none has to be
+     * distinguishable from one that produced one and converted it.
+     */
+    it('counts leads produced and leads converted, per source', async () => {
+      const tenant = await signUp();
+      const webinar = await addSource(tenant, 'Webinar');
+      const coldCall = await addSource(tenant, 'Cold call');
+
+      const converted = await addLead(tenant, { name: 'Converts', sourceId: webinar.id });
+      await addLead(tenant, { name: 'Stays a lead', sourceId: webinar.id });
+      await addLead(tenant, { name: 'Cold one', sourceId: coldCall.id });
+
+      const party = await addParty(tenant);
+      await tenant
+        .as(app.http.post(LEAD_PATHS.qualify(converted.id)))
+        .send({ action: 'link', partyId: party.id } satisfies QualifyLeadRequest)
+        .expect(200);
+
+      const report = await performance(tenant);
+      expect(report.sources).toEqual([
+        { sourceId: webinar.id, sourceName: 'Webinar', producedCount: 2, convertedCount: 1 },
+        { sourceId: coldCall.id, sourceName: 'Cold call', producedCount: 1, convertedCount: 0 },
+      ]);
+      expect(report.totalProduced).toBe(3);
+      expect(report.totalConverted).toBe(1);
+    });
+
+    /**
+     * Leads nobody attributed are a real bucket. Dropping them would make the per-source rows
+     * fail to add up to the totals printed beside them, which is worse than an unnamed row.
+     */
+    it('reports leads with no source as their own bucket', async () => {
+      const tenant = await signUp();
+      await addLead(tenant, { name: 'Heard on a call' });
+
+      const report = await performance(tenant);
+      expect(report.sources).toEqual([
+        { sourceId: null, sourceName: null, producedCount: 1, convertedCount: 0 },
+      ]);
+      expect(report.totalProduced).toBe(1);
+    });
+
+    it('lists a source that has produced nothing, so a dead channel is visible', async () => {
+      const tenant = await signUp();
+      const webinar = await addSource(tenant, 'Webinar');
+
+      const report = await performance(tenant);
+      expect(report.sources).toEqual([
+        { sourceId: webinar.id, sourceName: 'Webinar', producedCount: 0, convertedCount: 0 },
+      ]);
+    });
+
+    it('narrows to a date range', async () => {
+      const tenant = await signUp();
+      const webinar = await addSource(tenant, 'Webinar');
+      await addLead(tenant, { name: 'Today', sourceId: webinar.id });
+
+      const before = await tenant
+        .as(app.http.get(`${DASHBOARD_PATHS.leadSourcePerformance}?toDate=2020-01-01`))
+        .expect(200);
+
+      expect((before.body as LeadSourcePerformanceResponse).totalProduced).toBe(0);
+    });
+
+    it("never counts another company's leads", async () => {
+      const tenantA = await signUp();
+      const tenantB = await signUp({ email: 'b@tenant.test', companyName: 'Company B' });
+
+      const source = await addSource(tenantA, 'Webinar');
+      await addLead(tenantA, { name: 'Theirs', sourceId: source.id });
+
+      const report = await performance(tenantB);
+      expect(report.sources).toEqual([]);
+      expect(report.totalProduced).toBe(0);
     });
   });
 

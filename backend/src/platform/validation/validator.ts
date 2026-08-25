@@ -13,8 +13,13 @@ import type { FieldRule } from './rule';
  *
  * - **Every field is checked before anything is refused.** A user fixing a form is told
  *   everything that is wrong at once rather than one problem per attempt.
- * - **Unknown keys are ignored.** Refusing them would make every additive API change a
- *   breaking one for any client that sends a field back exactly as it received it.
+ * - **Unknown keys are ignored — not kept.** A key outside the schema is dropped, never
+ *   merged back into what `parse` returns. Refusing it outright would make every additive
+ *   API change a breaking one for a client that echoes a field back unchanged; keeping it
+ *   instead would let anything ride past whatever the schema declares, on every one of this
+ *   platform's endpoints, since this one class backs all of them. `passthroughValidator`
+ *   below is the named, visible exception for the rare endpoint that means to take a shape
+ *   the caller defines — everything else must go through a schema field to be kept.
  */
 
 export type Schema = Readonly<Record<string, FieldRule<unknown>>>;
@@ -45,11 +50,16 @@ export class Validator<S extends Schema> {
   constructor(
     private readonly schema: S,
     private readonly crossFieldRules: readonly CrossFieldRule<S>[] = [],
+    private readonly passthroughUnknown: boolean = false,
   ) {}
 
   /** The same validator with one more cross-field rule. Chainable, and never mutating. */
   and(crossFieldRule: CrossFieldRule<S>): Validator<S> {
-    return new Validator(this.schema, [...this.crossFieldRules, crossFieldRule]);
+    return new Validator(
+      this.schema,
+      [...this.crossFieldRules, crossFieldRule],
+      this.passthroughUnknown,
+    );
   }
 
   parse(input: unknown): Parsed<S> {
@@ -83,12 +93,33 @@ export class Validator<S extends Schema> {
 
     if (Object.keys(fields).length > 0) throw new ValidationException(fields);
 
-    return values as Parsed<S>;
+    if (!this.passthroughUnknown) return values as Parsed<S>;
+
+    const extra: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(body)) {
+      if (!(key in this.schema)) extra[key] = val;
+    }
+
+    return { ...extra, ...values } as Parsed<S>;
   }
 }
 
 export function validator<S extends Schema>(schema: S): Validator<S> {
   return new Validator(schema);
+}
+
+/**
+ * A validator that keeps whatever it does not recognize instead of dropping it — for the
+ * rare endpoint whose entire job is accepting a shape the *caller* defines: a public capture
+ * form or webhook mapping onto one company's own custom fields. The schema still declares and
+ * checks whatever built-in fields exist; everything outside it passes through unexamined by
+ * this mechanism and must be checked by something else downstream (the handler's own logic),
+ * or it is exactly the "public door that is more lenient than the form beside it" bug this
+ * platform's validators otherwise rule out by construction. Reach for `validator()` first —
+ * this is the named exception, not a second default.
+ */
+export function passthroughValidator<S extends Schema>(schema: S): Validator<S> {
+  return new Validator(schema, [], true);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

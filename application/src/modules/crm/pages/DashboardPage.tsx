@@ -4,6 +4,7 @@ import {
   DASHBOARD_PATHS,
   Money,
   type ActivityCountsResponse,
+  type LeadSourcePerformanceResponse,
   type MoneyValue,
   type PipelineValueResponse,
   type WinLossRateResponse,
@@ -45,9 +46,18 @@ export function DashboardPage() {
       ),
   });
 
+  const leadSourcePerformanceQuery = useQuery({
+    queryKey: ['crm', 'dashboard', 'lead-source-performance', dateQueryString],
+    queryFn: () =>
+      api.get<LeadSourcePerformanceResponse>(
+        `${DASHBOARD_PATHS.leadSourcePerformance}${dateQueryString ? `?${dateQueryString}` : ''}`,
+      ),
+  });
+
   const pipelineData = pipelineValueQuery.data;
   const winLossData = winLossQuery.data;
   const activityData = activityCountsQuery.data;
+  const leadSourceData = leadSourcePerformanceQuery.data;
 
   const hasDeals = (pipelineData?.stages.reduce((acc, s) => acc + s.dealCount, 0) ?? 0) > 0;
 
@@ -148,59 +158,147 @@ export function DashboardPage() {
 
       {/* Main Grid Sections */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pipeline Value by Stage (Span 2 cols) */}
-        <div className="lg:col-span-2 bg-white rounded-lg border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
-          <h2 className="text-lg font-semibold text-slate-900">Pipeline Value by Stage</h2>
+        {/* Pipeline Value by Stage & Lead Source Performance (Span 2 cols) */}
+        <div className="lg:col-span-2 flex flex-col gap-6">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
+            <h2 className="text-lg font-semibold text-slate-900">Pipeline Value by Stage</h2>
 
-          {!hasDeals ? (
-            <div className="p-8 text-center bg-slate-50 rounded-lg border border-dashed border-slate-300">
-              <p className="text-slate-600 font-medium">No deals in pipeline</p>
+            {!hasDeals ? (
+              <div className="p-8 text-center bg-slate-50 rounded-lg border border-dashed border-slate-300">
+                <p className="text-slate-600 font-medium">No deals in pipeline</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Create stages and deals on the Deals board to see metrics here.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-slate-700">
+                  <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Stage</th>
+                      <th className="px-4 py-3 font-medium">Status</th>
+                      <th className="px-4 py-3 font-medium text-right">Deals</th>
+                      <th className="px-4 py-3 font-medium text-right">Total Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {pipelineData?.stages.map((stage) => (
+                      <tr key={stage.stageId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-medium text-slate-900">{stage.stageName}</td>
+                        <td className="px-4 py-3 text-xs">
+                          {stage.outcome === 'won' && (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium">
+                              Won
+                            </span>
+                          )}
+                          {stage.outcome === 'lost' && (
+                            <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-medium">
+                              Lost
+                            </span>
+                          )}
+                          {stage.outcome === null && (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
+                              In-Flight
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium">{stage.dealCount}</td>
+                        <td className="px-4 py-3 text-right font-medium text-slate-900">
+                          {formatMoney(stage.totalValue)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Lead Source Performance Card */}
+          <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Lead Source Performance</h2>
               <p className="text-xs text-slate-500 mt-1">
-                Create stages and deals on the Deals board to see metrics here.
+                Leads produced vs. converted per channel over the selected date range.
               </p>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-700">
-                <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Stage</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium text-right">Deals</th>
-                    <th className="px-4 py-3 font-medium text-right">Total Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {pipelineData?.stages.map((stage) => (
-                    <tr key={stage.stageId} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-900">{stage.stageName}</td>
-                      <td className="px-4 py-3 text-xs">
-                        {stage.outcome === 'won' && (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium">
-                            Won
-                          </span>
-                        )}
-                        {stage.outcome === 'lost' && (
-                          <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-medium">
-                            Lost
-                          </span>
-                        )}
-                        {stage.outcome === null && (
-                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">
-                            In-Flight
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium">{stage.dealCount}</td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-900">
-                        {formatMoney(stage.totalValue)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+
+            {(() => {
+              const sources = leadSourceData?.sources || [];
+              const totalProduced = typeof leadSourceData?.totalProduced === 'number' ? leadSourceData.totalProduced : 0;
+              const totalConverted = typeof leadSourceData?.totalConverted === 'number' ? leadSourceData.totalConverted : 0;
+
+              if (!leadSourceData || sources.length === 0) {
+                return (
+                  <div className="p-8 text-center bg-slate-50 rounded-lg border border-dashed border-slate-300">
+                    <p className="text-slate-600 font-medium">No lead source data</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Configure lead sources and capture leads to see conversion statistics here.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm text-slate-700">
+                    <thead className="bg-slate-50 text-xs text-slate-500 uppercase">
+                      <tr>
+                        <th className="px-4 py-3 font-medium">Source</th>
+                        <th className="px-4 py-3 font-medium text-right">Produced</th>
+                        <th className="px-4 py-3 font-medium text-right">Converted</th>
+                        <th className="px-4 py-3 font-medium text-right">Conversion Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {sources.map((row, idx) => {
+                        const producedCount = row.producedCount ?? 0;
+                        const convertedCount = row.convertedCount ?? 0;
+                        const rate =
+                          producedCount > 0
+                            ? ((convertedCount / producedCount) * 100).toFixed(1)
+                            : '0.0';
+                        return (
+                          <tr
+                            key={row.sourceId ?? `unattributed-${idx}`}
+                            className="hover:bg-slate-50"
+                          >
+                            <td className="px-4 py-3 font-medium text-slate-900">
+                              {row.sourceName || (
+                                <span className="italic text-slate-400">Unattributed</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium">{producedCount}</td>
+                            <td className="px-4 py-3 text-right font-medium text-emerald-600">
+                              {convertedCount}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-900">
+                              {rate}%
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-slate-50 font-semibold text-slate-900 border-t border-slate-200">
+                      <tr>
+                        <td className="px-4 py-3">Total</td>
+                        <td className="px-4 py-3 text-right">{totalProduced}</td>
+                        <td className="px-4 py-3 text-right text-emerald-600">
+                          {totalConverted}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {totalProduced > 0
+                            ? ((totalConverted / totalProduced) * 100).toFixed(1)
+                            : '0.0'}
+                          %
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
         </div>
 
         {/* Win/Loss & Activity Breakdown (Span 1 col) */}

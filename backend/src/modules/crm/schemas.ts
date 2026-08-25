@@ -3,8 +3,9 @@ import {
   DEAL_FIELDS,
   Decimal,
   LEAD_FIELDS,
+  LEAD_FIELD_TYPES,
   LEAD_QUALIFY_ACTIONS,
-  LEAD_SOURCES,
+  LEAD_SOURCE_FIELDS,
   MONEY_SCALE,
   SETTABLE_LEAD_STATUSES,
   STAGE_FIELDS,
@@ -13,8 +14,9 @@ import {
   WORKFLOW_RULE_FIELDS,
   WORKFLOW_TRIGGER_TYPES,
   type ActivityType,
+  type LeadCustomValues,
+  type LeadFieldType,
   type LeadQualifyAction,
-  type LeadSource,
   type SettableLeadStatus,
   type SettableStageOutcome,
   type WorkflowActionType,
@@ -23,12 +25,15 @@ import {
 import type { ListSpec } from '../../platform/list';
 import {
   accepted,
+  clearable,
   day,
   email,
+  flag,
   identifier,
   money,
   oneOf,
   optional,
+  passthroughValidator,
   refused,
   rule,
   text,
@@ -61,7 +66,7 @@ const CONTACT_EMAIL = {
 
 const PHONE = { missing: 'Enter a phone number.', maxLength: 40 } as const;
 
-const SOURCE = oneOf<LeadSource>(LEAD_SOURCES, {
+const SOURCE_ID = identifier({
   missing: 'Say where this lead came from.',
   invalid: 'That is not a source.',
 });
@@ -86,23 +91,210 @@ const QUALIFY_ACTION = oneOf<LeadQualifyAction>(LEAD_QUALIFY_ACTIONS, {
   invalid: 'That is not a way to qualify a lead.',
 });
 
+const GROUP_ID = identifier({
+  missing: 'Choose a lead group.',
+  invalid: 'That is not a lead group.',
+});
+
+const LEAD_GROUP_NAME = {
+  missing: 'Enter a group name.',
+  maxLength: 100,
+  tooLong: 'Use 100 characters or fewer.',
+} as const;
+
+const COLOR = {
+  missing: 'Enter a color code.',
+  maxLength: 30,
+  tooLong: 'Use 30 characters or fewer.',
+} as const;
+
+/**
+ * A new position on the board, 1 and up — read as "move here", never written as-is. Both
+ * `LeadGroupsService.reorder` and `LeadSourcesService.reorder` renumber the whole company
+ * around it, exactly as `StagesService` does, which is what lets this stay a plain positive
+ * integer rather than one that has to avoid colliding with a position it cannot see.
+ */
+const POSITION: FieldRule<number> = rule('Enter a position.', (value) => {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return refused('Enter a whole number, such as 1.');
+  }
+  if (value < 1) return refused('A position is 1 or greater.');
+  return accepted(value);
+});
+
+export const CreateLeadGroupBody = validator({
+  name: text(LEAD_GROUP_NAME),
+  color: optional(text(COLOR)),
+});
+
+export const UpdateLeadGroupBody = validator({
+  name: optional(text(LEAD_GROUP_NAME)),
+  color: optional(text(COLOR)),
+  order: optional(POSITION),
+}).and((values, report) => {
+  const changed = Object.values(values).some((value) => value !== undefined);
+  if (!changed) report('name', 'Change something — this request changes nothing.');
+});
+
+// ─── lead sources ───────────────────────────────────────────────────────────────────
+
+const LEAD_SOURCE_NAME = {
+  missing: 'Enter a source name.',
+  maxLength: 100,
+  tooLong: 'Use 100 characters or fewer.',
+} as const;
+
+export const CreateLeadSourceBody = validator({
+  name: text(LEAD_SOURCE_NAME),
+});
+
+export const UpdateLeadSourceBody = validator({
+  name: optional(text(LEAD_SOURCE_NAME)),
+  order: optional(POSITION),
+}).and((values, report) => {
+  const changed = Object.values(values).some((value) => value !== undefined);
+  if (!changed) report('name', 'Change something — this request changes nothing.');
+});
+
+export const LEAD_SOURCE_LIST: ListSpec = {
+  defaultSort: LEAD_SOURCE_FIELDS.order,
+  fields: {
+    [LEAD_SOURCE_FIELDS.name]: { type: 'text', sortable: true, filterable: true, searchable: true },
+    [LEAD_SOURCE_FIELDS.order]: { type: 'integer', sortable: true, filterable: true },
+    [LEAD_SOURCE_FIELDS.createdAt]: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+// ─── lead status labels ─────────────────────────────────────────────────────────────
+
+const STATUS_LABEL = {
+  missing: 'Enter a label.',
+  maxLength: 60,
+  tooLong: 'Use 60 characters or fewer.',
+} as const;
+
+export const UpdateLeadStatusLabelBody = validator({
+  label: optional(text(STATUS_LABEL)),
+  color: optional(text(COLOR)),
+}).and((values, report) => {
+  const changed = Object.values(values).some((value) => value !== undefined);
+  if (!changed) report('label', 'Change something — this request changes nothing.');
+});
+
+// ─── custom lead fields ─────────────────────────────────────────────────────────────
+
+const LEAD_FIELD_LABEL = {
+  missing: 'Enter a field name.',
+  maxLength: 100,
+  tooLong: 'Use 100 characters or fewer.',
+} as const;
+
+const LEAD_FIELD_TYPE = oneOf<LeadFieldType>(LEAD_FIELD_TYPES, {
+  missing: 'Choose a field type.',
+  invalid: 'That is not a field type.',
+});
+
+/**
+ * The choices a `select` or `multiselect` offers. Refused empty, refused with a blank entry,
+ * and refused with a repeat: each of the three would produce a dropdown a person cannot use.
+ */
+const LEAD_FIELD_OPTIONS: FieldRule<string[]> = rule('Enter the options this field offers.', (value) => {
+  if (!Array.isArray(value)) return refused('Enter the options as a list.');
+  if (value.length === 0) return refused('Enter at least one option.');
+  if (value.length > 100) return refused('Use 100 options or fewer.');
+
+  const options: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') return refused('Every option is a word or phrase.');
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) return refused('An option cannot be blank.');
+    if (trimmed.length > 100) return refused('Use 100 characters or fewer per option.');
+    if (options.includes(trimmed)) return refused(`'${trimmed}' is listed twice.`);
+    options.push(trimmed);
+  }
+
+  return accepted(options);
+});
+
+const REQUIRED_FLAG = flag({ missing: 'Say whether this field is required.' });
+
+/**
+ * `options` is checked against `type` here rather than in the service, because it is a claim
+ * about the request alone: a checkbox carrying a list of choices is a malformed request, not a
+ * conflict with anything stored.
+ */
+export const CreateLeadFieldBody = validator({
+  label: text(LEAD_FIELD_LABEL),
+  type: LEAD_FIELD_TYPE,
+  options: optional(LEAD_FIELD_OPTIONS),
+  required: optional(REQUIRED_FLAG),
+}).and((values, report) => {
+  const takesOptions = values.type === 'select' || values.type === 'multiselect';
+  if (takesOptions && values.options === undefined) {
+    report('options', `A ${values.type} field needs the options it offers.`);
+  }
+  if (!takesOptions && values.options !== undefined) {
+    report('options', `A ${values.type} field does not offer options.`);
+  }
+});
+
+/**
+ * A change to a definition. No `type` — see `UpdateLeadFieldRequest`: values already captured
+ * were validated against the old one, and there is no honest reading of a date as a checkbox.
+ */
+export const UpdateLeadFieldBody = validator({
+  label: optional(text(LEAD_FIELD_LABEL)),
+  options: optional(LEAD_FIELD_OPTIONS),
+  required: optional(REQUIRED_FLAG),
+  order: optional(POSITION),
+}).and((values, report) => {
+  const changed = Object.values(values).some((value) => value !== undefined);
+  if (!changed) report('label', 'Change something — this request changes nothing.');
+});
+
+/**
+ * Custom values as they arrive: an object whose keys are definition keys. Nothing beyond the
+ * shape is decided here — which keys exist, and what each one accepts, is a question about this
+ * company's `LeadFieldDefinition` rows, so `LeadFieldsService.validate` answers it against the
+ * database. That is deliberately the *only* place it is answered, so the manual, import and
+ * public-capture write paths cannot drift apart in strictness.
+ */
+const CUSTOM_VALUES: FieldRule<LeadCustomValues> = rule('Enter the custom field values.', (value) => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return refused('Enter the custom field values as an object.');
+  }
+  return accepted(value as LeadCustomValues);
+});
+
 export const CreateLeadBody = validator({
   name: text(LEAD_NAME),
   organisationName: optional(text(ORGANISATION_NAME)),
   email: optional(email(CONTACT_EMAIL)),
   phone: optional(text(PHONE)),
-  source: SOURCE,
+  sourceId: optional(SOURCE_ID),
   assignedToUserId: optional(ASSIGNEE),
+  groupId: optional(GROUP_ID),
+  customValues: optional(CUSTOM_VALUES),
 });
 
+/**
+ * Everything a lead can be changed to. The nullable columns are `clearable` rather than
+ * `optional`, because a lead edited in place has to be able to lose a value as well as gain
+ * one — a phone number typed into the wrong row is corrected by emptying the cell.
+ *
+ * `name` and `status` stay `optional`: a lead with no name is not a lead, and every lead is
+ * always in one status or another.
+ */
 export const UpdateLeadBody = validator({
   name: optional(text(LEAD_NAME)),
-  organisationName: optional(text(ORGANISATION_NAME)),
-  email: optional(email(CONTACT_EMAIL)),
-  phone: optional(text(PHONE)),
-  source: optional(SOURCE),
+  organisationName: clearable(text(ORGANISATION_NAME)),
+  email: clearable(email(CONTACT_EMAIL)),
+  phone: clearable(text(PHONE)),
+  sourceId: clearable(SOURCE_ID),
   status: optional(STATUS),
-  assignedToUserId: optional(ASSIGNEE),
+  assignedToUserId: clearable(ASSIGNEE),
+  groupId: clearable(GROUP_ID),
+  customValues: optional(CUSTOM_VALUES),
 }).and((values, report) => {
   const changed = Object.values(values).some((value) => value !== undefined);
   if (!changed) report('name', 'Change something — this request changes nothing.');
@@ -113,15 +305,21 @@ export const QualifyLeadBody = validator({
   partyId: PARTY_ID,
 });
 
+/**
+ * Built-in columns only. `Lead.customValues` is one JSON column, and `ListSpec` declares its
+ * fields statically, so a custom field has nothing to declare here — a stated consequence of
+ * the JSON-value shape rather than an omission. See `Lead.customValues` in `schema.prisma`.
+ */
 export const LEAD_LIST: ListSpec = {
   defaultSort: LEAD_FIELDS.name,
   fields: {
     [LEAD_FIELDS.name]: { type: 'text', sortable: true, filterable: true, searchable: true },
     [LEAD_FIELDS.organisationName]: { type: 'text', filterable: true, searchable: true },
     [LEAD_FIELDS.email]: { type: 'text', filterable: true, searchable: true },
-    [LEAD_FIELDS.source]: { type: 'text', sortable: true, filterable: true },
+    [LEAD_FIELDS.sourceId]: { type: 'text', filterable: true },
     [LEAD_FIELDS.status]: { type: 'text', sortable: true, filterable: true },
     [LEAD_FIELDS.assignedToUserId]: { type: 'text', filterable: true },
+    [LEAD_FIELDS.groupId]: { type: 'text', filterable: true },
     [LEAD_FIELDS.createdAt]: { type: 'date', sortable: true, filterable: true },
   },
 };
@@ -391,6 +589,147 @@ export const WORKFLOW_RULE_LIST: ListSpec = {
     [WORKFLOW_RULE_FIELDS.createdAt]: { type: 'date', sortable: true, filterable: true },
   },
 };
+
+export const LEAD_IMPORT_LIST: ListSpec = {
+  defaultSort: 'createdAt',
+  fields: {
+    filename: { type: 'text', sortable: true, filterable: true, searchable: true },
+    rowCount: { type: 'integer', sortable: true, filterable: true },
+    acceptedCount: { type: 'integer', sortable: true, filterable: true },
+    importedByName: { type: 'text', sortable: true, filterable: true, searchable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const ImportLeadsBody = validator({
+  mapping: optional(text({ missing: '', maxLength: 20000, tooLong: 'Mapping is too long.' })),
+  groupId: optional(identifier({ missing: '', invalid: 'Invalid group ID.' })),
+  sourceId: optional(identifier({ missing: '', invalid: 'Invalid source ID.' })),
+});
+
+// ─── capture sources ────────────────────────────────────────────────────────────────
+
+const CAPTURE_SOURCE_NAME = {
+  missing: 'Enter a name for this capture source.',
+  maxLength: 100,
+  tooLong: 'Use 100 characters or fewer.',
+} as const;
+
+export const CreateCaptureSourceBody = validator({
+  kind: oneOf(['form', 'webhook'] as const, { missing: 'Choose form or webhook.', invalid: 'Invalid kind.' }),
+  name: text(CAPTURE_SOURCE_NAME),
+  config: rule('Enter config', (value) => (value && typeof value === 'object' ? accepted(value as Record<string, unknown>) : refused('Enter config object.'))),
+  defaultSourceId: optional(identifier({ missing: '', invalid: 'Invalid source ID.' })),
+  defaultGroupId: optional(identifier({ missing: '', invalid: 'Invalid group ID.' })),
+  defaultAssignedToUserId: optional(identifier({ missing: '', invalid: 'Invalid user ID.' })),
+});
+
+export const UpdateCaptureSourceBody = validator({
+  name: optional(text(CAPTURE_SOURCE_NAME)),
+  enabled: optional(rule('Enabled flag', (v) => (typeof v === 'boolean' ? accepted(v) : refused('Must be boolean.')))),
+  config: optional(rule('Enter config', (v) => (v && typeof v === 'object' ? accepted(v as Record<string, unknown>) : refused('Must be object.')))),
+  defaultSourceId: optional(identifier({ missing: '', invalid: 'Invalid source ID.' })),
+  defaultGroupId: optional(identifier({ missing: '', invalid: 'Invalid group ID.' })),
+  defaultAssignedToUserId: optional(identifier({ missing: '', invalid: 'Invalid user ID.' })),
+}).and((values, report) => {
+  const changed = Object.values(values).some((v) => v !== undefined);
+  if (!changed) report('name', 'Change something — this request changes nothing.');
+});
+
+export const CAPTURE_SOURCE_LIST: ListSpec = {
+  defaultSort: 'name',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    kind: { type: 'text', filterable: true },
+    enabled: { type: 'boolean', filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+/**
+ * The one schema on this platform declared with `passthroughValidator` rather than
+ * `validator` — a form or webhook payload is shaped by whoever configured the capture
+ * source, not by this API, so there is no fixed field list to check it against here. What
+ * comes through is checked downstream, in `CaptureSourcesService.submitCapture`: known keys
+ * only for a 'form' source, mapped keys only for a 'webhook' source, and every value that
+ * lands in `customValues` through `LeadFieldsService.validate` — the same gate every other
+ * write path onto a Lead uses.
+ */
+export const SubmitCaptureBody = passthroughValidator({});
+
+export const CreateConnectUrlBody = validator({
+  provider: text({ missing: 'Enter provider.', maxLength: 20, tooLong: 'Provider too long.' }),
+});
+
+export const CreateEmailTemplateBody = validator({
+  name: text({ missing: 'Enter template name.', maxLength: 100, tooLong: 'Name is too long.' }),
+  subject: text({ missing: 'Enter email subject.', maxLength: 200, tooLong: 'Subject is too long.' }),
+  body: text({ missing: 'Enter email HTML body.', maxLength: 50000, tooLong: 'Body is too long.' }),
+});
+
+export const UpdateEmailTemplateBody = validator({
+  name: optional(text({ missing: '', maxLength: 100, tooLong: 'Name is too long.' })),
+  subject: optional(text({ missing: '', maxLength: 200, tooLong: 'Subject is too long.' })),
+  body: optional(text({ missing: '', maxLength: 50000, tooLong: 'Body is too long.' })),
+}).and((values, report) => {
+  const changed = Object.values(values).some((v) => v !== undefined);
+  if (!changed) report('name', 'Change something — this request changes nothing.');
+});
+
+export const PreviewTemplateBody = validator({
+  leadId: identifier({ missing: 'Enter lead ID.', invalid: 'Invalid lead ID.' }),
+  mailboxConnectionId: optional(identifier({ missing: '', invalid: 'Invalid mailbox connection ID.' })),
+});
+
+export const SendLeadEmailBody = validator({
+  mailboxConnectionId: identifier({ missing: 'Enter mailbox connection ID.', invalid: 'Invalid mailbox connection ID.' }),
+  templateId: optional(identifier({ missing: '', invalid: 'Invalid template ID.' })),
+  subject: optional(text({ missing: '', maxLength: 200, tooLong: 'Subject is too long.' })),
+  htmlBody: optional(text({ missing: '', maxLength: 50000, tooLong: 'HTML body is too long.' })),
+});
+
+export const EMAIL_TEMPLATE_LIST: ListSpec = {
+  defaultSort: 'name',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    subject: { type: 'text', filterable: true, searchable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const CreateCampaignBody = validator({
+  name: text({ missing: 'Enter campaign name.', maxLength: 100, tooLong: 'Name is too long.' }),
+  mailboxConnectionId: identifier({ missing: 'Select a connected mailbox.', invalid: 'Invalid mailbox connection ID.' }),
+  templateId: identifier({ missing: 'Select an email template.', invalid: 'Invalid template ID.' }),
+  segmentConfig: optional(rule('Segment config', (v) => (v && typeof v === 'object' ? accepted(v as Record<string, unknown>) : accepted({})))),
+});
+
+export const UpdateCampaignBody = validator({
+  name: optional(text({ missing: '', maxLength: 100, tooLong: 'Name is too long.' })),
+  mailboxConnectionId: optional(identifier({ missing: '', invalid: 'Invalid mailbox connection ID.' })),
+  templateId: optional(identifier({ missing: '', invalid: 'Invalid template ID.' })),
+  segmentConfig: optional(rule('Segment config', (v) => (v && typeof v === 'object' ? accepted(v as Record<string, unknown>) : accepted({})))),
+}).and((values, report) => {
+  const changed = Object.values(values).some((v) => v !== undefined);
+  if (!changed) report('name', 'Change something — this request changes nothing.');
+});
+
+export const SendCampaignBatchBody = validator({
+  batchSize: optional(rule('Batch size', (v) => (typeof v === 'number' && v > 0 && v <= 100 ? accepted(v) : accepted(10)))),
+});
+
+export const CAMPAIGN_LIST: ListSpec = {
+  defaultSort: 'createdAt',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    status: { type: 'text', filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+
+
+
 
 
 

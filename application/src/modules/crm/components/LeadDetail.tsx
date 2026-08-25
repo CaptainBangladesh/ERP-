@@ -4,19 +4,14 @@ import {
   ERROR_CODES,
   IDENTITY_PATHS,
   LEAD_PATHS,
-  LEAD_SOURCES,
   PARTY_PATHS,
   listPath,
-  type AddPartyRoleRequest,
-  type CreatePartyRequest,
-  type LeadQualifyAction,
+  type LeadCustomValues,
+  type LeadFieldSummary,
+  type LeadFieldValue,
   type LeadResponse,
-  type LeadSource,
-  type PartyKind,
-  type PartyListResponse,
+  type LeadSourceSummary,
   type PartyResponse,
-  type PartySummary,
-  type QualifyLeadRequest,
   type UpdateLeadRequest,
   type UserListResponse,
   type UserSummary,
@@ -25,47 +20,43 @@ import { Field, FormError, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
-import { LEAD_SOURCE_LABELS, LEAD_STATUS_LABELS } from '../labels';
+import { useLeadFields, useLeadSources, useLeadStatusLabels } from '../vocabulary';
 import { ActivityTimeline } from './ActivityTimeline';
+import { ConvertLeadModal } from './ConvertLeadModal';
+import { CustomFieldInputs } from './CustomFieldInputs';
+import { MailboxesModal } from './MailboxesModal';
+import { SendEmailModal } from './SendEmailModal';
 
-/**
- * The role a qualified Lead's Party is tagged with. A new role string, not `customer` — a
- * qualified Lead is not a paying customer yet.
- */
-const PROSPECT_ROLE = 'prospect';
-
-/**
- * One Lead, and everything that can be done to it.
- *
- * A panel rather than a page of its own, matching Parties' own detail panel: everything here
- * is an edit to a row that is visible in the list behind it, and every action answers with the
- * whole Lead so the panel never patches its own copy from what it *thinks* happened.
- *
- * The qualify flow is the one that reaches outside this module entirely on the frontend: it
- * creates-or-finds a Party through Parties' own endpoints, calls crm's `qualify` with the
- * resulting id, and then — as a second, separate call — tags that Party `prospect` through
- * Parties' `POST /parties/:id/roles`. `crm`'s backend never creates a Party and never writes
- * a `PartyRole`; both of those happen here, in the browser, exactly as the spec composes them.
- *
- * The assignment picker is the other one: it resolves colleagues by calling identity's
- * `GET /api/identity/users` directly. `crm`'s backend has no user directory of its own —
- * identity's public surface is deliberately empty — so this is the same "compose a second
- * call, don't add a backend edge" discipline the qualify flow uses.
- */
 export function LeadDetail({
   leadId,
   onClose,
   onChanged,
+  onNavigatePrev,
+  onNavigateNext,
+  hasPrev = false,
+  hasNext = false,
 }: {
   leadId: string;
   onClose: () => void;
   onChanged: () => void;
+  onNavigatePrev?: () => void;
+  onNavigateNext?: () => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
 }) {
   const { session } = useSession();
   const canWrite = hasPermission(session, 'crm:leads:write');
   const canReadUsers = hasPermission(session, 'identity:users:read');
   const canReadParties = hasPermission(session, 'parties:parties:read');
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<'overview' | 'updates' | 'files'>('overview');
+  const [converting, setConverting] = useState(false);
+  const [sendEmailOpen, setSendEmailOpen] = useState(false);
+  const [mailboxesOpen, setMailboxesOpen] = useState(false);
+
+  const statusLabels = useLeadStatusLabels();
+  const { sources } = useLeadSources();
+  const { all: customFields } = useLeadFields();
 
   const lead = useQuery({
     queryKey: ['crm', 'leads', 'detail', leadId],
@@ -84,23 +75,19 @@ export function LeadDetail({
     enabled: canReadParties && Boolean(lead.data?.partyId),
   });
 
-  /** Parties a "link" qualify can offer, fetched once the panel opens. */
-  const parties = useQuery({
-    queryKey: ['parties', 'directory'],
-    queryFn: () => api.get<PartyListResponse>(listPath(PARTY_PATHS.parties, { pageSize: 100 })),
-    enabled: canWrite,
-  });
-
-  /**
-   * Every ordinary edit on this panel, sharing one pending state and one error — they all
-   * answer with the same Lead, so one mutation is one place for the refresh to live rather
-   * than five copies of the same success handler.
-   */
   const change = useMutation({
     mutationFn: (act: () => Promise<LeadResponse>) => act(),
     onSuccess: (updated) => {
       queryClient.setQueryData(['crm', 'leads', 'detail', leadId], updated);
       onChanged();
+    },
+  });
+
+  const deleteLead = useMutation({
+    mutationFn: () => api.delete<void>(LEAD_PATHS.lead(leadId)),
+    onSuccess: () => {
+      onChanged();
+      onClose();
     },
   });
 
@@ -110,21 +97,32 @@ export function LeadDetail({
 
   if (lead.isPending) {
     return (
-      <section className="rounded-md border border-slate-200 bg-white p-4">
-        <p role="status" className="text-sm text-slate-500">
-          Loading lead…
-        </p>
-      </section>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-2xl">
+          <p role="status" className="text-sm font-semibold text-slate-600">
+            Loading lead details…
+          </p>
+        </div>
+      </div>
     );
   }
 
   if (!detail) {
     return (
-      <section className="rounded-md border border-slate-200 bg-white p-4">
-        <p role="alert" className="text-sm text-red-700">
-          {lead.error instanceof ApiFailure ? lead.error.message : 'That lead could not be loaded.'}
-        </p>
-      </section>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-2xl max-w-md w-full flex flex-col gap-4">
+          <p role="alert" className="text-sm font-semibold text-rose-700">
+            {lead.error instanceof ApiFailure ? lead.error.message : 'That lead could not be loaded.'}
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="self-center rounded-md bg-slate-800 px-4 py-2 text-xs font-semibold text-white"
+          >
+            Close
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -133,127 +131,487 @@ export function LeadDetail({
   return (
     <section
       aria-labelledby="lead-detail"
-      className="flex flex-col gap-6 rounded-md border border-slate-200 bg-white p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-6 backdrop-blur-xs"
     >
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h2 id="lead-detail" className="text-lg font-semibold text-slate-900">
-            {detail.name}
-          </h2>
-          <p className="text-sm text-slate-600">
-            {LEAD_STATUS_LABELS[detail.status]}
-            {detail.organisationName ? ` · ${detail.organisationName}` : ''}
-            {detail.email ? ` · ${detail.email}` : ''}
-            {detail.phone ? ` · ${detail.phone}` : ''}
-            {' · '}Source: {LEAD_SOURCE_LABELS[detail.source]}
-          </p>
-          {detail.partyId && (
-            <p className="text-sm text-slate-600">
-              Linked party:{' '}
-              {linkedParty.data ? linkedParty.data.name : canReadParties ? 'Loading…' : detail.partyId}
-            </p>
-          )}
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-2xl border border-slate-200/90 bg-white shadow-2xl overflow-hidden">
+        {/* Top Header Bar (Matching Screenshot-2) */}
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-4">
+          <div className="flex items-center gap-4">
+            <h2 id="lead-detail" className="text-xl font-bold tracking-tight text-slate-900">
+              {detail.name}
+            </h2>
+
+            {/* Prev / Next Navigation */}
+            {(onNavigatePrev || onNavigateNext) && (
+              <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-0.5">
+                <button
+                  type="button"
+                  onClick={onNavigatePrev}
+                  disabled={!hasPrev}
+                  title="Previous Lead"
+                  aria-label="Previous Lead"
+                  className="rounded px-2 py-1 text-xs font-bold text-slate-700 hover:bg-white disabled:opacity-30"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  onClick={onNavigateNext}
+                  disabled={!hasNext}
+                  title="Next Lead"
+                  aria-label="Next Lead"
+                  className="rounded px-2 py-1 text-xs font-bold text-slate-700 hover:bg-white disabled:opacity-30"
+                >
+                  ▼
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Tabs Pill Container */}
+            <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100/70 p-1 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setActiveTab('overview')}
+                className={`rounded-md px-3.5 py-1 transition ${activeTab === 'overview'
+                    ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                  }`}
+              >
+                Overview
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('updates')}
+                className={`rounded-md px-3.5 py-1 transition ${activeTab === 'updates'
+                    ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                  }`}
+              >
+                Updates
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('files')}
+                className={`rounded-md px-3.5 py-1 transition ${activeTab === 'files'
+                    ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                  }`}
+              >
+                Files
+              </button>
+            </div>
+
+            {canWrite && (
+              <button
+                type="button"
+                disabled={deleteLead.isPending}
+                onClick={() => {
+                  if (confirm(`Are you sure you want to delete ${detail.name}?`)) {
+                    deleteLead.mutate();
+                  }
+                }}
+                className="rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 transition disabled:opacity-50"
+              >
+                {deleteLead.isPending ? 'Deleting…' : 'Delete Lead'}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+            >
+              ✕
+            </button>
+          </div>
+        </header>
+
+        {/* Contact Info Pills & Qualification Top Bar (Matching Screenshot-2) */}
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-slate-50/50 px-6 py-3">
+          <div className="flex flex-wrap items-center gap-2.5 text-xs">
+            {detail.email && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 font-semibold text-teal-800">
+                <span className="text-teal-600">📧</span> {detail.email}
+              </span>
+            )}
+            {detail.organisationName && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 font-semibold text-slate-700">
+                <span>🏢</span> {detail.organisationName}
+              </span>
+            )}
+            {detail.phone && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 font-semibold text-slate-700">
+                <span className="text-rose-500">📞</span> {detail.phone}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {canWrite && detail.status !== 'qualified' && (
+              <button
+                type="button"
+                onClick={() => setConverting(true)}
+                disabled={change.isPending}
+                className="rounded-md bg-emerald-700 px-4 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-800 shadow-xs disabled:opacity-50"
+              >
+                Qualified
+              </button>
+            )}
+
+            {canWrite && detail.status !== 'disqualified' && (
+              <button
+                type="button"
+                onClick={() =>
+                  change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.disqualify(leadId)))
+                }
+                disabled={change.isPending}
+                className="rounded-md bg-rose-600 px-4 py-1.5 text-xs font-bold text-white transition hover:bg-rose-700 shadow-xs disabled:opacity-50"
+              >
+                Unqualified
+              </button>
+            )}
+          </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-slate-50"
-        >
-          Close
-        </button>
-      </header>
+        {/* Pipeline Progress Stages Bar (Matching Screenshot-2) */}
+        <div className="border-b border-slate-200 bg-white px-6 py-3">
+          <div className="grid grid-cols-4 gap-2 text-xs font-semibold">
+            {[
+              { key: 'new', label: 'New Lead' },
+              { key: 'attempted', label: 'Attempted to Contact' },
+              { key: 'contacted', label: 'Contacted' },
+              { key: 'closed', label: detail.status === 'qualified' ? 'Qualified' : detail.status === 'disqualified' ? 'Disqualified' : 'Closed' },
+            ].map((stage) => {
+              let isActive = false;
+              let isPast = false;
 
-      {failure && failure.code !== ERROR_CODES.validationFailed && (
-        <FormError>{failure.message}</FormError>
-      )}
+              if (stage.key === 'new') {
+                isActive = detail.status === 'new';
+              } else if (stage.key === 'attempted') {
+                isActive = detail.status === 'contacted';
+                isPast = detail.status === 'qualified' || detail.status === 'disqualified';
+              } else if (stage.key === 'contacted') {
+                isActive = detail.status === 'contacted';
+                isPast = detail.status === 'qualified' || detail.status === 'disqualified';
+              } else if (stage.key === 'closed') {
+                isActive = detail.status === 'qualified' || detail.status === 'disqualified';
+              }
 
-      {canWrite && (
-        <Details
-          detail={detail}
-          fields={fields}
-          pending={change.isPending}
-          onSave={(update) =>
-            change.mutate(() => api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), update))
-          }
+              return (
+                <button
+                  key={stage.key}
+                  type="button"
+                  disabled={!canWrite || change.isPending}
+                  onClick={() => {
+                    if (stage.key === 'new') {
+                      change.mutate(() =>
+                        api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), { status: 'new' }),
+                      );
+                    } else if (stage.key === 'attempted' || stage.key === 'contacted') {
+                      change.mutate(() =>
+                        api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), { status: 'contacted' }),
+                      );
+                    } else if (stage.key === 'closed') {
+                      setConverting(true);
+                    }
+                  }}
+                  className={`px-4 py-2.5 text-center transition rounded-lg border text-xs ${isActive
+                      ? 'bg-emerald-700 text-white border-emerald-800 font-bold shadow-xs'
+                      : isPast
+                        ? 'bg-emerald-50 text-emerald-900 border-emerald-200 font-medium'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                >
+                  {stage.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Modal Scrollable Body: Split 2-Column Grid */}
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+          {failure && failure.code !== ERROR_CODES.validationFailed && (
+            <div className="mb-4">
+              <FormError>{failure.message}</FormError>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 Columns: Communication Action Bar & Activity History */}
+            <div className="lg:col-span-2 flex flex-col gap-6">
+              {/* Action Toolbar Box */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSendEmailOpen(true)}
+                    className="flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-xs font-bold text-white transition hover:bg-teal-800 shadow-xs"
+                  >
+                    <span>🚀</span> New email
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Trigger activity focus
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <span>+</span> Add activity
+                  </button>
+                </div>
+
+                <div className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                  <span>💡</span> Click "New email" to reach out and advance lead status.
+                </div>
+              </div>
+
+              {/* Activity Timeline Box */}
+              <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-2xs">
+                <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-3">
+                  Activity Feed & Communication History
+                </h3>
+                <ActivityTimeline parentKind="lead" parentId={leadId} />
+              </div>
+            </div>
+
+            {/* Right Column Sidebar: Lead Details Card (Matching Screenshot-2) */}
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-2xs">
+                <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-3">
+                  Lead Details
+                </h3>
+
+                {/* Custom Fields Card Display */}
+                <CustomValues definitions={customFields} values={detail.customValues ?? {}} />
+
+                {canWrite && (
+                  <Details
+                    detail={detail}
+                    fields={fields}
+                    sources={sources}
+                    customFields={customFields.filter((field) => field.archivedAt === null)}
+                    pending={change.isPending}
+                    onSave={(update) =>
+                      change.mutate(() => api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), update))
+                    }
+                  />
+                )}
+
+                {/* Lifecycle Quick Actions (Mark Contacted / Disqualify) */}
+                <LifecycleActions
+                  status={detail.status}
+                  canWrite={canWrite}
+                  pending={change.isPending}
+                  onMarkContacted={() =>
+                    change.mutate(() =>
+                      api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), {
+                        status: 'contacted',
+                      } satisfies UpdateLeadRequest),
+                    )
+                  }
+                  onDisqualify={() => change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.disqualify(leadId)))}
+                  onReopen={() => change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.reopen(leadId)))}
+                />
+
+                {/* Move to Contacts Action Card (Matching Screenshot-2) */}
+                {canWrite && detail.status !== 'qualified' && detail.status !== 'disqualified' && (
+                  <div className="flex flex-col gap-2 rounded-xl border border-slate-200/90 p-4 bg-slate-50/50">
+                    <h4 className="text-xs font-bold text-slate-900">Move to Contacts</h4>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Turns this lead into a real contact — the address book record the rest of the system recognises.
+                    </p>
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setConverting(true)}
+                        className="rounded-lg bg-[#0f172a] px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 transition shadow-2xs"
+                      >
+                        Move to Contacts
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Assigned To Section (Matching Screenshot-2) */}
+                {canWrite && canReadUsers && (
+                  <div className="pt-3 border-t border-slate-100">
+                    <Assignment
+                      assignedToUserId={detail.assignedToUserId}
+                      assignee={assignee}
+                      users={users.data?.items ?? []}
+                      pending={change.isPending}
+                      onAssign={(userId) =>
+                        change.mutate(() =>
+                          api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), {
+                            assignedToUserId: userId,
+                          } satisfies UpdateLeadRequest),
+                        )
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <footer className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-3 text-xs text-slate-500">
+          <div>
+            Lead ID: <span className="font-mono text-slate-600">{detail.id}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-1.5 font-bold text-slate-700 hover:bg-slate-100 transition shadow-2xs"
+          >
+            Close
+          </button>
+        </footer>
+      </div>
+
+      {converting && (
+        <ConvertLeadModal
+          lead={detail}
+          onClose={() => setConverting(false)}
+          onConverted={() => {
+            setConverting(false);
+            void queryClient.invalidateQueries({ queryKey: ['crm', 'leads'] });
+            onChanged();
+          }}
         />
       )}
 
-      <LifecycleActions
-        status={detail.status}
-        canWrite={canWrite}
-        pending={change.isPending}
-        onMarkContacted={() =>
-          change.mutate(() =>
-            api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), {
-              status: 'contacted',
-            } satisfies UpdateLeadRequest),
-          )
-        }
-        onDisqualify={() => change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.disqualify(leadId)))}
-        onReopen={() => change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.reopen(leadId)))}
-      />
-
-      {canWrite && detail.status !== 'qualified' && detail.status !== 'disqualified' && (
-        <Qualify
+      {sendEmailOpen && (
+        <SendEmailModal
+          isOpen={sendEmailOpen}
           leadId={leadId}
           leadName={detail.name}
-          leadOrganisationName={detail.organisationName}
           leadEmail={detail.email}
-          leadPhone={detail.phone}
-          candidates={parties.data?.items ?? []}
-          pending={change.isPending}
-          onQualify={(act) => change.mutate(act)}
+          onClose={() => setSendEmailOpen(false)}
+          onSuccess={() => {
+            if (detail.status === 'new') {
+              change.mutate(() =>
+                api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), {
+                  status: 'contacted',
+                } satisfies UpdateLeadRequest),
+              );
+            }
+            void queryClient.invalidateQueries({ queryKey: ['crm', 'activities'] });
+            void queryClient.invalidateQueries({ queryKey: ['crm', 'activities', 'lead', leadId] });
+            void queryClient.invalidateQueries({ queryKey: ['crm', 'leads', 'detail', leadId] });
+            onChanged();
+          }}
+          onOpenMailboxesModal={() => setMailboxesOpen(true)}
         />
       )}
 
-      {canWrite && canReadUsers && (
-        <Assignment
-          assignedToUserId={detail.assignedToUserId}
-          assignee={assignee}
-          users={users.data?.items ?? []}
-          pending={change.isPending}
-          onAssign={(userId) =>
-            change.mutate(() =>
-              api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), {
-                assignedToUserId: userId,
-              } satisfies UpdateLeadRequest),
-            )
-          }
+      {mailboxesOpen && (
+        <MailboxesModal
+          isOpen={mailboxesOpen}
+          onClose={() => setMailboxesOpen(false)}
         />
       )}
-
-      <ActivityTimeline parentKind="lead" parentId={leadId} />
     </section>
   );
 }
 
-/**
- * Name, organisation, email, phone and source — the details somebody actually gets wrong
- * when typing a lead in for the first time.
- *
- * Behind a button, unlike the lifecycle actions beside it, because reading a lead's details
- * is the common case and editing them is not.
- */
+/** Custom field values card display matching Screenshot-2 */
+function CustomValues({
+  definitions,
+  values,
+}: {
+  definitions: LeadFieldSummary[];
+  values: LeadCustomValues;
+}) {
+  const shown = definitions.filter((definition) => !isBlank(values[definition.key]));
+  if (shown.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {shown.map((definition) => (
+        <div
+          key={definition.key}
+          className="flex items-center justify-between gap-4 rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs"
+        >
+          <span className="text-xs font-semibold text-slate-500 shrink-0">
+            {definition.label}
+            {definition.archivedAt && <span className="text-xs font-normal opacity-60"> (archived)</span>}
+          </span>
+          <div className="min-w-0 flex-1 text-right text-xs font-bold text-teal-700 break-all">
+            {renderCustomValue(values[definition.key])}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function isBlank(value: LeadFieldValue | undefined): boolean {
+  if (value === undefined || value === null || value === '') return true;
+  return Array.isArray(value) && value.length === 0;
+}
+
+function renderCustomValue(value: LeadFieldValue | undefined) {
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^https?:\/\//i.test(trimmed)) {
+      return (
+        <a
+          href={trimmed}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-teal-600 hover:text-teal-700 hover:underline font-bold break-all"
+        >
+          {trimmed}
+        </a>
+      );
+    }
+    if (
+      /^(facebook|fb|linkedin|instagram|twitter|x|tiktok)\.com/i.test(trimmed) ||
+      /^(www\.)/i.test(trimmed)
+    ) {
+      const url = `https://${trimmed}`;
+      return (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-teal-600 hover:text-teal-700 hover:underline font-bold break-all"
+        >
+          {trimmed}
+        </a>
+      );
+    }
+    return trimmed;
+  }
+  return String(value ?? '');
+}
+
 function Details({
   detail,
   fields,
+  sources,
+  customFields,
   pending,
   onSave,
 }: {
   detail: LeadResponse;
   fields: Record<string, string>;
+  sources: LeadSourceSummary[];
+  customFields: LeadFieldSummary[];
   pending: boolean;
   onSave: (update: UpdateLeadRequest) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({
-    name: detail.name,
-    organisationName: detail.organisationName ?? '',
-    email: detail.email ?? '',
-    phone: detail.phone ?? '',
-    source: detail.source,
-  });
+  const [form, setForm] = useState(() => draftOf(detail));
 
   const set = <K extends keyof typeof form>(key: K) => (value: (typeof form)[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -264,18 +622,10 @@ function Details({
         <button
           type="button"
           onClick={() => {
-            // Reset from the lead rather than from whatever was typed and abandoned last time,
-            // so opening the form twice does not offer a stale draft as the truth.
-            setForm({
-              name: detail.name,
-              organisationName: detail.organisationName ?? '',
-              email: detail.email ?? '',
-              phone: detail.phone ?? '',
-              source: detail.source,
-            });
+            setForm(draftOf(detail));
             setEditing(true);
           }}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-slate-50"
+          className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 transition shadow-2xs"
         >
           Edit details
         </button>
@@ -287,75 +637,78 @@ function Details({
     <form
       noValidate
       aria-labelledby="edit-lead-details"
-      className="flex flex-col gap-4 rounded-md border border-slate-200 p-3"
+      className="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 bg-slate-50/50"
       onSubmit={(event) => {
         event.preventDefault();
-        // Empty is left out rather than sent blank. The endpoint reads an absent field as
-        // "do not touch it" and would refuse an empty one.
         onSave({
           name: form.name,
-          source: form.source,
           ...(form.organisationName ? { organisationName: form.organisationName } : {}),
           ...(form.email ? { email: form.email } : {}),
           ...(form.phone ? { phone: form.phone } : {}),
+          ...(form.sourceId ? { sourceId: form.sourceId } : {}),
+          ...(customFields.length > 0 ? { customValues: form.customValues } : {}),
         });
         setEditing(false);
       }}
     >
-      <h3 id="edit-lead-details" className="text-sm font-medium text-slate-900">
+      <h3 id="edit-lead-details" className="text-xs font-bold text-slate-900">
         Details
       </h3>
 
-      <div className="flex flex-wrap gap-4">
-        <div className="min-w-48 flex-1">
-          <Field id="detail-name" label="Name" value={form.name} error={fields.name} onChange={set('name')} />
-        </div>
-        <div className="min-w-48 flex-1">
-          <Field
-            id="detail-organisation"
-            label="Organisation"
-            value={form.organisationName}
-            error={fields.organisationName}
-            onChange={set('organisationName')}
-          />
-        </div>
-        <div className="min-w-48 flex-1">
-          <Field
-            id="detail-email"
-            label="Email"
-            type="email"
-            value={form.email}
-            error={fields.email}
-            onChange={set('email')}
-          />
-        </div>
-        <div className="min-w-48 flex-1">
-          <Field id="detail-phone" label="Phone" value={form.phone} error={fields.phone} onChange={set('phone')} />
-        </div>
-        <div className="min-w-48 flex-1">
-          <Select
-            id="detail-source"
-            label="Source"
-            value={form.source}
-            error={fields.source}
-            options={LEAD_SOURCES.map((option) => ({ value: option, label: LEAD_SOURCE_LABELS[option] }))}
-            onChange={(value) => set('source')(value as LeadSource)}
-          />
-        </div>
+      <div className="flex flex-col gap-3">
+        <Field id="detail-name" label="Name" value={form.name} error={fields.name} onChange={set('name')} />
+        <Field
+          id="detail-organisation"
+          label="Organisation"
+          value={form.organisationName}
+          error={fields.organisationName}
+          onChange={set('organisationName')}
+        />
+        <Field
+          id="detail-email"
+          label="Email"
+          type="email"
+          value={form.email}
+          error={fields.email}
+          onChange={set('email')}
+        />
+        <Field id="detail-phone" label="Phone" value={form.phone} error={fields.phone} onChange={set('phone')} />
+        <Select
+          id="detail-source"
+          label="Source"
+          value={form.sourceId}
+          error={fields.sourceId}
+          placeholder={sources.length === 0 ? 'No sources defined yet' : 'Not sure yet'}
+          options={sources.map((source) => ({ value: source.id, label: source.name }))}
+          onChange={set('sourceId')}
+        />
+
+        <CustomFieldInputs
+          idPrefix="detail"
+          definitions={customFields}
+          values={form.customValues}
+          errors={fields}
+          onChange={(key, value) =>
+            setForm((current) => ({
+              ...current,
+              customValues: { ...current.customValues, [key]: value },
+            }))
+          }
+        />
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 pt-2">
         <button
           type="submit"
           disabled={pending}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-bold text-white hover:bg-slate-700 disabled:opacity-50 shadow-2xs"
         >
           Save details
         </button>
         <button
           type="button"
           onClick={() => setEditing(false)}
-          className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
+          className="rounded-lg border border-slate-300 px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
         >
           Cancel
         </button>
@@ -364,7 +717,24 @@ function Details({
   );
 }
 
-/** Mark contacted, disqualify, or reopen — the moves that do not need a Party first. */
+function draftOf(detail: LeadResponse): {
+  name: string;
+  organisationName: string;
+  email: string;
+  phone: string;
+  sourceId: string;
+  customValues: LeadCustomValues;
+} {
+  return {
+    name: detail.name,
+    organisationName: detail.organisationName ?? '',
+    email: detail.email ?? '',
+    phone: detail.phone ?? '',
+    sourceId: detail.sourceId ?? '',
+    customValues: { ...detail.customValues },
+  };
+}
+
 function LifecycleActions({
   status,
   canWrite,
@@ -383,13 +753,13 @@ function LifecycleActions({
   if (!canWrite) return null;
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {status === 'new' && (
         <button
           type="button"
           disabled={pending}
           onClick={onMarkContacted}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-slate-50 disabled:opacity-50"
+          className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 shadow-2xs disabled:opacity-50"
         >
           Mark contacted
         </button>
@@ -399,7 +769,7 @@ function LifecycleActions({
           type="button"
           disabled={pending}
           onClick={onDisqualify}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-slate-50 disabled:opacity-50"
+          className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 shadow-2xs disabled:opacity-50"
         >
           Disqualify
         </button>
@@ -409,169 +779,15 @@ function LifecycleActions({
           type="button"
           disabled={pending}
           onClick={onReopen}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 hover:bg-slate-50 disabled:opacity-50"
+          className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 shadow-2xs disabled:opacity-50"
         >
-          Reopen
+          Re-open
         </button>
       )}
     </div>
   );
 }
 
-/**
- * Turns this Lead into a real customer record.
- *
- * The whole flow lives here rather than in the backend, per the spec: this component
- * creates-or-links a Party through Parties' own endpoints, calls crm's `qualify` with the
- * resulting id, and finally tags that Party `prospect` through a second, separate call to
- * Parties' `POST /parties/:id/roles`. `crm`'s backend never sees a Party payload and never
- * writes a `PartyRole` — there is no endpoint here that could ask it to.
- */
-function Qualify({
-  leadId,
-  leadName,
-  leadOrganisationName,
-  leadEmail,
-  leadPhone,
-  candidates,
-  pending,
-  onQualify,
-}: {
-  leadId: string;
-  leadName: string;
-  leadOrganisationName: string | null;
-  leadEmail: string | null;
-  leadPhone: string | null;
-  candidates: PartySummary[];
-  pending: boolean;
-  onQualify: (act: () => Promise<LeadResponse>) => void;
-}) {
-  const [mode, setMode] = useState<LeadQualifyAction>('create');
-  const [kind, setKind] = useState<PartyKind>(leadOrganisationName ? 'organisation' : 'person');
-  const [name, setName] = useState(leadOrganisationName || leadName);
-  const [email, setEmail] = useState(leadEmail ?? '');
-  const [phone, setPhone] = useState(leadPhone ?? '');
-  const [partyId, setPartyId] = useState('');
-
-  async function tagProspect(id: string): Promise<void> {
-    await api.post<PartyResponse>(PARTY_PATHS.partyRoles(id), {
-      role: PROSPECT_ROLE,
-    } satisfies AddPartyRoleRequest);
-  }
-
-  async function createThenQualify(): Promise<LeadResponse> {
-    const party = await api.post<PartyResponse>(PARTY_PATHS.parties, {
-      kind,
-      name,
-      ...(email ? { email } : {}),
-      ...(phone ? { phone } : {}),
-    } satisfies CreatePartyRequest);
-
-    const qualified = await api.post<LeadResponse>(LEAD_PATHS.qualify(leadId), {
-      action: 'create',
-      partyId: party.id,
-    } satisfies QualifyLeadRequest);
-
-    await tagProspect(party.id);
-    return qualified;
-  }
-
-  async function linkThenQualify(): Promise<LeadResponse> {
-    const qualified = await api.post<LeadResponse>(LEAD_PATHS.qualify(leadId), {
-      action: 'link',
-      partyId,
-    } satisfies QualifyLeadRequest);
-
-    await tagProspect(partyId);
-    return qualified;
-  }
-
-  return (
-    <div className="flex flex-col gap-3 rounded-md border border-slate-200 p-3">
-      <h3 className="text-sm font-medium text-slate-900">Qualify this lead</h3>
-      <p className="text-sm text-slate-600">
-        Turns this lead into a real party — the address book record the rest of the system
-        recognises. This never happens automatically alongside anything else.
-      </p>
-
-      <fieldset className="flex flex-wrap gap-4">
-        <legend className="sr-only">How to qualify</legend>
-        {(['create', 'link'] as const).map((option) => (
-          <label key={option} className="flex items-center gap-2 text-sm text-slate-900">
-            <input
-              type="radio"
-              name="qualify-mode"
-              value={option}
-              checked={mode === option}
-              onChange={() => setMode(option)}
-            />
-            {option === 'create' ? 'Create a new party' : 'Link an existing party'}
-          </label>
-        ))}
-      </fieldset>
-
-      {mode === 'create' ? (
-        <div className="flex flex-wrap gap-4">
-          <fieldset className="flex gap-4">
-            <legend className="sr-only">Is this a</legend>
-            {(['person', 'organisation'] as const).map((option) => (
-              <label key={option} className="flex items-center gap-2 text-sm text-slate-900">
-                <input
-                  type="radio"
-                  name="qualify-party-kind"
-                  value={option}
-                  checked={kind === option}
-                  onChange={() => setKind(option)}
-                />
-                {option === 'person' ? 'Person' : 'Organisation'}
-              </label>
-            ))}
-          </fieldset>
-          <div className="min-w-56 flex-1">
-            <Field id="qualify-name" label="Name" value={name} onChange={setName} />
-          </div>
-          <div className="min-w-56 flex-1">
-            <Field id="qualify-email" label="Email" type="email" value={email} onChange={setEmail} />
-          </div>
-          <div className="min-w-56 flex-1">
-            <Field id="qualify-phone" label="Phone" value={phone} onChange={setPhone} />
-          </div>
-        </div>
-      ) : (
-        <div className="min-w-56">
-          <Select
-            id="qualify-party"
-            label="Party"
-            value={partyId}
-            placeholder="Choose a party…"
-            options={candidates.map((party) => ({ value: party.id, label: party.name }))}
-            onChange={setPartyId}
-          />
-        </div>
-      )}
-
-      <div>
-        <button
-          type="button"
-          disabled={pending || (mode === 'create' ? !name.trim() : !partyId)}
-          onClick={() => onQualify(mode === 'create' ? createThenQualify : linkThenQualify)}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          Qualify
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Who this Lead is assigned to.
- *
- * Resolved and displayed entirely on this side of the wire: `assignedToUserId` is an opaque
- * id as far as crm's backend is concerned, and this is the "compose a second call" the spec
- * asks for — `GET /api/identity/users`, joined against it client-side, so a name never has
- * to travel through a module that has no way to look one up.
- */
 function Assignment({
   assignedToUserId,
   assignee,
@@ -586,12 +802,12 @@ function Assignment({
   onAssign: (userId: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-t border-slate-200 pt-4">
-      <h3 className="text-sm font-medium text-slate-900">Assigned to</h3>
-      <p className="text-sm text-slate-600">
+    <div className="flex flex-col gap-2">
+      <h3 className="text-xs font-bold text-slate-900">Assigned to</h3>
+      <p className="text-xs font-medium text-slate-600">
         {assignedToUserId ? (assignee ? assignee.name : 'Somebody no longer in this company') : 'Nobody yet'}
       </p>
-      <div className="min-w-56">
+      <div className="min-w-48 pt-1">
         <Select
           id="lead-assignee"
           label="Reassign"
@@ -599,9 +815,7 @@ function Assignment({
           placeholder="Unassigned"
           disabled={pending}
           options={users.map((user) => ({ value: user.id, label: user.name }))}
-          onChange={(userId) => {
-            if (userId) onAssign(userId);
-          }}
+          onChange={(val) => onAssign(val)}
         />
       </div>
     </div>

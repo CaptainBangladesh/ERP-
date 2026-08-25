@@ -11,13 +11,23 @@
 export { validated } from './validation.pipe';
 export {
   validator,
+  passthroughValidator,
   Validator,
   type CrossFieldRule,
   type Parsed,
   type Schema,
   type Valid,
 } from './validator';
-export { optional, withDefault, accepted, refused, rule, type FieldRule, type Read } from './rule';
+export {
+  clearable,
+  optional,
+  withDefault,
+  accepted,
+  refused,
+  rule,
+  type FieldRule,
+  type Read,
+} from './rule';
 export {
   code,
   day,

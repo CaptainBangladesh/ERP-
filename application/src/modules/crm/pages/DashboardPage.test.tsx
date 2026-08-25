@@ -5,6 +5,7 @@ import {
   DASHBOARD_PATHS,
   Money,
   type ActivityCountsResponse,
+  type LeadSourcePerformanceResponse,
   type PipelineValueResponse,
   type WinLossRateResponse,
 } from '@erp/shared';
@@ -17,6 +18,7 @@ describe('DashboardPage', () => {
     pipeline: Partial<PipelineValueResponse> = {},
     winLoss: Partial<WinLossRateResponse> = {},
     activities: Partial<ActivityCountsResponse> = {},
+    leadSources: Partial<LeadSourcePerformanceResponse> = {},
   ) {
     server.use(
       http.get(DASHBOARD_PATHS.pipelineValue, () =>
@@ -68,10 +70,21 @@ describe('DashboardPage', () => {
           ...activities,
         }),
       ),
+      http.get(DASHBOARD_PATHS.leadSourcePerformance, () =>
+        HttpResponse.json<LeadSourcePerformanceResponse>({
+          sources: [
+            { sourceId: 'src-1', sourceName: 'Webinar', producedCount: 5, convertedCount: 2 },
+            { sourceId: null, sourceName: 'Unattributed', producedCount: 1, convertedCount: 0 },
+          ],
+          totalProduced: 6,
+          totalConverted: 2,
+          ...leadSources,
+        }),
+      ),
     );
   }
 
-  it('renders pipeline metrics and activity breakdown when data exists', async () => {
+  it('renders pipeline metrics, activity breakdown, and lead source performance when data exists', async () => {
     mockDashboardData();
     renderPage(<DashboardPage />, { path: '/crm/dashboard' });
 
@@ -80,9 +93,13 @@ describe('DashboardPage', () => {
     expect(screen.getAllByText('Won')[0]).toBeInTheDocument();
     expect(screen.getByText('100.0%')).toBeInTheDocument();
     expect(screen.getByText('Jane Doe')).toBeInTheDocument();
+    expect(await screen.findByText('Lead Source Performance')).toBeInTheDocument();
+    expect(screen.getByText('Webinar')).toBeInTheDocument();
+    expect(screen.getByText('Unattributed')).toBeInTheDocument();
+    expect(screen.getByText('40.0%')).toBeInTheDocument();
   });
 
-  it('renders zero state banners when company has zero deals or activities', async () => {
+  it('renders zero state banners when company has zero deals, activities, or sources', async () => {
     mockDashboardData(
       {
         stages: [
@@ -104,6 +121,7 @@ describe('DashboardPage', () => {
       },
       { wonCount: 0, lostCount: 0, totalClosed: 0, winRate: 0 },
       { byType: [], byUser: [], totalCount: 0 },
+      { sources: [], totalProduced: 0, totalConverted: 0 },
     );
 
     renderPage(<DashboardPage />, { path: '/crm/dashboard' });
@@ -112,5 +130,7 @@ describe('DashboardPage', () => {
     expect(await screen.findByText(/no deals in pipeline/i)).toBeInTheDocument();
     expect(screen.getByText(/no closed deals in the selected date range/i)).toBeInTheDocument();
     expect(screen.getByText(/no activities logged in the selected date range/i)).toBeInTheDocument();
+    expect(screen.getByText(/no lead source data/i)).toBeInTheDocument();
   });
 });
+

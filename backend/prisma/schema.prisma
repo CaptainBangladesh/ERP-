@@ -789,10 +789,16 @@ model Lead {
   email            String?
   phone            String?
 
-  /// `'referral' | 'inbound' | 'outbound' | 'event' | 'other'` — a plain wire-contract value
-  /// like `Party.kind`, not a Postgres enum, so a company's real source vocabulary is never
-  /// fixed at ship time.
-  source String
+  /// The channel this Lead came through, in the company's own words. A real FK to this
+  /// module's own `LeadSource` table — the fixed five-value string this column used to hold
+  /// became rows in `20260824040000_lead_organisation`, one set per company, so no company
+  /// lost its history and none was seeded with a vocabulary it had not used.
+  ///
+  /// Nullable, because a fresh company owns no sources and this platform seeds none: a name
+  /// heard on a call is captured first and attributed afterwards. `Restrict` is
+  /// belt-and-suspenders under `LeadSourcesService`'s own occupancy check.
+  sourceId String?     @map("source_id") @db.Uuid
+  source   LeadSource? @relation(fields: [sourceId], references: [id], onDelete: Restrict)
 
   /// `'new' | 'contacted' | 'qualified' | 'disqualified'`.
   status String @default("new")
@@ -811,16 +817,175 @@ model Lead {
   /// `PartyDirectory`, parties' public surface.
   partyId String? @map("party_id") @db.Uuid
 
+  /// The swimlane this Lead sits in on the board, if any. `Restrict` rather than `SetNull`:
+  /// `LeadGroupsService` refuses to delete an occupied group, so silently emptying a lead's
+  /// group would only ever happen on a path that is supposed to be unreachable.
+  groupId String?    @map("group_id") @db.Uuid
+  group   LeadGroup? @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
+  /// Values for this company's `LeadFieldDefinition`s, keyed by definition `key`.
+  ///
+  /// One JSON column rather than an entity-attribute-value table: the values are read and
+  /// written whole, always alongside their Lead, and never joined against. The cost is stated
+  /// rather than hidden — a JSON column has no static fields, so custom fields do not take part
+  /// in `ListSpec`'s sort/filter grammar. Built-in columns do.
+  ///
+  /// Keys whose definition has since been archived stay here and still read back. Archiving is
+  /// how a company changes its mind without destroying what it already captured.
+  customValues Json @default("{}") @map("custom_values")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   activities Activity[]
+  campaignRecipients CampaignRecipient[]
 
   @@index([companyId])
+  @@index([companyId, groupId])
+  @@index([companyId, sourceId])
   /// The list's default order, within a company — the `(company_id, <default sort>)` shape
   /// every list endpoint's default sort wants, so that offset paging is an index walk.
   @@index([companyId, name])
+  /// The source-performance dashboard's cohort window, per company.
+  @@index([companyId, createdAt])
   @@map("leads")
+}
+
+/// A company's own swimlanes on the Leads board.
+///
+/// No seed data, and nothing is provisioned on read: a fresh company has zero groups and the
+/// board's empty state is "create your first group", the same discipline `Stage` holds. `order`
+/// is renumbered across the company on every move, for the reason `Stage.order` documents.
+model LeadGroup {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  color     String   @default("#579bfc")
+  order     Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  leads Lead[]
+
+  @@index([companyId])
+  @@index([companyId, order])
+  @@map("lead_groups")
+}
+
+/// A company's own name for a channel a Lead can arrive through.
+///
+/// Replaces the fixed `'referral' | 'inbound' | ...` string `Lead.source` used to hold, so that
+/// "which channel is working" is answerable in the words the company actually uses. Renaming is
+/// unrestricted — the id is what Leads point at, so fixing a label is never a data migration.
+model LeadSource {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  order     Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  leads Lead[]
+
+  @@index([companyId])
+  @@index([companyId, order])
+  @@map("lead_sources")
+}
+
+/// What one company calls one of the four fixed `Lead.status` values, and the colour it uses.
+///
+/// Cosmetic only, and deliberately so. The statuses themselves are the lifecycle that
+/// `qualify`/`disqualify`/`reopen` act on and that `WorkflowRule.triggerConfig` names, so a row
+/// here changes a caption and nothing else. A company that has customised nothing has no rows:
+/// the service reads the contract's defaults for any status it does not find, so a caller
+/// always sees four.
+model LeadStatusLabel {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  /// One of `LEAD_STATUSES`. Text, not a Postgres enum, matching `Lead.status` itself.
+  status    String
+  label     String
+  color     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// At most one label per status per company — an upsert target, not merely a guard.
+  @@unique([companyId, status])
+  @@index([companyId])
+  @@map("lead_status_labels")
+}
+
+/// One custom field a company has defined on its Leads. The values live on `Lead.customValues`.
+model LeadFieldDefinition {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  /// Derived once from `label` at creation and never written again. A rename changes the label
+  /// only, so values already stored under this key on some Lead's `customValues` never orphan.
+  key String
+
+  label String
+
+  /// One of `LEAD_FIELD_TYPES`. Not settable after creation — see `UpdateLeadFieldRequest`.
+  type String
+
+  /// A JSON string array for `select` and `multiselect`, `[]` for every other type.
+  options Json @default("[]")
+
+  required Boolean @default(false)
+
+  order Int
+
+  /// Set when the field is archived. Archived fields are not offered, not required, and not
+  /// validated against — but every value already captured under this key still reads back.
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, key])
+  @@index([companyId])
+  @@index([companyId, order])
+  @@map("lead_field_definitions")
+}
+
+/// A record of a spreadsheet import batch committed by a user.
+model LeadImport {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+
+  filename         String
+  rowCount         Int      @map("row_count")
+  acceptedCount    Int      @map("accepted_count")
+
+  importedByUserId String   @map("imported_by_user_id") @db.Uuid
+  importedByName   String   @map("imported_by_name")
+
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@map("lead_imports")
+}
+
+/// An intake channel for leads — a published web form or third-party webhook URL.
+model CaptureSource {
+  id                      String    @id @default(uuid()) @db.Uuid
+  companyId               String    @map("company_id") @db.Uuid
+  kind                    String
+  name                    String
+  token                   String    @unique
+  enabled                 Boolean   @default(true)
+  config                  Json
+  defaultSourceId         String?   @map("default_source_id") @db.Uuid
+  defaultGroupId          String?   @map("default_group_id") @db.Uuid
+  defaultAssignedToUserId String?   @map("default_assigned_to_user_id") @db.Uuid
+  submissionCount         Int       @default(0) @map("submission_count")
+  lastSubmissionAt        DateTime? @map("last_submission_at")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@map("capture_sources")
 }
 
 /// A company's own pipeline, one row per column on the deals board.
@@ -973,6 +1138,119 @@ model Notification {
   @@index([companyId, userId, read])
   @@map("notifications")
 }
+
+/// Mailbox connection for salesperson outreach (Gmail / Outlook).
+model MailboxConnection {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  provider     String
+  emailAddress String   @map("email_address")
+  displayName  String   @map("display_name")
+  status       String
+  accessToken  String?  @map("access_token")
+  refreshToken String?  @map("refresh_token")
+  connectedAt  DateTime @default(now()) @map("connected_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, userId, provider])
+  @@index([companyId])
+  @@map("mailbox_connections")
+}
+
+/// Short-lived OAuth authorization state token.
+model MailboxAuthState {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  provider   String
+  stateToken String   @unique @map("state_token")
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@map("mailbox_auth_states")
+}
+
+/// Reusable email template with dynamic placeholders.
+model EmailTemplate {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  name            String
+  subject         String
+  body            String
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@map("email_templates")
+}
+
+/// An email campaign targeted at a segment of leads.
+model Campaign {
+  id                  String   @id @default(uuid()) @db.Uuid
+  companyId           String   @map("company_id") @db.Uuid
+  name                String
+  status              String   @default("draft")
+  mailboxConnectionId String   @map("mailbox_connection_id") @db.Uuid
+  templateId          String   @map("template_id") @db.Uuid
+  segmentConfig       Json     @default("{}") @map("segment_config")
+  totalLeadsCount     Int      @default(0) @map("total_leads_count")
+  excludedCount       Int      @default(0) @map("excluded_count")
+  sentCount           Int      @default(0) @map("sent_count")
+  openedCount         Int      @default(0) @map("opened_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  recipients CampaignRecipient[]
+
+  @@index([companyId])
+  @@map("campaigns")
+}
+
+/// A recipient in a campaign cohort, materialized from a lead segment.
+model CampaignRecipient {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  campaignId    String    @map("campaign_id") @db.Uuid
+  campaign      Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leadId        String    @map("lead_id") @db.Uuid
+  lead          Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  emailAddress  String    @map("email_address")
+  status        String    @default("pending")
+  excludeReason String?   @map("exclude_reason")
+  sentAt        DateTime? @map("sent_at")
+  openToken     String    @unique @default(uuid()) @map("open_token")
+  openedAt      DateTime? @map("opened_at")
+  openCount     Int       @default(0) @map("open_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([campaignId])
+  @@index([leadId])
+  @@map("campaign_recipients")
+}
+
+/// Permanent record of an email address that unsubscribed from a company's campaign emails.
+model Unsubscribe {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  emailAddress   String   @map("email_address")
+  campaignId     String?  @map("campaign_id") @db.Uuid
+  unsubscribedAt DateTime @default(now()) @map("unsubscribed_at")
+
+  @@unique([companyId, emailAddress])
+  @@index([companyId])
+  @@index([emailAddress])
+  @@map("unsubscribes")
+}
+
+
 
 
 

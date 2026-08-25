@@ -21,6 +21,7 @@ import {
 } from '@erp/shared';
 import { DataTable, Field, FormError, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
+import { currentSearchParams } from '../../../app/location';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
 import { PartyDetail } from '../components/PartyDetail';
@@ -42,7 +43,16 @@ export function PartiesPage() {
   const { session } = useSession();
   const canAddParty = hasPermission(session, 'parties:parties:write');
   const [query, setQuery] = useState<ListQuery>({});
-  const [selectedId, setSelectedId] = useState<string>();
+  /**
+   * `?partyId=` opens straight onto one party. It is how another screen hands this one a
+   * record it just created — the CRM's convert flow lands here with the new contact already
+   * selected, so the next step is on the screen rather than a search away. Read once, on the
+   * way in: after that the selection is this page's own, and re-reading the URL would fight
+   * with clicking a different row.
+   */
+  const [selectedId, setSelectedId] = useState<string | undefined>(
+    () => currentSearchParams().get('partyId') ?? undefined,
+  );
   const queryClient = useQueryClient();
 
   const parties = useQuery({

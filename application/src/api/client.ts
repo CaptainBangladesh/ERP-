@@ -108,6 +108,13 @@ export const api = {
    * party, and a screen that had to re-fetch it would have two chances to disagree.
    */
   delete: <T>(path: string) => send<T>('DELETE', path),
+  /**
+   * A `multipart/form-data` POST, for file uploads. Bypasses the JSON `Content-Type` that
+   * every other request sends, since the browser must set its own header carrying the
+   * multipart boundary — setting it explicitly here would omit that boundary and the server
+   * could not parse the body.
+   */
+  postForm: <T>(path: string, form: FormData) => requestForm<T>(path, form),
 };
 
 function send<T>(method: string, path: string, payload?: unknown): Promise<T> {
@@ -115,4 +122,38 @@ function send<T>(method: string, path: string, payload?: unknown): Promise<T> {
     method,
     body: payload === undefined ? undefined : JSON.stringify(payload),
   });
+}
+
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  let response: Response;
+
+  try {
+    response = await fetch(path, {
+      method: 'POST',
+      headers: authToken ? { Authorization: `${AUTH_SCHEME} ${authToken}` } : {},
+      body: form,
+    });
+  } catch {
+    throw new ApiFailure(0, {
+      code: 'network_error',
+      message: 'Could not reach the server. Check your connection and try again.',
+    });
+  }
+
+  const body: unknown = await response.json().catch(() => undefined);
+
+  if (!response.ok) {
+    const failure = new ApiFailure(
+      response.status,
+      isApiError(body)
+        ? body
+        : { code: 'internal_error', message: 'Something went wrong. Please try again.' },
+    );
+
+    if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code);
+
+    throw failure;
+  }
+
+  return body as T;
 }

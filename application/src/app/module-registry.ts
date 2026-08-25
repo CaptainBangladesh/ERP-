@@ -25,5 +25,8 @@ export const manifests: FrontendModuleManifest[] = Object.entries(modules)
 export const routes: FrontendRoute[] = manifests.flatMap((manifest) => [...manifest.routes]);
 
 export function routeFor(path: string): FrontendRoute | undefined {
+  if (path.startsWith('/public/crm/form/')) {
+    return routes.find((route) => route.path === '/public/crm/form');
+  }
   return routes.find((route) => route.path === path);
 }
