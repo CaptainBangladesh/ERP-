@@ -33,7 +33,26 @@ export const STAGE_PATHS = {
 export const DEAL_PATHS = {
   deals: `/${CRM_ROUTE}/deals`,
   deal: (id: string) => `/${CRM_ROUTE}/deals/${id}`,
+  /**
+   * What several parties have in flight, answered in one request.
+   *
+   * The Contacts board shows every contact's deals in a column, and reading that a party at a
+   * time is a request per row — the N+1 `PartyDirectory.parties` exists to prevent, arriving
+   * here from the other direction. Takes `?partyIds=a,b,c`.
+   *
+   * Declared before `deal(id)` on the controller, or `by-party` is resolved as an id.
+   */
+  dealsByParty: `/${CRM_ROUTE}/deals/by-party`,
 } as const;
+
+/**
+ * The most parties one roll-up may be asked about — a board's page, not a company.
+ *
+ * A hundred rather than more because the ids travel in the URL: a hundred uuids is roughly
+ * 3.7KB of query string, and twice that is close enough to the 8KB a good many proxies stop
+ * at to be a bug that only appears on somebody else's network.
+ */
+export const DEAL_ROLLUP_MAX_PARTIES = 100;
 
 /**
  * Where a Lead came from. A plain wire-contract value like `Party.kind` rather than a
@@ -53,10 +72,30 @@ export const LEAD_STATUSES = ['new', 'contacted', 'qualified', 'disqualified'] a
 
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
+/**
+ * What `Lead.status` actually holds: one of the four built-in `LEAD_STATUSES`, or the key of a
+ * status this company added itself.
+ *
+ * The four built-ins keep their own narrow `LeadStatus` type because the lifecycle is written in
+ * terms of them — `qualify`, `disqualify` and `reopen` name them by value, and a workflow rule
+ * that watches `qualified` has to keep meaning the shipped `qualified`. A custom status is an
+ * extra settable stage alongside `new` and `contacted`; it is never a terminal state, so nothing
+ * in the lifecycle has to learn about it.
+ */
+export type LeadStatusKey = LeadStatus | (string & {});
+
+/** True for the four statuses the module's own lifecycle is written against. */
+export function isBuiltInLeadStatus(status: LeadStatusKey): status is LeadStatus {
+  return (LEAD_STATUSES as readonly string[]).includes(status);
+}
+
 /** The statuses an ordinary edit may set. `qualified` and `disqualified` are reached by acting, never by asking. */
 export const SETTABLE_LEAD_STATUSES = ['new', 'contacted'] as const;
 
 export type SettableLeadStatus = (typeof SETTABLE_LEAD_STATUSES)[number];
+
+/** A settable built-in, or a custom status — which is only ever settable. */
+export type SettableLeadStatusKey = SettableLeadStatus | (string & {});
 
 /**
  * How a Lead is qualified. The frontend always resolves a `Party` first — creating one via
@@ -146,7 +185,12 @@ export interface UpdateLeadRequest {
   phone?: string | null;
   source?: LeadSource;
   sourceId?: string | null;
-  status?: SettableLeadStatus;
+  /**
+   * A status an ordinary edit may set: `new`, `contacted`, or the key of a custom status this
+   * company added. `qualified` and `disqualified` are refused here — they are reached by
+   * qualifying or disqualifying, so the Party link can never go missing.
+   */
+  status?: SettableLeadStatusKey;
   assignedToUserId?: string | null;
   groupId?: string | null;
   customValues?: LeadCustomValues;
@@ -167,7 +211,7 @@ export interface LeadSummary {
   source: LeadSource;
   sourceId?: string | null;
   sourceName?: string | null;
-  status: LeadStatus;
+  status: LeadStatusKey;
   assignedToUserId: string | null;
   partyId: string | null;
   groupId?: string | null;
@@ -296,12 +340,51 @@ export type DealResponse = DealSummary;
 
 export type DealListResponse = ListResponse<DealSummary>;
 
+/**
+ * One party's deals, counted and totalled.
+ *
+ * Won and lost are the *Stage's* outcome rather than anything stored on a Deal, so a pipeline
+ * renamed or re-marked is reflected the moment it is read — the same rule `DealSummary`
+ * follows for `stageOutcome`.
+ *
+ * `openValue` is what is still in play; the two are kept apart because a board that added them
+ * together would report a closed year and an open pipeline as one number.
+ */
+export interface PartyDealRollup {
+  partyId: string;
+  openCount: number;
+  wonCount: number;
+  lostCount: number;
+  openValue: MoneyValue;
+  wonValue: MoneyValue;
+}
+
+/**
+ * A roll-up per party that has deals.
+ *
+ * A party with none is absent rather than present as zeroes: the caller asked about a page of
+ * contacts and most of them have no deals, so the empty case is the common one and sending it
+ * would be most of the response.
+ *
+ * Deliberately *not* a `ListResponse`, and named so as not to claim to be one. The platform's
+ * list envelope carries a page — number, size, total — and this has no page to carry: the
+ * caller already holds the set it asked about, the answer is keyed to that set, and there is
+ * nothing to walk. Wrapping it in a page would invent a second, meaningless way to ask for the
+ * same fixed answer. See docs/api-conventions.md, "One list shape", which this is outside of
+ * rather than an exception to.
+ */
+export interface PartyDealRollupResponse {
+  items: PartyDealRollup[];
+}
+
 export const DEAL_ERROR_CODES = {
   dealNotFound: 'deal_not_found',
   /** The `stageId` a request named does not resolve within this company. */
   dealStageNotFound: 'deal_stage_not_found',
   /** The `partyId` a request named does not resolve through `PartyDirectory`. */
   dealPartyNotFound: 'deal_party_not_found',
+  /** A roll-up asked about more parties than `DEAL_ROLLUP_MAX_PARTIES`. */
+  dealRollupTooManyParties: 'deal_rollup_too_many_parties',
 } as const;
 
 // ─── activities ──────────────────────────────────────────────────────────────────────
@@ -601,7 +684,7 @@ export const LEAD_SOURCE_PATHS = {
 
 export const LEAD_STATUS_LABEL_PATHS = {
   labels: `/${CRM_ROUTE}/lead-status-labels`,
-  label: (status: LeadStatus) => `/${CRM_ROUTE}/lead-status-labels/${status}`,
+  label: (status: LeadStatusKey) => `/${CRM_ROUTE}/lead-status-labels/${status}`,
 } as const;
 
 export const LEAD_FIELD_PATHS = {
@@ -679,12 +762,33 @@ export type LeadSourceListResponse = ListResponse<LeadSourceSummary>;
 export type LeadSourceResponse = LeadSourceSummary;
 
 export interface LeadStatusLabelSummary {
-  status: LeadStatus;
+  status: LeadStatusKey;
+  label: string;
+  color: string;
+  /**
+   * False for the four built-in lifecycle statuses, which can be renamed and recoloured but
+   * never removed; true for a status this company added itself.
+   */
+  isCustom: boolean;
+  /** Where the status sits in the picker. The four built-ins hold 0–3; custom statuses follow. */
+  order: number;
+  /**
+   * Whether an ordinary edit may move a lead into this status. False for `qualified` and
+   * `disqualified`, which are reached by qualifying or disqualifying and never by asking.
+   */
+  isSettable: boolean;
+}
+
+export type UpdateLeadStatusLabelRequest = Partial<Pick<LeadStatusLabelSummary, 'label' | 'color'>>;
+
+/**
+ * Adding a status of this company's own. The caller names and colours it; the key it is stored
+ * under is derived from the label by the server, so no screen has to invent a wire value.
+ */
+export interface CreateLeadStatusLabelRequest {
   label: string;
   color: string;
 }
-
-export type UpdateLeadStatusLabelRequest = Partial<Omit<LeadStatusLabelSummary, 'status'>>;
 
 export interface LeadStatusLabelListResponse {
   items: LeadStatusLabelSummary[];
@@ -745,6 +849,18 @@ export const LEAD_GROUP_ERROR_CODES = {
   leadGroupNotFound: 'lead_group_not_found',
   leadGroupNotEmpty: 'lead_group_not_empty',
   leadGroupHasLeads: 'lead_group_has_leads',
+} as const;
+
+export const LEAD_STATUS_LABEL_ERROR_CODES = {
+  leadStatusNotFound: 'lead_status_not_found',
+  /** Tried to delete or rename away one of the four built-in lifecycle statuses. */
+  leadStatusNotCustom: 'lead_status_not_custom',
+  /** Tried to delete a custom status that leads are still sitting in. */
+  leadStatusHasLeads: 'lead_status_has_leads',
+  /** Two statuses would end up under the same derived key. */
+  leadStatusDuplicate: 'lead_status_duplicate',
+  /** Asked to move a lead into a status no ordinary edit may set. */
+  leadStatusNotSettable: 'lead_status_not_settable',
 } as const;
 
 export const LEAD_SOURCE_ERROR_CODES = {

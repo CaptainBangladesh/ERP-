@@ -13,6 +13,7 @@ import {
   flag,
   identifier,
   oneOf,
+  clearable,
   optional,
   refused,
   rule,
@@ -97,21 +98,28 @@ export const CreatePartyBody = validator({
 /**
  * A change to a party. Every field optional, at least one required.
  *
- * Absent means "do not touch it", and that includes a field sent as `null` or as an empty
- * string — the platform reads both as absent, deliberately, so that no rule in any module
- * has to have an opinion about JSON null. See `platform/validation/validator.ts`.
+ * Absent means "do not touch it". A field sent as `null` is absent too — the platform reads
+ * it that way deliberately, so that no rule in any module has to have an opinion about JSON
+ * null. See `platform/validation/validator.ts`.
  *
- * The consequence worth stating: there is no way to *clear* an email, a phone number or an
- * organisation through this endpoint, only to change one. Nobody has asked to, and the way
- * to offer it when somebody does is an explicit act — a `DELETE`, or a distinct rule that
- * accepts an emptying sentinel — rather than by making an empty box mean "erase", which is
- * what an accidental keystroke also means.
+ * The three nullable columns are `clearable` rather than `optional`, so an explicitly *empty*
+ * field means "there is no longer a value here" and is written as such. This file used to say
+ * that clearing was not offered because nobody had asked, and that the way to offer it would
+ * be an explicit act rather than making an empty box mean "erase" — the objection being an
+ * accidental keystroke.
+ *
+ * Somebody has now asked, and the objection does not survive the asking. The CRM's Contacts
+ * board takes a person off an account by choosing "No account" from a select, which is not a
+ * keystroke anybody makes by accident; and `UpdateLeadBody` in crm has accepted exactly this
+ * for `organisationName`, `email` and `phone` since Leads shipped, so refusing it here made
+ * the same edit succeed on one board and silently do nothing on the other. `name` and
+ * `status` stay `optional`: a party with no name is not a party, and no status is not a state.
  */
 export const UpdatePartyBody = validator({
   name: optional(text(PARTY_NAME)),
-  email: optional(email(CONTACT_EMAIL)),
-  phone: optional(text(PHONE)),
-  organisationId: optional(identifier(ORGANISATION)),
+  email: clearable(email(CONTACT_EMAIL)),
+  phone: clearable(text(PHONE)),
+  organisationId: clearable(identifier(ORGANISATION)),
   status: optional(STATUS),
 }).and((values, report) => {
   const changed = Object.values(values).some((value) => value !== undefined);

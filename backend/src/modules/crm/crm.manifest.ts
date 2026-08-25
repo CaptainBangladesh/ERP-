@@ -24,12 +24,41 @@ export const manifest: ModuleManifest = {
     '20260824020000_crm_workflow_rules',
   ],
 
-  models: ['Lead', 'Stage', 'Deal', 'Activity', 'WorkflowRule', 'Notification'],
+  models: [
+    'Lead',
+    'LeadGroup',
+    'LeadSource',
+    'LeadFieldDefinition',
+    'LeadStatusLabel',
+    'LeadImport',
+    'Stage',
+    'Deal',
+    'Activity',
+    'WorkflowRule',
+    'Notification',
+    'Campaign',
+    'CampaignRecipient',
+    'CaptureSource',
+    'EmailTemplate',
+    'MailboxConnection',
+    'MailboxAuthState',
+    'Unsubscribe',
+  ],
 
   permissions: [
     'crm:dashboard:read',
     'crm:leads:read',
     'crm:leads:write',
+    /**
+     * Seeing the Contacts board. CRM's own, because a module may only guard its navigation
+     * with permissions it declares — and the board is CRM's screen even though the people on
+     * it are parties' records.
+     *
+     * It governs the menu entry and nothing else: the contacts themselves are read with
+     * `parties:parties:read` and edited with `parties:parties:write`, enforced by parties'
+     * own endpoints. A role granted this and not those reaches a board that says so.
+     */
+    'crm:contacts:read',
     'crm:stages:read',
     'crm:stages:write',
     'crm:deals:read',
@@ -43,7 +72,7 @@ export const manifest: ModuleManifest = {
   navigation: [
     { label: 'Deals', path: '/crm/deals', order: 48, permission: 'crm:deals:read' },
     { label: 'Leads', path: '/crm/leads', order: 49, permission: 'crm:leads:read' },
-    { label: 'Contacts', path: '/parties', order: 50, permission: 'crm:leads:read' },
+    { label: 'Contacts', path: '/crm/contacts', order: 50, permission: 'crm:contacts:read' },
     { label: 'Accounts', path: '/parties', order: 51, permission: 'crm:leads:read' },
     { label: 'Activities', path: '/crm/leads', order: 52, permission: 'crm:activities:read' },
     { label: 'Sales Dashboard', path: '/crm/dashboard', order: 53, permission: 'crm:dashboard:read' },

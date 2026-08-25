@@ -12,6 +12,7 @@ import {
   type CreateStageRequest,
   type DealListResponse,
   type DealResponse,
+  type PartyDealRollupResponse,
   type PartyResponse,
   type SignUpRequest,
   type StageListResponse,
@@ -467,6 +468,113 @@ describe('crm: stages and deals', () => {
         .expect(404);
 
       expect(refused.body.code).toBe(DEAL_ERROR_CODES.dealPartyNotFound);
+    });
+  });
+  // ─── deal roll-up by party ────────────────────────────────────────────────────────
+
+  /**
+   * What the Contacts board asks so that it does not ask once per row.
+   *
+   * The interesting cases are all about *aggregation being honest*: an outcome comes from the
+   * Stage rather than the Deal, open and won money are never added together, and a party the
+   * caller asked about but which has no deals is absent rather than zero-filled.
+   */
+  describe('deal roll-up by party', () => {
+    async function rollup(tenant: Tenant, partyIds: string[]): Promise<PartyDealRollupResponse> {
+      const response = await tenant
+        .as(app.http.get(`${DEAL_PATHS.dealsByParty}?partyIds=${partyIds.join(',')}`))
+        .expect(200);
+
+      return response.body as PartyDealRollupResponse;
+    }
+
+    it("counts and totals a party's open deals", async () => {
+      const northwind = await signUp();
+      const stage = await addStage(northwind);
+      const party = await addParty(northwind);
+
+      await addDeal(northwind, stage.id, party.id, { amount: '1500.50' });
+      await addDeal(northwind, stage.id, party.id, { amount: '2499.50' });
+
+      const { items } = await rollup(northwind, [party.id]);
+
+      expect(items).toHaveLength(1);
+
+      const [rolled] = items;
+      expect(rolled).toMatchObject({
+        partyId: party.id,
+        openCount: 2,
+        wonCount: 0,
+        lostCount: 0,
+      });
+      expect(rolled?.openValue.amount).toBe('4000.00');
+      expect(rolled?.wonValue.amount).toBe('0.00');
+    });
+
+    it('reads won and lost from the stage, not from the deal', async () => {
+      const northwind = await signUp();
+      const open = await addStage(northwind, { name: 'Discovery' });
+      const closed = await addStage(northwind, { name: 'Closed won' });
+      const party = await addParty(northwind);
+
+      const deal = await addDeal(northwind, open.id, party.id, { amount: '900.00' });
+      await addDeal(northwind, open.id, party.id, { amount: '100.00' });
+
+      await changeDeal(northwind, deal.id, { stageId: closed.id });
+      // The stage is marked won *after* the deal moved into it. Nothing about the deal
+      // changed, so a roll-up that stored the outcome would still report it open.
+      await changeStage(northwind, closed.id, { outcome: 'won' });
+
+      const { items } = await rollup(northwind, [party.id]);
+
+      const [rolled] = items;
+      expect(rolled).toMatchObject({ openCount: 1, wonCount: 1, lostCount: 0 });
+      expect(rolled?.wonValue.amount).toBe('900.00');
+      expect(rolled?.openValue.amount).toBe('100.00');
+    });
+
+    it('leaves out a party that has no deals rather than zero-filling it', async () => {
+      const northwind = await signUp();
+      const stage = await addStage(northwind);
+      const withDeals = await addParty(northwind);
+      const without = await addParty(northwind, { name: 'Quiet Ltd' });
+
+      await addDeal(northwind, stage.id, withDeals.id);
+
+      const { items } = await rollup(northwind, [withDeals.id, without.id]);
+
+      expect(items.map((item) => item.partyId)).toEqual([withDeals.id]);
+    });
+
+    it('answers nothing when asked about nobody', async () => {
+      const northwind = await signUp();
+
+      const response = await northwind.as(app.http.get(DEAL_PATHS.dealsByParty)).expect(200);
+
+      expect((response.body as PartyDealRollupResponse).items).toEqual([]);
+    });
+
+    it('refuses to roll up more parties than a board can show', async () => {
+      const northwind = await signUp();
+      const tooMany = Array.from({ length: 101 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`);
+
+      await northwind
+        .as(app.http.get(`${DEAL_PATHS.dealsByParty}?partyIds=${tooMany.join(',')}`))
+        .expect(400);
+    });
+
+    it("never reports another company's deals", async () => {
+      const northwind = await signUp();
+      const acme = await signUp({ companyName: 'Acme', name: 'Bo Lindqvist', email: 'bo@acme.test' });
+
+      const acmeStage = await addStage(acme);
+      const acmeParty = await addParty(acme);
+      await addDeal(acme, acmeStage.id, acmeParty.id, { amount: '5000.00' });
+
+      // Northwind names Acme's party id outright. Scoping, not guesswork, is what answers.
+      const { items } = await rollup(northwind, [acmeParty.id]);
+
+      expect(items).toEqual([]);
     });
   });
 });

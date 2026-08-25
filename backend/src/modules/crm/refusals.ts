@@ -6,6 +6,7 @@ import {
   LEAD_GROUP_ERROR_CODES,
   LEAD_IMPORT_ERROR_CODES,
   LEAD_SOURCE_ERROR_CODES,
+  LEAD_STATUS_LABEL_ERROR_CODES,
   STAGE_ERROR_CODES,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
@@ -282,3 +283,83 @@ export function invalidOpenToken(): ApiException {
 }
 
 
+
+// ─── lead statuses ──────────────────────────────────────────────────────────────────
+
+export function leadStatusNotFound(): ApiException {
+  return new ApiException(
+    LEAD_STATUS_LABEL_ERROR_CODES.leadStatusNotFound,
+    'That lead status does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+/**
+ * Deleting one of the four built-in statuses. Says why it cannot go rather than only that it
+ * cannot: the four are the lifecycle the module's own actions are written against, so removing
+ * one would leave `qualify` with nowhere to put a lead.
+ */
+export function leadStatusNotCustom(): ApiException {
+  return new ApiException(
+    LEAD_STATUS_LABEL_ERROR_CODES.leadStatusNotCustom,
+    'That is one of the four built-in statuses. It can be renamed and recoloured, but not removed.',
+    HttpStatus.CONFLICT,
+  );
+}
+
+/**
+ * Deleting a status leads are still in — the same shape `leadGroupHasLeads` takes, and for the
+ * same reason. The count is the number somebody needs in order to decide what to do next.
+ */
+export function leadStatusHasLeads(label: string, count: number): ApiException {
+  return new ApiException(
+    LEAD_STATUS_LABEL_ERROR_CODES.leadStatusHasLeads,
+    `${count} lead${count === 1 ? ' is' : 's are'} still in "${label}". ` +
+      `Move ${count === 1 ? 'it' : 'them'} to another status first, then remove this one.`,
+    HttpStatus.CONFLICT,
+  );
+}
+
+/**
+ * Two statuses that would be stored under the same key. Named after the label rather than the
+ * key, because the key is derived and the person naming the status never saw it.
+ */
+export function leadStatusDuplicate(label: string): FieldException {
+  return new FieldException(
+    LEAD_STATUS_LABEL_ERROR_CODES.leadStatusDuplicate,
+    `"${label}" is too close to a status you already have.`,
+    HttpStatus.CONFLICT,
+    { label: 'You already have a status with this name.' },
+  );
+}
+
+/**
+ * Asking an ordinary edit to move a lead into `qualified` or `disqualified`. Points at the act
+ * that does reach those states, because the request is not wrong about wanting to get there.
+ */
+export function leadStatusNotSettable(): FieldException {
+  const message =
+    'Qualified and Disqualified are reached by qualifying or disqualifying the lead, not by editing it.';
+
+  return new FieldException(
+    LEAD_STATUS_LABEL_ERROR_CODES.leadStatusNotSettable,
+    message,
+    HttpStatus.UNPROCESSABLE_ENTITY,
+    { status: message },
+  );
+}
+
+/**
+ * A roll-up asked about more parties than a board could be showing.
+ *
+ * The cap is not about protecting the query — it is about what the request can mean. This
+ * endpoint exists to answer for a *page* of contacts; a caller naming every party in the
+ * company wants a report, and should be told so rather than quietly served one.
+ */
+export function tooManyRollupParties(most: number, asked: number): ApiException {
+  return new ApiException(
+    DEAL_ERROR_CODES.dealRollupTooManyParties,
+    `Ask about at most ${most} parties at a time. This asked about ${asked}.`,
+    HttpStatus.BAD_REQUEST,
+  );
+}

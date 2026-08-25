@@ -2,11 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   CRM_EVENTS,
+  DEAL_ROLLUP_MAX_PARTIES,
   DEFAULT_CURRENCY,
   Money,
   type DealListResponse,
   type DealResponse,
   type DealSummary,
+  type PartyDealRollup,
+  type PartyDealRollupResponse,
   type StageOutcome,
 } from '@erp/shared';
 import { defined, exactly } from '../../prisma/columns';
@@ -15,7 +18,12 @@ import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { PartyDirectory } from '../parties';
-import { dealNotFound, dealPartyNotFound, dealStageNotFound } from './refusals';
+import {
+  dealNotFound,
+  dealPartyNotFound,
+  dealStageNotFound,
+  tooManyRollupParties,
+} from './refusals';
 import { CreateDealBody, DEAL_LIST, UpdateDealBody } from './schemas';
 import { WorkflowRulesService } from './workflow-rules.service';
 
@@ -191,6 +199,72 @@ export class DealsService {
     return summary;
   }
 
+  /**
+   * What each of these parties has in flight, in one query.
+   *
+   * The Contacts board draws a Deals column for a page of contacts at a time. Reading it a
+   * contact at a time would be a request per row, so this takes the whole page's ids and
+   * answers for all of them — the mirror of `PartyDirectory.parties`, and there for the same
+   * reason.
+   *
+   * Aggregated here rather than in the database because the thing being grouped by is the
+   * *Stage's* outcome and not a column on `Deal`: a `groupBy` would have to group by stage and
+   * then be re-grouped in memory anyway, and this way the rule that an outcome is read fresh
+   * off the Stage stays the one `describe` already states.
+   *
+   * Scoping is the platform's, as everywhere here — an id belonging to another company matches
+   * nothing, so naming one outright is answered with silence rather than a refusal.
+   */
+  async dealsByParty(partyIds: readonly string[]): Promise<PartyDealRollupResponse> {
+    // Deduplicated before the cap is applied, so a caller is never refused for repetition.
+    const asked = [...new Set(partyIds)];
+
+    if (asked.length > DEAL_ROLLUP_MAX_PARTIES) {
+      throw tooManyRollupParties(DEAL_ROLLUP_MAX_PARTIES, asked.length);
+    }
+
+    if (asked.length === 0) return { items: [] };
+
+    const deals = await this.prisma.deal.findMany({
+      where: { partyId: { in: asked } },
+      select: { partyId: true, amount: true, stage: { select: { outcome: true } } },
+    });
+
+    // Insertion-ordered, so the answer follows the order asked in for the parties that have
+    // deals — a board rendering rows in its own order does not depend on this, but a caller
+    // reading the response by eye should not have to sort it first.
+    const rollups = new Map<string, PartyDealRollup>();
+
+    for (const partyId of asked) {
+      if (!rollups.has(partyId)) rollups.set(partyId, blankRollup(partyId));
+    }
+
+    for (const deal of deals) {
+      const rollup = rollups.get(deal.partyId);
+      if (!rollup) continue;
+
+      const amount = Money.parse(exactly(deal.amount), DEFAULT_CURRENCY);
+
+      if (deal.stage.outcome === 'won') {
+        rollup.wonCount += 1;
+        rollup.wonValue = Money.fromValue(rollup.wonValue).plus(amount).toValue();
+      } else if (deal.stage.outcome === 'lost') {
+        rollup.lostCount += 1;
+      } else {
+        rollup.openCount += 1;
+        rollup.openValue = Money.fromValue(rollup.openValue).plus(amount).toValue();
+      }
+    }
+
+    // A party with no deals is dropped rather than sent as zeroes: most of a page of contacts
+    // has none, so zero-filling would make the empty case most of the response.
+    return {
+      items: [...rollups.values()].filter(
+        (rollup) => rollup.openCount + rollup.wonCount + rollup.lostCount > 0,
+      ),
+    };
+  }
+
   async deleteDeal(id: string): Promise<void> {
     await this.requireDeal(id);
     await this.prisma.deal.delete({ where: { id } });
@@ -234,5 +308,17 @@ function describe(row: {
     expectedCloseDate: row.expectedCloseDate ? row.expectedCloseDate.toISOString().slice(0, 10) : null,
     assignedToUserId: row.assignedToUserId,
     originLeadId: row.originLeadId,
+  };
+}
+
+/** A party asked about but not yet counted. Dropped before responding if it stays this way. */
+function blankRollup(partyId: string): PartyDealRollup {
+  return {
+    partyId,
+    openCount: 0,
+    wonCount: 0,
+    lostCount: 0,
+    openValue: Money.zero(DEFAULT_CURRENCY).toValue(),
+    wonValue: Money.zero(DEFAULT_CURRENCY).toValue(),
   };
 }

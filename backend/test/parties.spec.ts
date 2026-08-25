@@ -173,6 +173,72 @@ describe('parties', () => {
     });
   });
 
+  /**
+   * Taking a value off a party, rather than swapping it for another.
+   *
+   * The three nullable columns became `clearable` when the CRM's Contacts board needed to take
+   * somebody off an account — see the note on `UpdatePartyBody`. These are what stop that
+   * quietly reverting to "absent means do not touch it", which is what it meant before and
+   * which made an empty box look like it had worked.
+   */
+  describe('clearing what can be cleared', () => {
+    it('takes a person off their organisation', async () => {
+      const tenant = await signUp();
+      const employer = await addParty(tenant, { kind: 'organisation', name: 'Fashion Ltd' });
+      const person = await addParty(tenant, {
+        name: 'Priya Kapoor',
+        organisationId: employer.id,
+      });
+
+      expect(person.organisationId).toBe(employer.id);
+
+      const cleared = await tenant
+        .as(app.http.patch(PARTY_PATHS.party(person.id)))
+        .send({ organisationId: '' })
+        .expect(200);
+
+      expect((cleared.body as PartyResponse).organisationId).toBeNull();
+      expect((cleared.body as PartyResponse).organisationName).toBeNull();
+    });
+
+    it('clears an email and a phone number', async () => {
+      const tenant = await signUp();
+      const person = await addParty(tenant, {
+        name: 'Priya Kapoor',
+        email: 'priya@example.test',
+        phone: '07700900123',
+      });
+
+      const cleared = await tenant
+        .as(app.http.patch(PARTY_PATHS.party(person.id)))
+        .send({ email: '', phone: '' })
+        .expect(200);
+
+      expect((cleared.body as PartyResponse).email).toBeNull();
+      expect((cleared.body as PartyResponse).phone).toBeNull();
+    });
+
+    it('still refuses a malformed value — emptying is the only new thing accepted', async () => {
+      const tenant = await signUp();
+      const person = await addParty(tenant, { name: 'Priya Kapoor' });
+
+      await tenant
+        .as(app.http.patch(PARTY_PATHS.party(person.id)))
+        .send({ email: 'not-an-email' })
+        .expect(422);
+    });
+
+    it('will not empty a name — a party with no name is not a party', async () => {
+      const tenant = await signUp();
+      const person = await addParty(tenant, { name: 'Priya Kapoor' });
+
+      await tenant
+        .as(app.http.patch(PARTY_PATHS.party(person.id)))
+        .send({ name: '' })
+        .expect(422);
+    });
+  });
+
   describe('roles', () => {
     it('adds and removes roles without recreating the party', async () => {
       const tenant = await signUp();
