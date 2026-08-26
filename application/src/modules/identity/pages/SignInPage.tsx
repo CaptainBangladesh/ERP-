@@ -35,9 +35,9 @@ export function SignInPage() {
             sign in, and saying so is the difference between an explanation and a
             mysterious logout. */}
         {hasExpired && (
-          <p role="status" className="mt-2 text-sm text-amber-700">
-            Your session expired. Sign in again to continue.
-          </p>
+          <div role="status" className="mt-3 rounded-lg bg-amber-50 p-3.5 text-xs font-medium text-amber-800 border border-amber-200 shadow-2xs">
+            🔒 Your session expired. All your uncommitted edits and lead drafts have been auto-saved to this browser and will be restored as soon as you sign back in.
+          </div>
         )}
       </header>
 

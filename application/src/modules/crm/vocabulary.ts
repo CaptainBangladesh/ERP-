@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   LEAD_FIELD_PATHS,
@@ -6,13 +7,14 @@ import {
   LEAD_STATUSES,
   LEAD_STATUS_LABEL_DEFAULTS,
   LEAD_STATUS_LABEL_PATHS,
+  SETTABLE_LEAD_STATUSES,
   type LeadFieldListResponse,
   type LeadFieldSummary,
   type LeadGroupListResponse,
   type LeadGroupSummary,
   type LeadSourceListResponse,
   type LeadSourceSummary,
-  type LeadStatus,
+  type LeadStatusKey,
   type LeadStatusLabelListResponse,
 } from '@erp/shared';
 import { api } from '../../api/client';
@@ -50,33 +52,72 @@ export function useLeadSources(): { sources: LeadSourceSummary[]; isLoading: boo
 }
 
 export interface StatusLabel {
+  status: LeadStatusKey;
   label: string;
   color: string;
+  isCustom: boolean;
+  order: number;
+  isSettable: boolean;
+}
+
+export interface LeadStatusVocabulary {
+  /** Every status this company has, in picker order: the four built-ins, then its own. */
+  list: StatusLabel[];
+  /** Just the ones an ordinary edit may move a lead into. */
+  settable: StatusLabel[];
+  /**
+   * What to draw for a status a lead is holding. Never returns undefined: a lead may hold a
+   * status that was removed under it, and a pill with no caption and no colour is worse than
+   * one that says the key out loud.
+   */
+  of: (status: LeadStatusKey) => StatusLabel;
+  isLoading: boolean;
 }
 
 /**
- * What this company calls each status, and the colour it shows it in.
+ * The statuses on this company's board — what each is called, the colour it shows in, and
+ * whether it is one a person may set directly.
  *
- * Always all four, even before the response lands — the contract's defaults stand in — so no
- * screen has to render a status pill with no caption on it while a request is in flight.
+ * Always at least the four built-ins, even before the response lands — the contract's defaults
+ * stand in — so no screen has to render a status pill with no caption on it while a request is
+ * in flight.
  */
-export function useLeadStatusLabels(): Record<LeadStatus, StatusLabel> {
+export function useLeadStatusLabels(): LeadStatusVocabulary {
   const query = useQuery({
     queryKey: [...LEAD_VOCABULARY_KEY, 'status-labels'],
     queryFn: () => api.get<LeadStatusLabelListResponse>(LEAD_STATUS_LABEL_PATHS.labels),
   });
 
-  const stored = new Map((query.data?.items ?? []).map((item) => [item.status, item]));
+  const list = useMemo<StatusLabel[]>(() => {
+    const stored = query.data?.items;
+    if (stored && stored.length > 0) return [...stored].sort((a, b) => a.order - b.order);
 
-  return Object.fromEntries(
-    LEAD_STATUSES.map((status) => [
+    return LEAD_STATUSES.map((status, order) => ({
       status,
-      {
-        label: stored.get(status)?.label ?? LEAD_STATUS_LABEL_DEFAULTS[status].label,
-        color: stored.get(status)?.color ?? LEAD_STATUS_LABEL_DEFAULTS[status].color,
+      label: LEAD_STATUS_LABEL_DEFAULTS[status].label,
+      color: LEAD_STATUS_LABEL_DEFAULTS[status].color,
+      isCustom: false,
+      order,
+      isSettable: (SETTABLE_LEAD_STATUSES as readonly string[]).includes(status),
+    }));
+  }, [query.data]);
+
+  const byKey = useMemo(() => new Map(list.map((item) => [item.status, item])), [list]);
+
+  return {
+    list,
+    settable: list.filter((item) => item.isSettable),
+    of: (status) =>
+      byKey.get(status) ?? {
+        status,
+        label: status,
+        color: '#94a3b8',
+        isCustom: true,
+        order: Number.MAX_SAFE_INTEGER,
+        isSettable: false,
       },
-    ]),
-  ) as Record<LeadStatus, StatusLabel>;
+    isLoading: query.isLoading,
+  };
 }
 
 /**

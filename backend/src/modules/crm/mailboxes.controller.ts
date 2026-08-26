@@ -56,7 +56,7 @@ export class MailboxesController {
     return { items };
   }
 
-  @Post('mailboxes/:id/disconnect')
+  @Post('mailboxes/:id/revoke')
   @RequirePermission('crm:leads:read')
   @HttpCode(HttpStatus.OK)
   async disconnectMailbox(

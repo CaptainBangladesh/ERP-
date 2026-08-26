@@ -172,4 +172,81 @@ export class DashboardService {
       totalCount,
     };
   }
+
+  async getLeadSourcePerformance(fromDate?: string, toDate?: string): Promise<any> {
+    const dateWhere: { gte?: Date; lte?: Date } = {};
+    if (fromDate) dateWhere.gte = new Date(fromDate);
+    if (toDate) {
+      const end = new Date(toDate);
+      if (toDate.length === 10) {
+        end.setHours(23, 59, 59, 999);
+      }
+      dateWhere.lte = end;
+    }
+
+    const leadWhere = Object.keys(dateWhere).length > 0 ? { createdAt: dateWhere } : {};
+
+    const [sources, leads] = await Promise.all([
+      this.prisma.leadSource.findMany({ orderBy: { createdAt: 'asc' } }),
+      this.prisma.lead.findMany({
+        where: leadWhere,
+        select: { id: true, sourceId: true, status: true, partyId: true },
+      }),
+    ]);
+
+    const sourceMap = new Map<string | null, { producedCount: number; convertedCount: number }>();
+    for (const source of sources) {
+      sourceMap.set(source.id, { producedCount: 0, convertedCount: 0 });
+    }
+
+    let unassignedProduced = 0;
+    let unassignedConverted = 0;
+    let totalProduced = 0;
+    let totalConverted = 0;
+
+    for (const lead of leads) {
+      totalProduced++;
+      const isConverted = lead.status === 'qualified' || lead.partyId !== null;
+      if (isConverted) totalConverted++;
+
+      if (lead.sourceId && sourceMap.has(lead.sourceId)) {
+        const stats = sourceMap.get(lead.sourceId)!;
+        stats.producedCount++;
+        if (isConverted) stats.convertedCount++;
+      } else if (lead.sourceId === null) {
+        unassignedProduced++;
+        if (isConverted) unassignedConverted++;
+      }
+    }
+
+    const resultSources: Array<{
+      sourceId: string | null;
+      sourceName: string | null;
+      producedCount: number;
+      convertedCount: number;
+    }> = sources.map((s) => {
+      const stats = sourceMap.get(s.id)!;
+      return {
+        sourceId: s.id,
+        sourceName: s.name,
+        producedCount: stats.producedCount,
+        convertedCount: stats.convertedCount,
+      };
+    });
+
+    if (unassignedProduced > 0) {
+      resultSources.push({
+        sourceId: null,
+        sourceName: null,
+        producedCount: unassignedProduced,
+        convertedCount: unassignedConverted,
+      });
+    }
+
+    return {
+      sources: resultSources,
+      totalProduced,
+      totalConverted,
+    };
+  }
 }

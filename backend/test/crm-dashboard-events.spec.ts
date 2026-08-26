@@ -56,13 +56,15 @@ describe('crm: pipeline dashboards and domain events', () => {
     await resetDatabase(app);
   });
 
+  let companySeq = 0;
   async function signUp(overrides: Partial<SignUpRequest> = {}): Promise<Tenant> {
+    companySeq++;
     const response = await app.http
       .post(AUTH_PATHS.signUp)
       .send({
-        companyName: 'Acme Corp',
+        companyName: `Acme Corp ${companySeq}`,
         name: 'John Doe',
-        email: 'john@acme.test',
+        email: `john${companySeq}@acme.test`,
         password: 'correct-horse-battery',
         ...overrides,
       })

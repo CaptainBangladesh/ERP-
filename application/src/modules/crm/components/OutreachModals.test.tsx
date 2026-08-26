@@ -81,22 +81,20 @@ describe('CRM Outreach Modals', () => {
       render(<EmailTemplatesModal isOpen={true} onClose={vi.fn()} />);
 
       expect(await screen.findByText('Welcome Template')).toBeInTheDocument();
-      expect(screen.getByText(/New Template/i)).toBeInTheDocument();
 
-      // Click New Template
-      fireEvent.click(screen.getByText(/New Template/i));
+      fireEvent.click(screen.getByRole('button', { name: /New template/i }));
 
-      expect(screen.getByText('New Template')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'New template' })).toBeInTheDocument();
 
       // Fill out form
-      fireEvent.change(screen.getByPlaceholderText('e.g. Sales Intro & Demo Pitch'), {
+      fireEvent.change(screen.getByPlaceholderText('e.g. Sales intro and demo pitch'), {
         target: { value: 'Follow Up' },
       });
       fireEvent.change(screen.getByPlaceholderText('Subject line with {{lead.name}}...'), {
         target: { value: 'Checking in {{lead.name}}' },
       });
       fireEvent.change(
-        screen.getByPlaceholderText('<p>Hi {{lead.name}},</p><p>Welcome to our platform!</p>'),
+        screen.getByPlaceholderText('<p>Hi {{lead.name}},</p><p>Welcome aboard.</p>'),
         { target: { value: '<p>Hi {{lead.name}}</p>' } },
       );
 
@@ -111,7 +109,7 @@ describe('CRM Outreach Modals', () => {
       });
       (api.get as any).mockResolvedValueOnce({ items: [] });
 
-      fireEvent.click(screen.getByText('Save Template'));
+      fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
 
       await waitFor(() => {
         expect(api.post).toHaveBeenCalledWith('/api/crm/email-templates', {
@@ -161,11 +159,11 @@ describe('CRM Outreach Modals', () => {
         />,
       );
 
-      expect(await screen.findByText('Alice Smith')).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: /Email Alice Smith/ })).toBeInTheDocument();
       expect(screen.getByText('Sales Rep (rep@company.com)')).toBeInTheDocument();
 
       // Select template
-      fireEvent.change(screen.getByLabelText(/Select Template/i), {
+      fireEvent.change(screen.getByLabelText('Template'), {
         target: { value: 'tpl_1' },
       });
 
@@ -175,7 +173,7 @@ describe('CRM Outreach Modals', () => {
         activityId: 'act_99',
       });
 
-      fireEvent.click(screen.getByText('Send Email'));
+      fireEvent.click(screen.getByRole('button', { name: 'Send email' }));
 
       await waitFor(() => {
         expect(api.post).toHaveBeenCalledWith('/api/crm/leads/lead_123/send-email', {

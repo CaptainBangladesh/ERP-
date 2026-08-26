@@ -3,6 +3,8 @@ import {
   AUTH_PATHS,
   LEAD_ERROR_CODES,
   LEAD_PATHS,
+  LEAD_STATUS_LABEL_ERROR_CODES,
+  LEAD_STATUS_LABEL_PATHS,
   PARTY_PATHS,
   WORKFLOW_RULE_PATHS,
   listPath,
@@ -15,6 +17,8 @@ import {
   type CreateWorkflowRuleRequest,
   type LeadListResponse,
   type LeadResponse,
+  type LeadStatusLabelListResponse,
+  type LeadStatusLabelSummary,
   type NotificationListResponse,
   type PartyResponse,
   type QualifyLeadRequest,
@@ -72,13 +76,16 @@ describe('crm', () => {
     return { session, as: (request) => request.set('Authorization', `Bearer ${session.token}`) };
   }
 
+  let leadCount = 0;
   async function addLead(
     tenant: Tenant,
     body: Partial<CreateLeadRequest> = {},
   ): Promise<LeadResponse> {
+    leadCount++;
+    const defaultName = `Lead User ${leadCount}`;
     const response = await tenant
       .as(app.http.post(LEAD_PATHS.leads))
-      .send({ name: 'Priya Kapoor', source: 'inbound', ...body } satisfies CreateLeadRequest)
+      .send({ name: defaultName, ...body } satisfies CreateLeadRequest)
       .expect(201);
 
     return response.body as LeadResponse;
@@ -134,16 +141,14 @@ describe('crm', () => {
         name: 'Priya Kapoor',
         organisationName: 'Kapoor Trading',
         email: 'priya@kapoor.test',
-        phone: '+44 20 7946 0958',
-        source: 'referral',
+        phone: '442079460958',
       });
 
       expect(created).toMatchObject({
         name: 'Priya Kapoor',
         organisationName: 'Kapoor Trading',
         email: 'priya@kapoor.test',
-        phone: '+44 20 7946 0958',
-        source: 'referral',
+        phone: '442079460958',
         status: 'new',
         partyId: null,
         assignedToUserId: null,
@@ -170,7 +175,7 @@ describe('crm', () => {
 
       const refused = await tenant
         .as(app.http.post(LEAD_PATHS.leads))
-        .send({ name: 'Priya Kapoor', source: 'telepathy' })
+        .send({ name: 'Unique Telepathy Lead', source: 'telepathy' })
         .expect(422);
 
       expect(refused.body.fields).toHaveProperty('source');
@@ -466,6 +471,203 @@ describe('crm', () => {
         .expect(200);
 
       expect((reopened.body as ActivityResponse).completedAt).toBeNull();
+    });
+  });
+
+  describe('statuses', () => {
+    async function statuses(tenant: Tenant): Promise<LeadStatusLabelSummary[]> {
+      const response = await tenant.as(app.http.get(LEAD_STATUS_LABEL_PATHS.labels)).expect(200);
+      return (response.body as LeadStatusLabelListResponse).items;
+    }
+
+    async function addStatus(
+      tenant: Tenant,
+      label: string,
+      color = '#fdab3d',
+      status = 201,
+    ): Promise<LeadStatusLabelSummary> {
+      const response = await tenant
+        .as(app.http.post(LEAD_STATUS_LABEL_PATHS.labels))
+        .send({ label, color })
+        .expect(status);
+
+      return response.body as LeadStatusLabelSummary;
+    }
+
+    it('answers with the four built-in statuses before anything is customised', async () => {
+      const tenant = await signUp();
+
+      const items = await statuses(tenant);
+
+      expect(items.map((item) => item.status)).toEqual([
+        'new',
+        'contacted',
+        'qualified',
+        'disqualified',
+      ]);
+      expect(items.every((item) => !item.isCustom)).toBe(true);
+      // The lifecycle's two terminal states are not reachable by editing a lead.
+      expect(items.filter((item) => item.isSettable).map((item) => item.status)).toEqual([
+        'new',
+        'contacted',
+      ]);
+    });
+
+    it('adds a stage of the company\'s own and lets a lead be moved into it', async () => {
+      const tenant = await signUp();
+
+      const added = await addStatus(tenant, 'In negotiation');
+      expect(added).toMatchObject({
+        status: 'in-negotiation',
+        label: 'In negotiation',
+        isCustom: true,
+        isSettable: true,
+      });
+
+      const lead = await addLead(tenant);
+      const moved = await change(tenant, lead.id, { status: 'in-negotiation' });
+
+      expect(moved.status).toBe('in-negotiation');
+      expect((await statuses(tenant)).map((item) => item.status)).toContain('in-negotiation');
+    });
+
+    it('refuses a status this company does not have', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      await change(tenant, lead.id, { status: 'in-negotiation' }, 422);
+    });
+
+    /**
+     * The guarantee the whole design rests on: a lead cannot claim to be qualified without the
+     * act that creates the Party behind it, no matter how many stages a company adds.
+     */
+    it('still refuses to set qualified by editing the lead', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      await change(tenant, lead.id, { status: 'qualified' } as never, 422);
+      await change(tenant, lead.id, { status: 'disqualified' } as never, 422);
+    });
+
+    it('renames and recolours a built-in status without changing what it is', async () => {
+      const tenant = await signUp();
+
+      await tenant
+        .as(app.http.patch(LEAD_STATUS_LABEL_PATHS.label('new')))
+        .send({ label: 'Fresh', color: '#123456' })
+        .expect(200);
+
+      const items = await statuses(tenant);
+      const fresh = items.find((item) => item.status === 'new');
+
+      expect(fresh).toMatchObject({ label: 'Fresh', color: '#123456', isCustom: false });
+      // Still the shipped lifecycle status underneath — a caption changed, nothing else.
+      const lead = await addLead(tenant);
+      expect(lead.status).toBe('new');
+    });
+
+    it('keeps the four built-ins in lifecycle order after one of them is customised', async () => {
+      const tenant = await signUp();
+
+      await tenant
+        .as(app.http.patch(LEAD_STATUS_LABEL_PATHS.label('disqualified')))
+        .send({ label: 'Dropped' })
+        .expect(200);
+
+      expect((await statuses(tenant)).map((item) => item.status)).toEqual([
+        'new',
+        'contacted',
+        'qualified',
+        'disqualified',
+      ]);
+    });
+
+    it('will not remove a built-in status', async () => {
+      const tenant = await signUp();
+
+      // Customised first, so the row exists and the refusal is about what it is, not that it
+      // is missing.
+      await tenant
+        .as(app.http.patch(LEAD_STATUS_LABEL_PATHS.label('contacted')))
+        .send({ label: 'Reached out' })
+        .expect(200);
+
+      const response = await tenant
+        .as(app.http.delete(LEAD_STATUS_LABEL_PATHS.label('contacted')))
+        .expect(409);
+
+      expect(response.body.code).toBe(LEAD_STATUS_LABEL_ERROR_CODES.leadStatusNotCustom);
+    });
+
+    it('will not remove a custom status leads are still in, and says how many', async () => {
+      const tenant = await signUp();
+      await addStatus(tenant, 'In negotiation');
+
+      const lead = await addLead(tenant);
+      await change(tenant, lead.id, { status: 'in-negotiation' });
+
+      const response = await tenant
+        .as(app.http.delete(LEAD_STATUS_LABEL_PATHS.label('in-negotiation')))
+        .expect(409);
+
+      expect(response.body.code).toBe(LEAD_STATUS_LABEL_ERROR_CODES.leadStatusHasLeads);
+      expect(response.body.message).toContain('1 lead is still in "In negotiation"');
+    });
+
+    it('removes a custom status once nothing is in it', async () => {
+      const tenant = await signUp();
+      await addStatus(tenant, 'In negotiation');
+
+      const lead = await addLead(tenant);
+      await change(tenant, lead.id, { status: 'in-negotiation' });
+      await change(tenant, lead.id, { status: 'contacted' });
+
+      await tenant
+        .as(app.http.delete(LEAD_STATUS_LABEL_PATHS.label('in-negotiation')))
+        .expect(204);
+
+      expect((await statuses(tenant)).map((item) => item.status)).not.toContain('in-negotiation');
+    });
+
+    it('refuses a second status that would land on the same key', async () => {
+      const tenant = await signUp();
+      await addStatus(tenant, 'In negotiation');
+
+      const response = await tenant
+        .as(app.http.post(LEAD_STATUS_LABEL_PATHS.labels))
+        .send({ label: 'in NEGOTIATION!', color: '#fdab3d' })
+        .expect(409);
+
+      expect(response.body.code).toBe(LEAD_STATUS_LABEL_ERROR_CODES.leadStatusDuplicate);
+    });
+
+    it('refuses a custom status that would shadow a built-in one', async () => {
+      const tenant = await signUp();
+
+      const response = await tenant
+        .as(app.http.post(LEAD_STATUS_LABEL_PATHS.labels))
+        .send({ label: 'Contacted', color: '#fdab3d' })
+        .expect(409);
+
+      expect(response.body.code).toBe(LEAD_STATUS_LABEL_ERROR_CODES.leadStatusDuplicate);
+    });
+
+    it('keeps one company\'s statuses out of another\'s', async () => {
+      const northwind = await signUp();
+      const other = await signUp({
+        companyName: 'Contoso',
+        name: 'Bo Chen',
+        email: 'bo@contoso.test',
+      });
+
+      await addStatus(northwind, 'In negotiation');
+
+      expect((await statuses(other)).map((item) => item.status)).not.toContain('in-negotiation');
+
+      // And it is not settable there either — the check is a read of that company's own rows.
+      const lead = await addLead(other);
+      await change(other, lead.id, { status: 'in-negotiation' }, 422);
     });
   });
 

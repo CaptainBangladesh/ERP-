@@ -28,5 +28,14 @@ export async function truncateAllTables(prisma: PrismaClient): Promise<void> {
   const quoted = tables.map((t) => `"public"."${t.tablename}"`).join(', ');
   // RESTART IDENTITY so sequences do not drift across tests; CASCADE so foreign keys
   // between modules do not dictate truncation order.
-  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${quoted} RESTART IDENTITY CASCADE`);
+  try {
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${quoted} RESTART IDENTITY CASCADE`);
+  } catch {
+    // If TRUNCATE encounters a deadlock or exclusive lock conflict, fallback to DELETE
+    await prisma.$executeRawUnsafe(`SET session_replication_role = 'replica';`);
+    for (const t of tables) {
+      await prisma.$executeRawUnsafe(`DELETE FROM "public"."${t.tablename}";`);
+    }
+    await prisma.$executeRawUnsafe(`SET session_replication_role = 'origin';`);
+  }
 }

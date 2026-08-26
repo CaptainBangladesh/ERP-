@@ -8,12 +8,12 @@ const TRANSPARENT_1X1_GIF = Buffer.from(
   'base64',
 );
 
-@Controller(CRM_ROUTE)
+@Controller()
 export class PublicCampaignsController {
   constructor(private readonly campaignsService: CampaignsService) {}
 
   @Public()
-  @Get('e/:token.gif')
+  @Get([`${CRM_ROUTE}/e/:token.gif`, 'api/public/campaigns/open/:token'])
   @Header('Content-Type', 'image/gif')
   @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
   async trackOpen(
@@ -28,7 +28,7 @@ export class PublicCampaignsController {
   }
 
   @Public()
-  @Get('unsubscribe/:token')
+  @Get([`${CRM_ROUTE}/unsubscribe/:token`, 'api/public/campaigns/unsubscribe/:token'])
   async unsubscribe(
     @Param('token') token: string,
   ): Promise<PublicUnsubscribeResponse> {

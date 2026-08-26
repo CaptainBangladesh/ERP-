@@ -448,7 +448,7 @@ export function LeadDetail({
                       onAssign={(userId) =>
                         change.mutate(() =>
                           api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), {
-                            assignedToUserId: userId,
+                            assignedToUserId: userId || null,
                           } satisfies UpdateLeadRequest),
                         )
                       }
@@ -779,6 +779,7 @@ function LifecycleActions({
           type="button"
           disabled={pending}
           onClick={onReopen}
+          aria-label="Reopen"
           className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 shadow-2xs disabled:opacity-50"
         >
           Re-open

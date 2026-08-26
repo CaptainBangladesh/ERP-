@@ -26,8 +26,15 @@ import { LEAD_VOCABULARY_KEY, useLeadGroups, useLeadSources } from '../vocabular
  * Deleting either is refused by the server while leads still point at it, and the refusal says
  * what to do instead — so this shows the message rather than trying to predict it.
  */
-export function BoardSetupModal({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<'groups' | 'sources'>('groups');
+export function BoardSetupModal({
+  onClose,
+  initialTab = 'groups',
+}: {
+  onClose: () => void;
+  /** Which list the caller was reaching for, so "New source" does not land on Groups. */
+  initialTab?: 'groups' | 'sources';
+}) {
+  const [tab, setTab] = useState<'groups' | 'sources'>(initialTab);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">

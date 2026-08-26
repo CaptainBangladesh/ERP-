@@ -6,8 +6,8 @@ import {
   LEAD_FIELD_TYPES,
   LEAD_QUALIFY_ACTIONS,
   LEAD_SOURCE_FIELDS,
+  LEAD_SOURCES,
   MONEY_SCALE,
-  SETTABLE_LEAD_STATUSES,
   STAGE_FIELDS,
   STAGE_OUTCOMES,
   WORKFLOW_ACTION_TYPES,
@@ -17,7 +17,7 @@ import {
   type LeadCustomValues,
   type LeadFieldType,
   type LeadQualifyAction,
-  type SettableLeadStatus,
+  type SettableLeadStatusKey,
   type SettableStageOutcome,
   type WorkflowActionType,
   type WorkflowTriggerType,
@@ -71,10 +71,32 @@ const SOURCE_ID = identifier({
   invalid: 'That is not a source.',
 });
 
-const STATUS = oneOf<SettableLeadStatus>(SETTABLE_LEAD_STATUSES, {
-  missing: 'Say what status this lead is in.',
-  invalid: 'That is not a status you can set directly.',
+/**
+ * A status an ordinary edit may set.
+ *
+ * Only the *shape* is checked here, not the value. Since a company can add stages of its own,
+ * the list of acceptable statuses is a set of rows rather than a constant, and a validator that
+ * runs before any query cannot read rows. `leads.service` asks `settableStatuses()` on every
+ * write; this rule's job is to make sure what reaches that check is a status key at all.
+ *
+ * The two unsettable built-ins are refused here rather than there, because that refusal is
+ * about the shipped lifecycle and is true for every company — no read can change the answer.
+ */
+const STATUS = rule<SettableLeadStatusKey>('Say what status this lead is in.', (value) => {
+  const given = typeof value === 'string' ? value.trim() : '';
+  if (given.length === 0) return refused('Say what status this lead is in.');
+
+  if (given === 'qualified' || given === 'disqualified') {
+    return refused(
+      'Qualified and Disqualified are reached by qualifying or disqualifying the lead.',
+    );
+  }
+
+  return STATUS_KEY.test(given) ? accepted(given) : refused('That is not a status.');
 });
+
+/** The form `LeadStatusLabel.status` takes — what `statusKeyFor` derives from a label. */
+const STATUS_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const ASSIGNEE = identifier({
   missing: 'Choose a colleague to assign this to.',
@@ -173,6 +195,15 @@ const STATUS_LABEL = {
   tooLong: 'Use 60 characters or fewer.',
 } as const;
 
+/**
+ * Adding a stage of this company's own. Both fields are required — a status with no colour
+ * would render as one more grey pill in a picker whose whole job is being scannable.
+ */
+export const CreateLeadStatusLabelBody = validator({
+  label: text(STATUS_LABEL),
+  color: text(COLOR),
+});
+
 export const UpdateLeadStatusLabelBody = validator({
   label: optional(text(STATUS_LABEL)),
   color: optional(text(COLOR)),
@@ -266,11 +297,17 @@ const CUSTOM_VALUES: FieldRule<LeadCustomValues> = rule('Enter the custom field 
   return accepted(value as LeadCustomValues);
 });
 
+const LEAD_SOURCE_TYPE = oneOf(LEAD_SOURCES, {
+  missing: 'Choose a source.',
+  invalid: 'That is not a source.',
+});
+
 export const CreateLeadBody = validator({
   name: text(LEAD_NAME),
   organisationName: optional(text(ORGANISATION_NAME)),
   email: optional(email(CONTACT_EMAIL)),
   phone: optional(text(PHONE)),
+  source: optional(LEAD_SOURCE_TYPE),
   sourceId: optional(SOURCE_ID),
   assignedToUserId: optional(ASSIGNEE),
   groupId: optional(GROUP_ID),

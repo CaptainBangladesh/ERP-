@@ -161,8 +161,8 @@ describe('CRM Email Campaigns', () => {
     expect(batchData.status).toBe('completed');
 
     expect(devMailer.sent.length).toBe(initialSent + 2);
-    const sentMail = devMailer.sent[devMailer.sent.length - 1]!;
-    expect(sentMail.to).toBe('alice@example.com');
+    const sentMail = devMailer.sent.slice(initialSent).find((m) => m.to === 'alice@example.com')!;
+    expect(sentMail).toBeDefined();
     expect(sentMail.subject).toBe('Special offer for Alice Smith');
     expect(sentMail.html).toContain('/api/crm/e/');
     expect(sentMail.html).toContain('/api/crm/unsubscribe/');

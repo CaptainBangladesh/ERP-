@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AUTH_PATHS,
@@ -46,6 +46,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   });
   const [hasExpired, setHasExpired] = useState(false);
 
+  /**
+   * The current token, readable from the refusal handler.
+   *
+   * A ref rather than the state value, because the handler is registered once and would
+   * otherwise close over whichever token was current when it was registered — which is the
+   * stale reading the check below exists to avoid.
+   */
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+
   const sessionQuery = useQuery({
     queryKey: ['session', token],
     queryFn: () => api.get<Session>(AUTH_PATHS.session),
@@ -55,8 +65,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const forget = useCallback(
     (expired: boolean) => {
-      setAuthToken(undefined);
+      // Storage first: the api client falls back to stored token when its own module-level
+      // copy has been wiped by a hot reload, so clearing that fallback has to happen before
+      // the in-memory one or a request in between would still find a token to send.
       writeStoredToken(undefined);
+      setAuthToken(undefined);
       setHasExpired(expired);
       setToken(undefined);
       // Everything cached was fetched as somebody. None of it belongs to the next person
@@ -70,8 +83,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // the one that asks who you are. A session runs out during whatever the user is doing,
   // so watching a single query would leave them clicking around an application that has
   // quietly stopped working.
+  //
+  // But only the session that was actually refused. Several requests are usually in flight
+  // when one runs out, and their refusals keep arriving while the person is signing back
+  // in — so a refusal is acted on only if the token it carried is still the current one.
+  // Without that check, a straggler from the previous session signs the new one out the
+  // instant it is adopted, and the screen goes on showing somebody who is signed in while
+  // every request behind it is anonymous.
   useEffect(() => {
-    setSessionUnusableHandler((code) => forget(code === ERROR_CODES.sessionExpired));
+    setSessionUnusableHandler((code, refusedToken) => {
+      if (refusedToken !== tokenRef.current) return;
+      forget(code === ERROR_CODES.sessionExpired);
+    });
     return () => setSessionUnusableHandler(undefined);
   }, [forget]);
 

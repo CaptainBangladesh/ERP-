@@ -7,16 +7,19 @@ import {
   type LeadListResponse,
   type LeadResponse,
   type LeadSource,
-  type LeadStatus,
   type LeadSummary,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
+import { ValidationException } from '../../http/validation-exception';
 import { defined } from '../../prisma/columns';
 import { DomainEvents } from '../../platform/events';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { PartyDirectory } from '../parties';
+import { LeadFieldsService } from './lead-fields.service';
+import { LeadStatusLabelsService } from './lead-status-labels.service';
+import { leadStatusNotSettable } from './refusals';
 import { CreateLeadBody, LEAD_LIST, QualifyLeadBody, UpdateLeadBody } from './schemas';
 import { WorkflowRulesService } from './workflow-rules.service';
 
@@ -40,9 +43,28 @@ export class LeadsService {
     private readonly parties: PartyDirectory,
     private readonly workflowRulesService: WorkflowRulesService,
     private readonly events: DomainEvents,
+    private readonly statuses: LeadStatusLabelsService,
+    private readonly leadFields: LeadFieldsService,
   ) { }
 
+  /**
+   * Refuses a status this company does not have.
+   *
+   * The request validator has already checked that what arrived is shaped like a status key and
+   * is not one of the two the lifecycle owns. What it could not check is membership: a company
+   * can add stages of its own, so the acceptable set is a table read, and a key that names no
+   * status would otherwise be written straight into `Lead.status` and show up on the board as a
+   * pill with no colour and no name.
+   */
+  private async assertSettable(status: string | undefined): Promise<void> {
+    if (status === undefined) return;
+    const settable = await this.statuses.settableStatuses();
+    if (!settable.has(status)) throw leadStatusNotSettable();
+  }
+
   async createLead(input: Valid<typeof CreateLeadBody>): Promise<LeadResponse> {
+    const customValues = await this.leadFields.validate(input.customValues);
+
     const lead = await this.prisma.lead.create({
       data: companyApplied<Prisma.LeadUncheckedCreateInput>({
         name: input.name,
@@ -52,6 +74,7 @@ export class LeadsService {
         sourceId: input.sourceId ?? null,
         groupId: input.groupId ?? null,
         assignedToUserId: input.assignedToUserId ?? null,
+        customValues: customValues as Prisma.InputJsonValue,
       }),
     });
 
@@ -78,7 +101,13 @@ export class LeadsService {
     input: Valid<typeof UpdateLeadBody>,
     actor?: { userId: string; name: string },
   ): Promise<LeadResponse> {
-    await this.requireLead(id);
+    const existing = await this.requireLead(id);
+    await this.assertSettable(input.status);
+
+    const customValues =
+      input.customValues !== undefined
+        ? await this.leadFields.validate(input.customValues, existing.customValues as LeadCustomValues)
+        : undefined;
 
     const lead = await this.prisma.lead.update({
       where: { id },
@@ -91,6 +120,7 @@ export class LeadsService {
         ...defined('groupId', (input as any).groupId),
         ...defined('status', input.status),
         ...defined('assignedToUserId', input.assignedToUserId),
+        ...defined('customValues', customValues as Prisma.InputJsonValue),
       },
     });
 
@@ -216,6 +246,37 @@ export class LeadsService {
     const lead = await this.requireLead(id);
     await this.prisma.lead.delete({ where: { id: lead.id } });
   }
+
+  async cleanDuplicates(): Promise<{ removedCount: number }> {
+    const allLeads = await this.prisma.lead.findMany({
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const seen = new Map<string, string>();
+    const idsToDelete: string[] = [];
+
+    for (const lead of allLeads) {
+      const nameKey = lead.name.trim().toLowerCase();
+      const emailKey = lead.email ? lead.email.trim().toLowerCase() : '';
+      const phoneKey = lead.phone ? lead.phone.replace(/\D/g, '') : '';
+      
+      const key = nameKey || (emailKey ? `email:${emailKey}` : (phoneKey ? `phone:${phoneKey}` : lead.id));
+
+      if (seen.has(key)) {
+        idsToDelete.push(lead.id);
+      } else {
+        seen.set(key, lead.id);
+      }
+    }
+
+    if (idsToDelete.length > 0) {
+      await this.prisma.lead.deleteMany({
+        where: { id: { in: idsToDelete } },
+      });
+    }
+
+    return { removedCount: idsToDelete.length };
+  }
 }
 
 function describe(row: any): LeadSummary {
@@ -228,7 +289,7 @@ function describe(row: any): LeadSummary {
     source: (row.source || 'inbound') as LeadSource,
     sourceId: row.sourceId ?? null,
     sourceName: row.sourceRelation?.name || row.sourceName || null,
-    status: row.status as LeadStatus,
+    status: row.status,
     assignedToUserId: row.assignedToUserId,
     partyId: row.partyId,
     groupId: row.groupId ?? null,

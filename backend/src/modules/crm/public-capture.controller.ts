@@ -1,22 +1,22 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
-import { CRM_ROUTE, type CaptureSubmitResponse, type PublicFormConfigResponse } from '@erp/shared';
+import { type CaptureSubmitResponse, type PublicFormConfigResponse } from '@erp/shared';
 import { Public } from '../../platform/auth';
 import { validated, type Valid } from '../../platform/validation';
 import { CaptureSourcesService } from './capture-sources.service';
 import { SubmitCaptureBody } from './schemas';
 
-@Controller(CRM_ROUTE)
+@Controller()
 export class PublicCaptureController {
   constructor(private readonly captureSourcesService: CaptureSourcesService) {}
 
   @Public()
-  @Get('capture/:token/form')
+  @Get('api/public/capture/:token')
   async getFormConfig(@Param('token') token: string): Promise<PublicFormConfigResponse> {
     return this.captureSourcesService.getPublicFormConfig(token);
   }
 
   @Public()
-  @Post('capture/:token')
+  @Post('api/public/capture/:token')
   @HttpCode(HttpStatus.OK)
   async submitCapture(
     @Param('token') token: string,

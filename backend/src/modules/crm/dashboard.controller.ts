@@ -33,4 +33,12 @@ export class DashboardController {
     const toDate = typeof query.toDate === 'string' ? query.toDate : undefined;
     return this.dashboardService.getActivityCounts(fromDate, toDate);
   }
+
+  @Get('dashboard/lead-source-performance')
+  @RequirePermission('crm:dashboard:read')
+  async leadSourcePerformance(@Query() query: Record<string, unknown>): Promise<any> {
+    const fromDate = typeof query.fromDate === 'string' ? query.fromDate : undefined;
+    const toDate = typeof query.toDate === 'string' ? query.toDate : undefined;
+    return this.dashboardService.getLeadSourcePerformance(fromDate, toDate);
+  }
 }

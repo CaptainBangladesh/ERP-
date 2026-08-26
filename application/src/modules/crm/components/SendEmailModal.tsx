@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   EMAIL_TEMPLATE_PATHS,
   LEAD_EMAIL_PATHS,
@@ -12,6 +12,7 @@ import {
   type SendLeadEmailResponse,
 } from '@erp/shared';
 import { api } from '../../../api/client';
+import { Button, Modal } from '@erp/shared/ui';
 
 interface SendEmailModalProps {
   isOpen: boolean;
@@ -32,6 +33,13 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
   onSuccess,
   onOpenMailboxesModal,
 }) => {
+  /**
+   * The submit button sits on the dialog's footer bar, which is outside the form element —
+   * that is what keeps it reachable without scrolling a long compose box. `requestSubmit`
+   * rather than `submit` so the form's own validation and `onSubmit` still run.
+   */
+  const formRef = useRef<HTMLFormElement>(null);
+
   const [mailboxes, setMailboxes] = useState<MailboxConnectionSummary[]>([]);
   const [templates, setTemplates] = useState<EmailTemplateSummary[]>([]);
 
@@ -176,93 +184,110 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-2xl w-full p-6 shadow-2xl space-y-5 text-slate-100 max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <div>
-            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-              <span>✉️</span> Send 1-on-1 Email to <span className="text-amber-400">{leadName}</span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-1">
-              Recipient: <code className="text-slate-300 font-mono">{leadEmail || 'No email provided'}</code>
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 text-lg p-1 rounded-lg hover:bg-slate-800 transition"
+    <Modal
+      onClose={onClose}
+      icon="✉️"
+      title={`Email ${leadName}`}
+      description={
+        leadEmail ? (
+          <>
+            Going to <span className="font-mono text-slate-700">{leadEmail}</span>
+          </>
+        ) : (
+          <span className="font-semibold text-amber-700">
+            This lead has no email address on file.
+          </span>
+        )
+      }
+      size="lg"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={sending || mailboxes.length === 0}
+            onClick={() => formRef.current?.requestSubmit()}
           >
-            ✕
-          </button>
-        </div>
-
+            {sending ? 'Sending...' : 'Send email'}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
         {error && (
-          <div className="p-3 bg-red-950/60 border border-red-800/80 rounded-lg text-red-300 text-xs flex items-center justify-between">
+          <div
+            role="alert"
+            className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700"
+          >
             <span>{error}</span>
-            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-200">
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              aria-label="Dismiss"
+              className="shrink-0 text-red-400 transition hover:text-red-700"
+            >
               ✕
             </button>
           </div>
         )}
 
+        {/*
+          Nothing on this form can work without a mailbox, so the blocker is stated once at the
+          top with the fix attached, rather than left to be discovered when Send does nothing.
+        */}
         {mailboxes.length === 0 && !loading && (
-          <div className="p-4 bg-amber-950/40 border border-amber-800/80 rounded-xl text-amber-200 text-xs flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
             <div>
-              <span className="font-bold">No active mailbox connected!</span>
-              <p className="text-[11px] text-amber-300/80 mt-0.5">
-                Connect your Gmail or Outlook account before sending emails.
+              <p className="text-xs font-bold text-amber-900">No mailbox connected</p>
+              <p className="mt-0.5 text-[11px] text-amber-800">
+                Connect Gmail or Outlook before sending.
               </p>
             </div>
             {onOpenMailboxesModal && (
-              <button
+              <Button
+                variant="primary"
                 onClick={() => {
                   onClose();
                   onOpenMailboxesModal();
                 }}
-                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg shadow transition"
               >
-                Connect Mailbox
-              </button>
+                Connect mailbox
+              </Button>
             )}
           </div>
         )}
 
-        {/* Tab Toggle */}
-        <div className="flex border-b border-slate-800 gap-4 text-xs font-semibold">
+        <div className="flex gap-1 border-b border-slate-200 text-xs font-semibold">
           <button
             type="button"
             onClick={() => setPreviewTab('compose')}
-            className={`pb-2 border-b-2 transition ${
-              previewTab === 'compose'
-                ? 'border-amber-500 text-amber-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
+            aria-current={previewTab === 'compose' ? 'true' : undefined}
+            className={TAB(previewTab === 'compose')}
           >
-            Compose Email
+            Compose
           </button>
           <button
             type="button"
             onClick={handleGeneratePreview}
-            className={`pb-2 border-b-2 transition ${
-              previewTab === 'preview'
-                ? 'border-amber-500 text-amber-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
+            aria-current={previewTab === 'preview' ? 'true' : undefined}
+            className={TAB(previewTab === 'preview')}
           >
-            Live Preview
+            Preview
           </button>
         </div>
 
-        <form onSubmit={handleSend} className="flex-1 overflow-y-auto space-y-4 pr-1">
+        <form ref={formRef} onSubmit={handleSend} className="flex flex-col gap-4">
           {previewTab === 'compose' ? (
             <>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="mailbox-select" className="block text-xs font-semibold text-slate-300 mb-1">From Mailbox</label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-semibold text-slate-700">From</span>
                   <select
                     id="mailbox-select"
                     value={selectedMailboxId}
                     onChange={(e) => setSelectedMailboxId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-amber-500"
+                    className={INPUT}
                   >
                     {mailboxes.map((m) => (
                       <option key={m.id} value={m.id}>
@@ -270,100 +295,101 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
                       </option>
                     ))}
                   </select>
-                </div>
+                </label>
 
-                <div>
-                  <label htmlFor="template-select" className="block text-xs font-semibold text-slate-300 mb-1">
-                    Select Template (Optional)
-                  </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-semibold text-slate-700">Template</span>
                   <select
                     id="template-select"
                     value={selectedTemplateId}
                     onChange={(e) => handleSelectTemplate(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-amber-500"
+                    className={INPUT}
                   >
-                    <option value="">-- Custom Email --</option>
+                    <option value="">Write a one-off email</option>
                     {templates.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name}
                       </option>
                     ))}
                   </select>
-                </div>
+                </label>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Subject</label>
+              <label className="flex flex-col gap-1.5">
+                <span className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  Subject
+                  {selectedTemplateId && (
+                    <span className="font-normal text-slate-400">— set by the template</span>
+                  )}
+                </span>
                 <input
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                   placeholder="e.g. Quick intro call with {{lead.name}}"
                   disabled={!!selectedTemplateId}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-amber-500 disabled:opacity-60"
+                  className={`${INPUT} font-mono disabled:bg-slate-50 disabled:text-slate-500`}
                 />
-              </div>
+              </label>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Email Body (HTML/Text)</label>
+              <label className="flex flex-col gap-1.5">
+                <span className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  Body
+                  {selectedTemplateId && (
+                    <span className="font-normal text-slate-400">— set by the template</span>
+                  )}
+                </span>
                 <textarea
-                  rows={8}
+                  rows={9}
                   value={htmlBody}
                   onChange={(e) => setHtmlBody(e.target.value)}
-                  placeholder="Hi {{lead.name}},&#10;&#10;I wanted to follow up on our previous conversation..."
+                  placeholder="Hi {{lead.name}},&#10;&#10;I wanted to follow up on our conversation..."
                   disabled={!!selectedTemplateId}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-amber-500 disabled:opacity-60"
+                  className={`${INPUT} font-mono disabled:bg-slate-50 disabled:text-slate-500`}
                 />
-              </div>
+              </label>
             </>
           ) : (
-            <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-4 font-sans">
-              <div className="border-b border-slate-800 pb-3 space-y-1">
-                <div className="text-xs text-slate-400">
-                  <span className="font-semibold text-slate-300">Subject:</span>{' '}
-                  <span className="text-amber-300 font-bold">{previewData?.subject}</span>
+            /*
+              The preview is dressed as the mail client it is standing in for — a white sheet
+              with the headers above it — rather than as another panel of this form, so what is
+              being checked is obviously the message and not the editor.
+            */
+            <div className="overflow-hidden rounded-xl border border-slate-200">
+              <div className="flex flex-col gap-1 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs text-slate-500">
+                  <span className="font-semibold text-slate-700">To</span>{' '}
+                  {leadEmail || 'lead@example.com'}
                 </div>
-                <div className="text-xs text-slate-400">
-                  <span className="font-semibold text-slate-300">To:</span> {leadEmail || 'lead@example.com'}
+                <div className="text-xs text-slate-500">
+                  <span className="font-semibold text-slate-700">Subject</span>{' '}
+                  <span className="font-bold text-slate-900">{previewData?.subject}</span>
                 </div>
               </div>
 
-              <div className="text-xs text-slate-200 leading-relaxed bg-slate-900/80 p-4 rounded-lg border border-slate-800/80 prose prose-invert max-w-none">
+              <div className="prose prose-sm max-w-none bg-white p-4 text-sm leading-relaxed text-slate-800">
                 <div
                   dangerouslySetInnerHTML={{
-                    __html: previewData?.htmlBody || '<p>No content preview available.</p>',
+                    __html: previewData?.htmlBody || '<p>No content to preview yet.</p>',
                   }}
                 />
               </div>
             </div>
           )}
-
-          <div className="flex justify-end gap-2 border-t border-slate-800 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={sending || mailboxes.length === 0}
-              className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-lg shadow-md transition disabled:opacity-50 flex items-center gap-1.5"
-            >
-              {sending ? (
-                <>
-                  <span className="animate-spin">⏳</span> Sending...
-                </>
-              ) : (
-                <>
-                  <span>🚀</span> Send Email
-                </>
-              )}
-            </button>
-          </div>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 };
+
+/** One input rule for the form, so the two selects and the two text boxes stay one control. */
+const INPUT =
+  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20';
+
+/** Compose/Preview. Underlined rather than filled — a tab is a place, not an action. */
+const TAB = (active: boolean) =>
+  `-mb-px border-b-2 px-3 pb-2 pt-1 transition ${
+    active
+      ? 'border-teal-600 text-teal-700'
+      : 'border-transparent text-slate-500 hover:text-slate-800'
+  }`;

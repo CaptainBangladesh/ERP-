@@ -387,12 +387,13 @@ export class LeadImportsService {
           });
         }
 
-        const phone = builtIn['phone'];
+        const rawPhone = builtIn['phone'];
+        const cleanPhone = rawPhone ? rawPhone.replace(/\D/g, '') : null;
 
         // Check for duplicate lead info
         const normName = name?.trim().toLowerCase();
         const normEmail = email?.trim().toLowerCase();
-        const normPhone = phone?.trim();
+        const normPhone = cleanPhone || undefined;
 
         if (
           (normEmail && existingEmails.has(normEmail)) ||
@@ -458,11 +459,15 @@ export class LeadImportsService {
         if (rowRejections.length > 0) {
           rejected.push(...rowRejections);
         } else {
+          if (normName) existingNames.add(normName);
+          if (normEmail) existingEmails.add(normEmail);
+          if (normPhone) existingPhones.add(normPhone);
+
           acceptedRows.push({
             name: name!,
             organisationName: builtIn['organisationName'] || null,
             email: email || null,
-            phone: builtIn['phone'] || null,
+            phone: cleanPhone || null,
             sourceId: sourceId || null,
             groupName: groupName || null,
             groupId: resolvedGroupId || null,

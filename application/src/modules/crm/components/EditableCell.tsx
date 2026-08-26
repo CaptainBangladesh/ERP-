@@ -50,53 +50,77 @@ export function EditableText({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
+  const [error, setError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
 
   // A value changed elsewhere — the detail panel, another editor — should show here once the
   // cell is not being typed into. Reseeding mid-edit would delete what somebody is writing.
   useEffect(() => {
-    if (!editing) setDraft(value ?? '');
-  }, [value, editing]);
+    if (!editing) {
+      setDraft(value ?? '');
+      try {
+        localStorage.removeItem(`erp_autosave_cell_${label}`);
+      } catch {}
+    }
+  }, [value, editing, label]);
+
+  useEffect(() => {
+    if (editing && draft && draft !== (value ?? '')) {
+      try {
+        localStorage.setItem(`erp_autosave_cell_${label}`, draft);
+      } catch {}
+    }
+  }, [editing, draft, value, label]);
 
   useEffect(() => {
     if (editing) input.current?.select();
   }, [editing]);
 
   function commit() {
-    setEditing(false);
     const next = draft.trim();
+    if (type === 'email' && next && !next.includes('@')) {
+      setError('Enter a valid email address');
+      setDraft(value ?? '');
+      setEditing(false);
+      return;
+    }
+    setError(undefined);
+    setEditing(false);
     if (next === (value ?? '')) return;
     onSave(next);
   }
 
   function cancel() {
     setDraft(value ?? '');
+    setError(undefined);
     setEditing(false);
   }
 
   if (editing) {
     return (
-      <input
-        ref={input}
-        autoFocus
-        type={type}
-        aria-label={label}
-        value={draft}
-        placeholder={placeholder}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            commit();
-          }
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            cancel();
-          }
-        }}
-        className="w-full rounded border border-teal-600 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600"
-      />
+      <div className="flex flex-col gap-1 w-full">
+        <input
+          ref={input}
+          autoFocus
+          type={type}
+          aria-label={label}
+          value={draft}
+          placeholder={placeholder}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              commit();
+            }
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              cancel();
+            }
+          }}
+          className="w-full rounded border border-teal-600 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-teal-600"
+        />
+      </div>
     );
   }
 
@@ -108,52 +132,53 @@ export function EditableText({
 
   const resting =
     value === null || value === '' ? (
-      <>
-        {glyph}
-        <span className="text-slate-400">{placeholder}</span>
-      </>
+      <span className="text-slate-400">{placeholder}</span>
     ) : href ? (
-      <>
-        {glyph}
-        <a
-          href={href(value)}
-          draggable={false}
-          target={href(value).startsWith('http') ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          title={value}
-          className={`min-w-0 truncate hover:underline ${className}`}
-        >
-          {display ? display(value) : value}
-        </a>
-      </>
+      <a
+        href={href(value)}
+        rel="noopener noreferrer"
+        draggable={false}
+        onClick={(event) => event.stopPropagation()}
+        className={`min-w-0 truncate hover:underline ${className}`}
+        title={href(value)}
+      >
+        {display ? display(value) : value}
+      </a>
     ) : (
-      <>
-        {glyph}
-        <span title={value} className={`min-w-0 truncate ${className}`}>
-          {display ? display(value) : value}
-        </span>
-      </>
+      <span className={`min-w-0 truncate ${className}`}>{display ? display(value) : value}</span>
     );
 
-  if (!canWrite) {
-    return <span className="flex min-w-0 items-center gap-1">{resting}</span>;
-  }
-
   return (
-    <span
-      className="group/cell flex min-w-0 items-center gap-1"
-      onDoubleClick={() => setEditing(true)}
-    >
-      {resting}
-      <button
-        type="button"
-        aria-label={`Edit ${label}`}
-        title="Edit — or double-click the cell"
-        onClick={() => setEditing(true)}
-        className="shrink-0 rounded p-0.5 text-slate-300 opacity-0 transition group-hover/cell:opacity-100 hover:bg-slate-100 hover:text-slate-600 focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-teal-600"
+    <span className="flex flex-col gap-0.5 min-w-0">
+      <span
+        onDoubleClick={() => {
+          if (!canWrite) return;
+          setError(undefined);
+          setEditing(true);
+        }}
+        className={`group/cell flex min-w-0 items-center gap-1 ${
+          canWrite ? 'cursor-pointer select-none rounded p-0.5 hover:bg-slate-100/70' : ''
+        }`}
       >
-        ✎
-      </button>
+        {glyph}
+        {resting}
+        {canWrite && (
+          <button
+            type="button"
+            aria-label={`Edit ${label}`}
+            title="Edit — or double-click the cell"
+            onClick={(event) => {
+              event.stopPropagation();
+              setError(undefined);
+              setEditing(true);
+            }}
+            className="shrink-0 rounded px-1 min-w-[20px] text-center text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+          >
+            ✎
+          </button>
+        )}
+      </span>
+      {error && <span role="alert" className="text-xs text-rose-600 font-medium">{error}</span>}
     </span>
   );
 }

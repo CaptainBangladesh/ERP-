@@ -47,7 +47,12 @@ export function rule<T>(missing: string, read: (value: unknown) => Read<T>): Fie
  * one: `PATCH` may omit a name, but it may not send a blank one.
  */
 export function optional<T>(inner: FieldRule<T>): FieldRule<T | undefined> {
-  return { ...inner, required: false, absent: undefined };
+  return {
+    ...inner,
+    required: false,
+    absent: undefined,
+    read: (value) => (value === null ? accepted(undefined) : inner.read(value)),
+  };
 }
 
 /**
@@ -72,7 +77,9 @@ export function clearable<T>(inner: FieldRule<T>): FieldRule<T | null | undefine
     required: false,
     absent: undefined,
     read: (value) =>
-      typeof value === 'string' && value.trim().length === 0 ? accepted(null) : inner.read(value),
+      value === null || (typeof value === 'string' && value.trim().length === 0)
+        ? accepted(null)
+        : inner.read(value),
   };
 }
 

@@ -62,8 +62,8 @@ export function ConvertLeadModal({
         role: PROSPECT_ROLE,
       } satisfies AddPartyRoleRequest);
 
-      // The whole point of the button is that the next step — creating a Deal — is right there.
-      navigate(`/parties?partyId=${partyId}`);
+      // Navigate to the Contacts board so the user lands on CRM contacts
+      navigate('/crm/contacts');
       return qualified;
     },
     onSuccess: onConverted,

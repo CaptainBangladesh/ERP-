@@ -68,7 +68,9 @@ export function renderPage(
   else window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
   setAuthToken(token);
 
-  const client = createQueryClient();
+  // No retries under test: every response here is deterministic, so a retry only makes the
+  // suite slower and a deliberate failure take four round trips to arrive.
+  const client = createQueryClient(0);
   const user = userEvent.setup();
 
   const result = render(<AppProviders client={client}>{ui}</AppProviders>);

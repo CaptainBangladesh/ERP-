@@ -180,13 +180,13 @@ describe('LeadsPage', () => {
 
       await user.type(screen.getByLabelText('Lead name'), 'Priya Kapoor');
       await user.type(screen.getByLabelText('Email'), 'priya@kapoor.example');
-      await user.type(screen.getByLabelText('Phone'), '+880 1711 000000{Enter}');
+      await user.type(screen.getByLabelText('Phone'), '8801711000000{Enter}');
 
       await waitFor(() =>
         expect(sent).toEqual({
           name: 'Priya Kapoor',
           email: 'priya@kapoor.example',
-          phone: '+880 1711 000000',
+          phone: '8801711000000',
           groupId: 'group-1',
         }),
       );
@@ -443,6 +443,175 @@ describe('LeadsPage', () => {
     fireEvent.doubleClick(link);
     expect(await screen.findByLabelText('FB link of Priya Kapoor')).toHaveValue(url);
     await user.keyboard('{Escape}');
+  });
+
+  describe('the status picker', () => {
+    /** A board that has renamed one built-in status and added a stage of its own. */
+    function vocabulary() {
+      server.use(
+        http.get(LEAD_STATUS_LABEL_PATHS.labels, () =>
+          HttpResponse.json({
+            items: [
+              { status: 'new', label: 'Fresh', color: '#579bfc', isCustom: false, order: 0, isSettable: true },
+              { status: 'contacted', label: 'Contacted', color: '#9d5bf0', isCustom: false, order: 1, isSettable: true },
+              { status: 'qualified', label: 'Qualified', color: '#00c875', isCustom: false, order: 2, isSettable: false },
+              { status: 'disqualified', label: 'Disqualified', color: '#e2445c', isCustom: false, order: 3, isSettable: false },
+              { status: 'in-negotiation', label: 'In negotiation', color: '#fdab3d', isCustom: true, order: 4, isSettable: true },
+            ],
+          }),
+        ),
+      );
+    }
+
+    function board() {
+      server.use(
+        http.get(LEAD_PATHS.leads, () => HttpResponse.json(page([lead('Priya Kapoor')]))),
+      );
+    }
+
+    it('moves a lead into a status the company added itself', async () => {
+      signedInWith();
+      vocabulary();
+      board();
+
+      let sent: unknown;
+      server.use(
+        http.patch(LEAD_PATHS.lead('id-priya-kapoor'), async ({ request }) => {
+          sent = await request.json();
+          return HttpResponse.json({ ...lead('Priya Kapoor'), status: 'in-negotiation' });
+        }),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(await screen.findByRole('button', { name: 'Status of Priya Kapoor' }));
+      await user.click(await screen.findByRole('menuitem', { name: /In negotiation/ }));
+
+      await waitFor(() => expect(sent).toEqual({ status: 'in-negotiation' }));
+    });
+
+    /**
+     * The bug the picker replaced: the old select offered all four statuses, and the two the
+     * lifecycle owns were refused by the API after the fact.
+     */
+    it('will not set a status that is reached by an action instead', async () => {
+      signedInWith();
+      vocabulary();
+      board();
+
+      let patched = false;
+      server.use(
+        http.patch(LEAD_PATHS.lead('id-priya-kapoor'), () => {
+          patched = true;
+          return HttpResponse.json(lead('Priya Kapoor'));
+        }),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(await screen.findByRole('button', { name: 'Status of Priya Kapoor' }));
+
+      const qualified = await screen.findByRole('menuitem', { name: /Qualified/ });
+      expect(qualified).toBeDisabled();
+
+      await user.click(qualified);
+      expect(patched).toBe(false);
+    });
+
+    it('renames a status from the picker, without leaving the board', async () => {
+      signedInWith();
+      vocabulary();
+      board();
+
+      let sent: unknown;
+      server.use(
+        http.patch(LEAD_STATUS_LABEL_PATHS.label('new'), async ({ request }) => {
+          sent = await request.json();
+          return HttpResponse.json({
+            status: 'new',
+            label: 'Brand new',
+            color: '#579bfc',
+            isCustom: false,
+            order: 0,
+            isSettable: true,
+          });
+        }),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(await screen.findByRole('button', { name: 'Status of Priya Kapoor' }));
+      await user.click(await screen.findByRole('button', { name: 'Edit Fresh' }));
+
+      const name = screen.getByLabelText('Name for Fresh');
+      await user.clear(name);
+      await user.type(name, 'Brand new{Enter}');
+
+      await waitFor(() => expect(sent).toEqual({ label: 'Brand new', color: '#579bfc' }));
+    });
+
+    it('adds a status of the company\'s own from the picker', async () => {
+      signedInWith();
+      vocabulary();
+      board();
+
+      let sent: unknown;
+      server.use(
+        http.post(LEAD_STATUS_LABEL_PATHS.labels, async ({ request }) => {
+          sent = await request.json();
+          return HttpResponse.json({
+            status: 'on-hold',
+            label: 'On hold',
+            color: '#fdab3d',
+            isCustom: true,
+            order: 5,
+            isSettable: true,
+          });
+        }),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(await screen.findByRole('button', { name: 'Status of Priya Kapoor' }));
+      await user.click(screen.getByRole('button', { name: /Add status/ }));
+
+      await user.type(screen.getByLabelText('New status name'), 'On hold');
+      await user.click(screen.getByRole('button', { name: 'Use #00c875' }));
+      await user.click(screen.getByRole('button', { name: 'Add' }));
+
+      await waitFor(() => expect(sent).toEqual({ label: 'On hold', color: '#00c875' }));
+    });
+
+    it('says how many leads are in the way when a status cannot be removed', async () => {
+      signedInWith();
+      vocabulary();
+      board();
+
+      server.use(
+        http.delete(LEAD_STATUS_LABEL_PATHS.label('in-negotiation'), () =>
+          HttpResponse.json(
+            {
+              code: 'lead_status_has_leads',
+              message: '3 leads are still in "In negotiation". Move them to another status first, then remove this one.',
+            },
+            { status: 409 },
+          ),
+        ),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(await screen.findByRole('button', { name: 'Status of Priya Kapoor' }));
+      await user.click(await screen.findByRole('button', { name: 'Edit In negotiation' }));
+      await user.click(screen.getByRole('button', { name: 'Remove' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/3 leads are still in/);
+    });
   });
 
   describe('choosing columns', () => {
@@ -975,6 +1144,135 @@ describe('LeadsPage', () => {
 
       await waitFor(() => expect(calls).toEqual(['qualify', 'tag-prospect']));
       expect(createPartyCalled).toBe(false);
+    });
+  });
+
+  describe('owning and acting on many leads at once', () => {
+    const team = [
+      { id: 'user-1', name: 'Rose Foster', email: 'rose@thenearbuy.example', roles: [] },
+      { id: 'user-2', name: 'Imran Hossain', email: 'imran@thenearbuy.example', roles: [] },
+    ];
+
+    function boardWith(items: LeadSummary[]): { patched: () => { id: string; body: unknown }[]; deleted: () => string[] } {
+      const patched: { id: string; body: unknown }[] = [];
+      const deleted: string[] = [];
+
+      server.use(
+        http.get(LEAD_PATHS.leads, () => HttpResponse.json(page(items))),
+        http.get(IDENTITY_PATHS.users, () =>
+          HttpResponse.json({
+            items: team,
+            page: { number: 1, size: 200, total: team.length, pages: 1 },
+          } as unknown as UserListResponse),
+        ),
+        http.patch('/api/crm/leads/:id', async ({ params, request }) => {
+          patched.push({ id: String(params.id), body: await request.json() });
+          return HttpResponse.json(items[0]!);
+        }),
+        http.delete('/api/crm/leads/:id', ({ params }) => {
+          deleted.push(String(params.id));
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+
+      return { patched: () => patched, deleted: () => deleted };
+    }
+
+    it('gives the Owner column somewhere to write to, once it is switched on', async () => {
+      signedInWith();
+      const { patched } = boardWith([lead('Priya Kapoor')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getAllByRole('button', { name: 'Choose columns' })[0]!);
+      await user.click(screen.getByRole('checkbox', { name: /Owner/ }));
+      await user.keyboard('{Escape}');
+
+      expect(await screen.findByRole('columnheader', { name: 'Owner' })).toBeInTheDocument();
+
+      await user.selectOptions(
+        await screen.findByRole('combobox', { name: 'Owner of Priya Kapoor' }),
+        'user-2',
+      );
+
+      await waitFor(() =>
+        expect(patched()).toEqual([
+          { id: 'id-priya-kapoor', body: { assignedToUserId: 'user-2' } },
+        ]),
+      );
+    });
+
+    it('assigns every ticked lead in one act', async () => {
+      signedInWith();
+      const { patched } = boardWith([lead('Priya Kapoor'), lead('Imran Ali'), lead('Sadia Rahman')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Sadia Rahman' }));
+
+      expect(await screen.findByText('2 leads selected')).toBeInTheDocument();
+
+      await user.selectOptions(
+        screen.getByRole('combobox', { name: 'Assign selected leads to' }),
+        'user-1',
+      );
+
+      await waitFor(() =>
+        expect(patched().map((call) => call.id).sort()).toEqual(['id-priya-kapoor', 'id-sadia-rahman']),
+      );
+      expect(patched().every((call) => JSON.stringify(call.body) === '{"assignedToUserId":"user-1"}')).toBe(true);
+    });
+
+    it('will not delete a selection until it is asked twice', async () => {
+      signedInWith();
+      const { deleted } = boardWith([lead('Priya Kapoor'), lead('Imran Ali')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Imran Ali' }));
+      await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+      expect(deleted()).toEqual([]);
+      expect(screen.getByText(/delete 1 for good\?/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+      await waitFor(() => expect(deleted()).toEqual(['id-imran-ali']));
+    });
+
+    it('opens the new lead row above the group, not below it', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('button', { name: 'New Lead' }));
+
+      const rows = screen.getAllByRole('row');
+      const typing = rows.findIndex((row) => within(row).queryByLabelText('Lead name'));
+      const existing = rows.findIndex((row) => within(row).queryByText('Priya Kapoor'));
+
+      expect(typing).toBeGreaterThan(-1);
+      expect(typing).toBeLessThan(existing);
+    });
+
+    it('offers New group and New source from the caret beside New Lead', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('button', { name: 'More to add' }));
+      await user.click(screen.getByRole('menuitem', { name: 'New source' }));
+
+      const dialog = await screen.findByRole('tab', { name: 'Sources' });
+      expect(dialog).toHaveAttribute('aria-selected', 'true');
     });
   });
 });

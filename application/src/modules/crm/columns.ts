@@ -17,9 +17,13 @@ import type { LeadFieldSummary } from '@erp/shared';
 /** A column backed by a field the Lead record already has. */
 export type CoreColumnKey =
   | 'status'
+  | 'type'
+  | 'company'
+  | 'deals'
+  | 'title'
+  | 'priority'
   | 'owner'
   | 'convert'
-  | 'company'
   | 'email'
   | 'phone'
   | 'source';
@@ -42,6 +46,41 @@ export const CORE_COLUMNS: (ColumnOption & { key: CoreColumnKey })[] = [
     tone: 'bg-emerald-500',
   },
   {
+    key: 'type',
+    label: 'Type',
+    description: 'Add qualified leads, partners, etc.',
+    icon: '🗂',
+    tone: 'bg-emerald-400',
+  },
+  {
+    key: 'company',
+    label: 'Company / Accounts',
+    description: 'See contacts related to account',
+    icon: '🏢',
+    tone: 'bg-rose-500',
+  },
+  {
+    key: 'deals',
+    label: 'Deals',
+    description: 'See deals related to contact',
+    icon: '💼',
+    tone: 'bg-pink-500',
+  },
+  {
+    key: 'title',
+    label: 'Title',
+    description: "Add contact's professional title",
+    icon: '📇',
+    tone: 'bg-[#e91e63]',
+  },
+  {
+    key: 'priority',
+    label: 'Priority',
+    description: 'Set priority level (High, Medium, Low)',
+    icon: '🚩',
+    tone: 'bg-amber-500',
+  },
+  {
     key: 'owner',
     label: 'Owner',
     description: 'Assign a person to every lead',
@@ -54,13 +93,6 @@ export const CORE_COLUMNS: (ColumnOption & { key: CoreColumnKey })[] = [
     description: 'Turn lead into contact in one click',
     icon: '➜',
     tone: 'bg-indigo-600',
-  },
-  {
-    key: 'company',
-    label: 'Company',
-    description: 'Add lead company name',
-    icon: 'T',
-    tone: 'bg-blue-500',
   },
   {
     key: 'email',
@@ -166,4 +198,66 @@ export function useVisibleColumns(): {
   const visible = useCallback((key: string) => keys.includes(key), [keys]);
 
   return { visible, toggle, keys };
+}
+
+/**
+ * The geometry every group table on the board shares.
+ *
+ * Each group renders its own `<table>`, and a table left to size itself measures only its own
+ * rows — so a group whose leads happen to have long emails gave Email more room and squeezed
+ * "Move to Contacts" onto two lines, while the group above it did not. Read down the page, the
+ * same column landed in a different place in every section, which is the one thing a board of
+ * stacked tables must not do.
+ *
+ * So the widths are decided once, here, from the visible column set alone, and every table is
+ * laid out `table-fixed` against them. Lead is the only column without a width: it takes
+ * whatever slack is left, so a wide screen spends it on names rather than on padding.
+ */
+export interface BoardColumn {
+  key: string;
+  label: string;
+  /** Fixed width in px. Omitted for the one elastic column. */
+  width?: number;
+  align?: 'left' | 'center' | 'right';
+}
+
+/** What the elastic Lead column may not shrink below before the board starts scrolling. */
+const LEAD_MIN_WIDTH = 200;
+
+export function boardColumns(
+  visible: (key: string) => boolean,
+  customFields: Pick<LeadFieldSummary, 'id' | 'key' | 'label'>[],
+): BoardColumn[] {
+  const columns: BoardColumn[] = [
+    { key: 'select', label: '', width: 44, align: 'center' },
+    { key: 'lead', label: 'Lead' },
+  ];
+
+  if (visible('title')) columns.push({ key: 'title', label: 'Title', width: 150 });
+  if (visible('type')) columns.push({ key: 'type', label: 'Type', width: 140 });
+  if (visible('company')) columns.push({ key: 'company', label: 'Organisation', width: 180 });
+  if (visible('status')) columns.push({ key: 'status', label: 'Status', width: 156, align: 'center' });
+  if (visible('priority')) columns.push({ key: 'priority', label: 'Priority', width: 140, align: 'center' });
+  if (visible('owner')) columns.push({ key: 'owner', label: 'Owner', width: 150 });
+  if (visible('deals')) columns.push({ key: 'deals', label: 'Deals', width: 150 });
+  if (visible('convert')) columns.push({ key: 'convert', label: 'Move to Contacts', width: 176, align: 'center' });
+  if (visible('email')) columns.push({ key: 'email', label: 'Email', width: 232 });
+  if (visible('phone')) columns.push({ key: 'phone', label: 'Phone', width: 168 });
+  if (visible('source')) columns.push({ key: 'source', label: 'Source', width: 140 });
+
+  for (const field of customFields) {
+    const key = fieldColumnKey(field);
+    if (visible(key)) columns.push({ key, label: field.label, width: 180 });
+  }
+
+  // Somewhere for a row's own controls to live — the inline add row's Save and Cancel, and the
+  // footer's "More fields". Without it those land inside a data column and knock it out of line.
+  columns.push({ key: 'actions', label: '', width: 140, align: 'right' });
+
+  return columns;
+}
+
+/** The width below which the board scrolls sideways instead of crushing its columns. */
+export function boardMinWidth(columns: BoardColumn[]): number {
+  return columns.reduce((total, column) => total + (column.width ?? LEAD_MIN_WIDTH), 0);
 }

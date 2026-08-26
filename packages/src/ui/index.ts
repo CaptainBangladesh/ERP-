@@ -14,9 +14,11 @@
  * no DOM and no CSS, which is what the frontend dependency rule actually says — the rule is
  * "renders nothing", not "these packages are excused".
  */
+export { Button, type ButtonVariant } from './Button.js';
 export { DataTable, type DataTableProps } from './DataTable.js';
 export { Field } from './Field.js';
 export { FormError } from './FormError.js';
+export { Modal } from './Modal.js';
 export { Select } from './Select.js';
 export {
   MoneyInput,

@@ -72,7 +72,7 @@ export class Validator<S extends Schema> {
       // as readily as it omits the key, and telling those two apart would mean every optional
       // field in every module having an opinion about JSON null.
       const raw = body[name];
-      if (raw === undefined || raw === null) {
+      if (raw === undefined) {
         if (rule.required) fields[name] = rule.missing;
         else values[name] = rule.absent;
         continue;

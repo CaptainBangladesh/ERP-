@@ -1,14 +1,18 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
-import { CRM_ROUTE, type LeadListResponse, type LeadResponse } from '@erp/shared';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
+import { CRM_ROUTE, type LeadListResponse, type LeadResponse, type SendLeadEmailRequest } from '@erp/shared';
 import { CurrentSession, type RequestSession } from '../../platform/auth';
 import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { LeadsService } from './leads.service';
-import { CreateLeadBody, QualifyLeadBody, UpdateLeadBody } from './schemas';
+import { LeadOutreachService } from './lead-outreach.service';
+import { CreateLeadBody, QualifyLeadBody, UpdateLeadBody, SendLeadEmailBody } from './schemas';
 
 @Controller(CRM_ROUTE)
 export class LeadsController {
-  constructor(private readonly leads: LeadsService) {}
+  constructor(
+    private readonly leads: LeadsService,
+    private readonly outreach: LeadOutreachService,
+  ) {}
 
   @Post('leads')
   @HttpCode(HttpStatus.CREATED)
@@ -70,5 +74,30 @@ export class LeadsController {
     @CurrentSession() session: RequestSession,
   ): Promise<LeadResponse> {
     return this.leads.reopenLead(id, { userId: session.user.id, name: session.user.name });
+  }
+
+  @Post('leads/clean-duplicates')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('crm:leads:write')
+  async cleanDuplicates(): Promise<{ removedCount: number }> {
+    return this.leads.cleanDuplicates();
+  }
+
+  @Delete('leads/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('crm:leads:write')
+  async remove(@Param('id') id: string): Promise<void> {
+    return this.leads.deleteLead(id);
+  }
+
+  @Post('leads/:id/send-email')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('crm:leads:write')
+  async sendEmail(
+    @Param('id') id: string,
+    @Body(validated(SendLeadEmailBody)) body: Valid<typeof SendLeadEmailBody>,
+    @CurrentSession() session: RequestSession,
+  ): Promise<any> {
+    return this.outreach.sendOneOnOneEmail(id, body, { userId: session.user.id, name: session.user.name });
   }
 }
