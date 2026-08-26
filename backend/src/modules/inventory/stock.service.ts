@@ -55,7 +55,7 @@ export class StockService implements StockValuation {
 
     const resolved = await this.references.resolve(rows);
     return slice.respond(
-      rows.map((row) => describe(row, resolved)),
+      rows.map((row: any) => describe(row, resolved)),
       total,
     );
   }
@@ -152,8 +152,8 @@ export class StockService implements StockValuation {
       this.prisma.stockMovement.findMany(),
     ]);
 
-    const productIds = [...new Set(levels.map((l) => l.productId))];
-    const locationIds = [...new Set(levels.map((l) => l.locationId))];
+    const productIds = [...new Set(levels.map((l: any) => l.productId))];
+    const locationIds = [...new Set(levels.map((l: any) => l.locationId))];
 
     const [products, locations] = await Promise.all([
       this.products.products(productIds),
