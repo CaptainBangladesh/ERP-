@@ -76,6 +76,7 @@ export const ResetPasswordBody = validator({
 });
 
 export const AcceptInvitationBody = validator({
+  companyName: text({ missing: 'Enter your company name.' }),
   name: text({ missing: 'Enter your name.' }),
   password: password({
     missing: 'Choose a password.',

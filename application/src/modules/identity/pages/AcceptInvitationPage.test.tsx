@@ -52,14 +52,19 @@ describe('AcceptInvitationPage', () => {
       path: `/accept-invitation?token=${TOKEN}`,
     });
 
-    await user.type(await screen.findByLabelText(/your name/i), 'Kit Moreau');
+    await user.type(await screen.findByLabelText(/company name/i), 'Northwind Trading');
+    await user.type(screen.getByLabelText(/your name/i), 'Kit Moreau');
     await user.type(screen.getByLabelText(/^password$/i), 'a-strong-enough-password');
     await user.click(screen.getByRole('button', { name: /accept invitation/i }));
 
     // The email is the invitation's, never the form's: accepting is not a chance to join a
     // company as somebody else.
     await waitFor(() =>
-      expect(sent).toEqual({ name: 'Kit Moreau', password: 'a-strong-enough-password' }),
+      expect(sent).toEqual({
+        companyName: 'Northwind Trading',
+        name: 'Kit Moreau',
+        password: 'a-strong-enough-password',
+      }),
     );
     // Accepting signs you in — there is no second step and no sign-in screen in between.
     await waitFor(() => expect(window.location.pathname).toBe('/'));

@@ -108,6 +108,7 @@ export interface InvitationDetails {
 }
 
 export interface AcceptInvitationRequest {
+  companyName: string;
   name: string;
   password: string;
 }
@@ -206,6 +207,8 @@ export const IDENTITY_ERROR_CODES = {
   invalidCredentials: 'invalid_credentials',
   emailAlreadyRegistered: 'email_already_registered',
   invitationInvalid: 'invitation_invalid',
+  companyNameMismatch: 'company_name_mismatch',
+  companyDoesNotExist: 'company_does_not_exist',
   resetTokenInvalid: 'reset_token_invalid',
   roleNotFound: 'role_not_found',
   /** A role still assigned to somebody cannot be deleted — reassign them first. */

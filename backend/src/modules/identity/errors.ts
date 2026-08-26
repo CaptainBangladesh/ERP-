@@ -48,6 +48,27 @@ export function invitationInvalid(): ApiException {
   );
 }
 
+export function companyNameMismatch(): FieldException {
+  return new FieldException(
+    IDENTITY_ERROR_CODES.companyNameMismatch,
+    'Company name does not match the company you were invited to.',
+    HttpStatus.BAD_REQUEST,
+    {
+      companyName:
+        'Company name does not match the company you were invited to. As a team member, you cannot use a different company name.',
+    },
+  );
+}
+
+export function companyDoesNotExist(): FieldException {
+  return new FieldException(
+    IDENTITY_ERROR_CODES.companyDoesNotExist,
+    "This company doesn't exist.",
+    HttpStatus.BAD_REQUEST,
+    { companyName: "This company doesn't exist." },
+  );
+}
+
 /** Same reasoning as `invitationInvalid`, for a reset link. */
 export function resetTokenInvalid(): ApiException {
   return new ApiException(

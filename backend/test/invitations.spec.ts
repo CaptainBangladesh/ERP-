@@ -110,7 +110,11 @@ describe('invitations', () => {
 
       const accepted = await app.http
         .post(AUTH_PATHS.acceptInvitation(token))
-        .send({ name: 'Kit Moreau', password: 'a-second-strong-password' })
+        .send({
+          companyName: 'Northwind Trading',
+          name: 'Kit Moreau',
+          password: 'a-second-strong-password',
+        })
         .expect(201);
 
       const session = accepted.body as AuthenticatedSession;
@@ -141,7 +145,11 @@ describe('invitations', () => {
       const token = linkSentTo('kit@northwind.test');
       await app.http
         .post(AUTH_PATHS.acceptInvitation(token))
-        .send({ name: 'Kit Moreau', password: 'a-second-strong-password' })
+        .send({
+          companyName: 'Northwind Trading',
+          name: 'Kit Moreau',
+          password: 'a-second-strong-password',
+        })
         .expect(201);
 
       const stillPending = await owner.as(app.http.get(IDENTITY_PATHS.invitations)).expect(200);
@@ -161,7 +169,11 @@ describe('invitations', () => {
       const token = linkSentTo('kit@northwind.test');
       const accepted = await app.http
         .post(AUTH_PATHS.acceptInvitation(token))
-        .send({ name: 'Kit Moreau', password: 'a-second-strong-password' })
+        .send({
+          companyName: 'Northwind Trading',
+          name: 'Kit Moreau',
+          password: 'a-second-strong-password',
+        })
         .expect(201);
 
       const session = accepted.body as AuthenticatedSession;
@@ -171,6 +183,42 @@ describe('invitations', () => {
         .get(PARTY_PATHS.parties)
         .set('Authorization', `Bearer ${session.token}`)
         .expect(200);
+    });
+
+    it('refuses acceptance if companyName does not exist in the database', async () => {
+      const owner = await signUp();
+      await invite(owner, { email: 'kit@northwind.test' });
+      const token = linkSentTo('kit@northwind.test');
+
+      const response = await app.http
+        .post(AUTH_PATHS.acceptInvitation(token))
+        .send({
+          companyName: 'NonExistent Company LLC',
+          name: 'Kit Moreau',
+          password: 'a-second-strong-password',
+        })
+        .expect(400);
+
+      expect((response.body as ApiError).code).toBe(IDENTITY_ERROR_CODES.companyDoesNotExist);
+    });
+
+    it('refuses acceptance if companyName does not match the inviting company name', async () => {
+      const owner = await signUp();
+      // Create a second company
+      await signUp({ companyName: 'Other Company Ltd', email: 'owner2@other.test' });
+      await invite(owner, { email: 'kit@northwind.test' });
+      const token = linkSentTo('kit@northwind.test');
+
+      const response = await app.http
+        .post(AUTH_PATHS.acceptInvitation(token))
+        .send({
+          companyName: 'Other Company Ltd',
+          name: 'Kit Moreau',
+          password: 'a-second-strong-password',
+        })
+        .expect(400);
+
+      expect((response.body as ApiError).code).toBe(IDENTITY_ERROR_CODES.companyNameMismatch);
     });
 
     it('refuses to invite an email that already has an account', async () => {
@@ -207,7 +255,11 @@ describe('invitations', () => {
 
       const accept = await app.http
         .post(AUTH_PATHS.acceptInvitation(bogus))
-        .send({ name: 'Nobody', password: 'a-second-strong-password' })
+        .send({
+          companyName: 'Northwind Trading',
+          name: 'Nobody',
+          password: 'a-second-strong-password',
+        })
         .expect(410);
       expect((accept.body as ApiError).code).toBe(IDENTITY_ERROR_CODES.invitationInvalid);
     });
@@ -219,12 +271,20 @@ describe('invitations', () => {
 
       await app.http
         .post(AUTH_PATHS.acceptInvitation(token))
-        .send({ name: 'Kit Moreau', password: 'a-second-strong-password' })
+        .send({
+          companyName: 'Northwind Trading',
+          name: 'Kit Moreau',
+          password: 'a-second-strong-password',
+        })
         .expect(201);
 
       const reused = await app.http
         .post(AUTH_PATHS.acceptInvitation(token))
-        .send({ name: 'Somebody Else', password: 'another-strong-password' })
+        .send({
+          companyName: 'Northwind Trading',
+          name: 'Somebody Else',
+          password: 'another-strong-password',
+        })
         .expect(410);
       expect((reused.body as ApiError).code).toBe(IDENTITY_ERROR_CODES.invitationInvalid);
     });
@@ -236,7 +296,11 @@ describe('invitations', () => {
     const token = linkSentTo(invited.email);
     const accepted = await app.http
       .post(AUTH_PATHS.acceptInvitation(token))
-      .send({ name: 'Kit Moreau', password: 'a-second-strong-password' })
+      .send({
+        companyName: 'Northwind Trading',
+        name: 'Kit Moreau',
+        password: 'a-second-strong-password',
+      })
       .expect(201);
     const session = accepted.body as AuthenticatedSession;
     return { session, as: (request) => request.set('Authorization', `Bearer ${session.token}`) };

@@ -23,6 +23,7 @@ import { Field, FormError } from '@erp/shared/ui';
 export function AcceptInvitationPage() {
   const { adopt } = useSession();
   const [token] = useState(() => currentSearchParams().get(RECOVERY_TOKEN_PARAM) ?? '');
+  const [companyName, setCompanyName] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
 
@@ -36,6 +37,7 @@ export function AcceptInvitationPage() {
   const accept = useMutation({
     mutationFn: () =>
       api.post<AuthenticatedSession>(AUTH_PATHS.acceptInvitation(token), {
+        companyName,
         name,
         password,
       } satisfies AcceptInvitationRequest),
@@ -81,7 +83,7 @@ export function AcceptInvitationPage() {
           You're invited to join {invitation.data.companyName}
         </h1>
         <p className="mt-2 text-sm text-slate-600">
-          Signing in as {invitation.data.email}. Choose your name and a password to finish.
+          Signing in as {invitation.data.email}. Enter the company name, your name and a password to finish opening your account.
         </p>
       </header>
 
@@ -93,6 +95,13 @@ export function AcceptInvitationPage() {
           accept.mutate();
         }}
       >
+        <Field
+          id="companyName"
+          label="Company name"
+          value={companyName}
+          error={fields.companyName}
+          onChange={setCompanyName}
+        />
         <Field
           id="name"
           label="Your name"
@@ -112,7 +121,7 @@ export function AcceptInvitationPage() {
           onChange={setPassword}
         />
 
-        {acceptFailure && !fields.name && !fields.password && (
+        {acceptFailure && !fields.companyName && !fields.name && !fields.password && (
           <FormError>{acceptFailure.message}</FormError>
         )}
 

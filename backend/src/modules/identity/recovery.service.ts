@@ -4,7 +4,7 @@ import { RECOVERY_LINKS, type AuthenticatedSession, type InvitationDetails } fro
 import { InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { Mailer } from '../../platform/mail';
-import { emailAlreadyRegistered, invitationInvalid, resetTokenInvalid } from './errors';
+import { companyDoesNotExist, companyNameMismatch, emailAlreadyRegistered, invitationInvalid, resetTokenInvalid } from './errors';
 import { hashPassword } from './passwords';
 import { SessionIssuer } from './session-issuer';
 import type {
@@ -145,6 +145,20 @@ export class RecoveryService {
     input: Valid<typeof AcceptInvitationBody>,
   ): Promise<AuthenticatedSession> {
     const invitation = await this.liveInvitation(token);
+
+    const matchedCompany = await this.prisma.company.findFirst({
+      where: {
+        name: { equals: input.companyName.trim(), mode: 'insensitive' },
+      },
+    });
+
+    if (!matchedCompany) {
+      throw companyDoesNotExist();
+    }
+
+    if (matchedCompany.id !== invitation.companyId) {
+      throw companyNameMismatch();
+    }
 
     if (await this.prisma.user.findUnique({ where: { email: invitation.email } })) {
       throw emailAlreadyRegistered();

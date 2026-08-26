@@ -3,11 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ERROR_CODES,
   IDENTITY_PATHS,
+  RECOVERY_LINKS,
   USER_FIELDS,
   emptyPage,
   listPath,
   listQueryString,
   type InvitationListResponse,
+  type InvitationSummary,
   type InviteColleagueRequest,
   type ListQuery,
   type RoleListResponse,
@@ -118,21 +120,51 @@ export function TeamPage() {
         }
       />
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-slate-900">Pending invitations</h2>
-        {(invitations.data?.items.length ?? 0) === 0 ? (
-          <p className="text-sm text-slate-600">Nothing pending.</p>
-        ) : (
-          <ul className="flex flex-col gap-1 text-sm text-slate-700">
-            {invitations.data?.items.map((invitation) => (
-              <li key={invitation.id}>
-                {invitation.email} — expires {new Date(invitation.expiresAt).toLocaleDateString()}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <PendingInvitations invitations={invitations.data?.items ?? []} />
     </div>
+  );
+}
+
+function PendingInvitations({ invitations }: { invitations: readonly InvitationSummary[] }) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyLink = (id: string) => {
+    const link = `${window.location.origin}${RECOVERY_LINKS.acceptInvitation(id)}`;
+    void navigator.clipboard.writeText(link);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 2000);
+  };
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-sm font-medium text-slate-900">Pending invitations</h2>
+      {invitations.length === 0 ? (
+        <p className="text-sm text-slate-600">Nothing pending.</p>
+      ) : (
+        <ul className="flex flex-col gap-2 text-sm text-slate-700">
+          {invitations.map((invitation) => (
+            <li
+              key={invitation.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white p-3 shadow-2xs"
+            >
+              <div className="flex flex-col">
+                <span className="font-medium text-slate-900">{invitation.email}</span>
+                <span className="text-xs text-slate-500">
+                  Expires {new Date(invitation.expiresAt).toLocaleDateString()}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => copyLink(invitation.id)}
+                className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-white hover:text-slate-900 transition"
+              >
+                {copiedId === invitation.id ? '✓ Copied invite link' : 'Copy invite link'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -200,17 +232,33 @@ function InviteColleague({
   roles: readonly RoleSummary[];
   onInvited: () => void;
 }) {
-  const [email, setEmail] = useState('');
+  const [emailInput, setEmailInput] = useState('');
   const [roleId, setRoleId] = useState('');
 
   const invite = useMutation({
-    mutationFn: () =>
-      api.post(IDENTITY_PATHS.invitations, {
-        email,
-        roleId: roleId || undefined,
-      } satisfies InviteColleagueRequest),
+    mutationFn: async () => {
+      const emailList = emailInput
+        .split(/[\s,;\n]+/)
+        .map((e) => e.trim())
+        .filter(Boolean);
+
+      if (emailList.length === 0) {
+        throw new ApiFailure(400, {
+          code: ERROR_CODES.validationFailed,
+          message: 'Enter at least one email address.',
+          fields: { email: 'Enter their email address.' },
+        });
+      }
+
+      for (const email of emailList) {
+        await api.post(IDENTITY_PATHS.invitations, {
+          email,
+          roleId: roleId || undefined,
+        } satisfies InviteColleagueRequest);
+      }
+    },
     onSuccess: () => {
-      setEmail('');
+      setEmailInput('');
       setRoleId('');
       onInvited();
     },
@@ -230,18 +278,18 @@ function InviteColleague({
       }}
     >
       <h2 id="invite-colleague" className="text-sm font-medium text-slate-900">
-        Invite a colleague
+        Invite teammates by email
       </h2>
 
       <div className="flex flex-wrap gap-4">
         <div className="min-w-56 flex-1">
           <Field
             id="invite-email"
-            label="Email address"
-            type="email"
-            value={email}
+            label="Email address(es)"
+            hint="Separate multiple emails with commas (e.g. kit@company.test, alex@company.test)"
+            value={emailInput}
             error={fields.email}
-            onChange={setEmail}
+            onChange={setEmailInput}
           />
         </div>
         <div className="min-w-56 flex-1">
@@ -266,7 +314,7 @@ function InviteColleague({
           disabled={invite.isPending}
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
         >
-          {invite.isPending ? 'Sending…' : 'Send invitation'}
+          {invite.isPending ? 'Sending…' : 'Send invitation(s)'}
         </button>
       </div>
     </form>

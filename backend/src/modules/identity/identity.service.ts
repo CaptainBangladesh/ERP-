@@ -6,7 +6,7 @@ import { ApiException } from '../../http/api-exception';
 import { InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import { SessionAuthority, unauthenticated, type RequestSession } from '../../platform/auth';
 import type { Valid } from '../../platform/validation';
-import { emailAlreadyRegistered, invalidCredentials } from './errors';
+import { companyDoesNotExist, emailAlreadyRegistered, invalidCredentials } from './errors';
 import { hashPassword, verifyPassword } from './passwords';
 import { SessionIssuer } from './session-issuer';
 import { describe, permissionsOf, WITH_ROLES, type TokenPayload } from './session-shape';
@@ -57,11 +57,37 @@ export class IdentityService implements SessionAuthority {
       throw emailAlreadyRegistered();
     }
 
+    const existingCompany = await this.prisma.company.findFirst({
+      where: {
+        name: { equals: input.companyName.trim(), mode: 'insensitive' },
+      },
+    });
+
+    const totalCompanies = await this.prisma.company.count();
+
+    if (!existingCompany && totalCompanies > 0) {
+      throw companyDoesNotExist();
+    }
+
     const passwordHash = await hashPassword(input.password);
+
+    if (existingCompany) {
+      const user = await this.prisma.user.create({
+        data: {
+          companyId: existingCompany.id,
+          name: input.name,
+          email: input.email,
+          passwordHash,
+        },
+      });
+
+      const isOwner = existingCompany.ownerUserId === user.id;
+      return this.sessions.issue(user, existingCompany, isOwner ? 'all' : []);
+    }
 
     const { company, user } = await this.prisma
       .$transaction(async (tx) => {
-        const created = await tx.company.create({ data: { name: input.companyName } });
+        const created = await tx.company.create({ data: { name: input.companyName.trim() } });
 
         const owner = await tx.user.create({
           data: {

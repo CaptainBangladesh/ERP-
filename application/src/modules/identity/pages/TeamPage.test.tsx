@@ -146,7 +146,9 @@ describe('TeamPage', () => {
 
     renderPage(<TeamPage />, { token: 'a-token', path: '/team' });
 
-    expect(await screen.findByText(/kit@northwind.test — expires/i)).toBeInTheDocument();
+    expect(await screen.findByText('kit@northwind.test')).toBeInTheDocument();
+    expect(screen.getByText(/expires/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /copy invite link/i })).toBeInTheDocument();
   });
 
   it('assigns a role to somebody who holds none', async () => {
