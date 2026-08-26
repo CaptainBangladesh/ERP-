@@ -12,6 +12,7 @@
     "dev": "concurrently -n backend,app -c blue,magenta \"npm:dev:backend\" \"npm:dev:app\"",
     "dev:backend": "npm run dev --workspace backend",
     "dev:app": "npm run dev --workspace application",
+    "start": "node backend/dist/main.js",
     "build": "npm run build --workspace packages && npm run build --workspace backend && npm run build --workspace application",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check:modules": "npm run check:modules --workspace backend",

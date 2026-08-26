@@ -1,0 +1,15 @@
+{
+  "buildCommand": "npm run build --workspace packages && npm run build --workspace application",
+  "outputDirectory": "application/dist",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://YOUR_BACKEND_URL_HERE/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

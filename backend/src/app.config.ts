@@ -13,8 +13,10 @@ import { ApiExceptionFilter } from './http/api-exception.filter';
  * any credentials to protect — ticket 02 introduces sessions, and can decide then.
  */
 export function configureApp(app: INestApplication): void {
+  const corsOrigin = process.env.CORS_ORIGIN;
+  const origin = corsOrigin ? (corsOrigin === '*' ? true : corsOrigin.split(',').map((o) => o.trim())) : true;
   app.enableCors({
-    origin: true,
+    origin,
     credentials: true,
   });
   app.useGlobalFilters(new ApiExceptionFilter());

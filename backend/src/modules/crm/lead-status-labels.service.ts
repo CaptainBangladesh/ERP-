@@ -186,8 +186,8 @@ function describe(
 
   return {
     status,
-    label: stored?.label ?? fallback.label,
-    color: stored?.color ?? fallback.color,
+    label: stored?.label ?? fallback?.label ?? status,
+    color: stored?.color ?? fallback?.color ?? '#94a3b8',
     isCustom,
     // A built-in's position is its place in the lifecycle, not a stored number. Rows written
     // before custom statuses existed all carry `order = 0` from the migration's default, and
