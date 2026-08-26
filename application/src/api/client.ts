@@ -1,4 +1,5 @@
 import { isApiError, isAuthenticationFailure, AUTH_SCHEME, type ApiError } from '@erp/shared';
+import { readStoredToken } from '../session/token-storage';
 
 /**
  * The one way the frontend talks to the API.
@@ -37,6 +38,24 @@ export function setAuthToken(token: string | undefined): void {
 }
 
 /**
+ * The token to send, which is not always the one this module is holding.
+ *
+ * Module-level state does not survive a hot module replacement: Vite hands the application a
+ * *new* copy of this file on every edit, and the new copy's `authToken` starts as `undefined`.
+ * React state is preserved across the same update, so `SessionProvider` is never remounted and
+ * never re-runs `setAuthToken` — leaving the screen showing who is signed in while every
+ * request behind it goes out anonymous and comes back a 401. In development that turns any
+ * save into "I have been signed out and my data is gone"; the storage read is what makes the
+ * token outlive the module that caches it.
+ *
+ * Signing out clears storage before it clears this, so there is no window where a request
+ * falls back to a token the user has just given up.
+ */
+function currentToken(): string | undefined {
+  return authToken ?? readStoredToken();
+}
+
+/**
  * Told whenever any request is refused because the session is no longer usable.
  *
  * It belongs here rather than on a screen because a session does not only fail when the
@@ -47,22 +66,42 @@ export function setAuthToken(token: string | undefined): void {
  *
  * Deliberately narrow: `invalid_credentials` is a failed sign-in attempt, not an ended
  * session, and must not fire this.
+ *
+ * The token the refused request actually carried is passed along, because "the session is
+ * over" is a claim about *a* session rather than about whoever is signed in now. Requests
+ * from an expiring session are still in flight while the person signs back in, and their
+ * refusals land afterwards: without knowing which token was refused, a stale 401 from the
+ * previous session ends the new one microseconds after it starts — leaving somebody signed
+ * in as far as the screen is concerned, and unauthenticated as far as every request is.
  */
-let onSessionUnusable: ((code: string) => void) | undefined;
+let onSessionUnusable: ((code: string, token: string | undefined) => void) | undefined;
 
-export function setSessionUnusableHandler(handler: ((code: string) => void) | undefined): void {
+export function setSessionUnusableHandler(
+  handler: ((code: string, token: string | undefined) => void) | undefined,
+): void {
   onSessionUnusable = handler;
+}
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';
+
+function resolveUrl(path: string): string {
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_BASE_URL}${normalizedPath}`;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  // Read once, before awaiting: by the time a refusal comes back, `authToken` may already
+  // belong to a different session than the one this request was made under.
+  const sentWith = currentToken();
 
   try {
-    response = await fetch(path, {
+    response = await fetch(resolveUrl(path), {
       ...init,
       headers: {
         'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `${AUTH_SCHEME} ${authToken}` } : {}),
+        ...(sentWith ? { Authorization: `${AUTH_SCHEME} ${sentWith}` } : {}),
         ...init?.headers,
       },
     });
@@ -85,7 +124,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         : { code: 'internal_error', message: 'Something went wrong. Please try again.' },
     );
 
-    if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code);
+    if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code, sentWith);
 
     throw failure;
   }
@@ -126,11 +165,12 @@ function send<T>(method: string, path: string, payload?: unknown): Promise<T> {
 
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
   let response: Response;
+  const sentWith = currentToken();
 
   try {
-    response = await fetch(path, {
+    response = await fetch(resolveUrl(path), {
       method: 'POST',
-      headers: authToken ? { Authorization: `${AUTH_SCHEME} ${authToken}` } : {},
+      headers: sentWith ? { Authorization: `${AUTH_SCHEME} ${sentWith}` } : {},
       body: form,
     });
   } catch {
@@ -150,7 +190,7 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
         : { code: 'internal_error', message: 'Something went wrong. Please try again.' },
     );
 
-    if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code);
+    if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code, sentWith);
 
     throw failure;
   }

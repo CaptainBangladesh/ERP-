@@ -13,8 +13,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ─── identity ───────────────────────────────────────────────────────────────────────
@@ -892,24 +893,35 @@ model LeadSource {
   @@map("lead_sources")
 }
 
-/// What one company calls one of the four fixed `Lead.status` values, and the colour it uses.
+/// One status on a company's Leads board — what it is called, the colour it shows in, and,
+/// for the ones a company added itself, the fact that it exists at all.
 ///
-/// Cosmetic only, and deliberately so. The statuses themselves are the lifecycle that
-/// `qualify`/`disqualify`/`reopen` act on and that `WorkflowRule.triggerConfig` names, so a row
-/// here changes a caption and nothing else. A company that has customised nothing has no rows:
-/// the service reads the contract's defaults for any status it does not find, so a caller
-/// always sees four.
+/// Two kinds of row live here. A row for one of the four `LEAD_STATUSES` is cosmetic: the
+/// lifecycle `qualify`/`disqualify`/`reopen` act on and that `WorkflowRule.triggerConfig` names
+/// is unchanged by renaming `new` to "Fresh", and a company that has customised nothing has no
+/// such row — reads fill in the contract's defaults, so a caller always sees at least four.
+///
+/// An `isCustom` row is a stage of the company's own, and is the only kind that can be created
+/// or deleted. It is settable by an ordinary edit, exactly like `new` and `contacted`, and is
+/// never terminal: `qualified` and `disqualified` remain the only states the Party link is
+/// attached to, so nothing in the lifecycle has to recognise a status it has never heard of.
 model LeadStatusLabel {
   id        String   @id @default(uuid()) @db.Uuid
   companyId String   @map("company_id") @db.Uuid
-  /// One of `LEAD_STATUSES`. Text, not a Postgres enum, matching `Lead.status` itself.
+  /// One of `LEAD_STATUSES`, or a key derived from a custom status's label. Text, not a
+  /// Postgres enum, matching `Lead.status` itself.
   status    String
   label     String
   color     String
+  /// True for a status this company added. Built-in rows are captions and cannot be deleted.
+  isCustom  Boolean  @default(false) @map("is_custom")
+  /// Where the status sits in the picker. The built-ins hold 0–3; custom statuses follow.
+  order     Int      @default(0)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  /// At most one label per status per company — an upsert target, not merely a guard.
+  /// At most one row per status per company — an upsert target for the built-ins, and the
+  /// guard that stops two custom statuses colliding on one derived key.
   @@unique([companyId, status])
   @@index([companyId])
   @@map("lead_status_labels")
