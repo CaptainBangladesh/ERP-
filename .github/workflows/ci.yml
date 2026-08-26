@@ -74,3 +74,12 @@ jobs:
 
       - run: npm run build
       - run: npm test
+
+      - name: Deploy to Firebase Hosting
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_ERP_TAKE || secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          channelId: live
+          projectId: erp-take

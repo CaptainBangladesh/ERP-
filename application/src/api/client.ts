@@ -82,12 +82,11 @@ export function setSessionUnusableHandler(
   onSessionUnusable = handler;
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';
-
 function resolveUrl(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const baseUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${API_BASE_URL}${normalizedPath}`;
+  return `${baseUrl}${normalizedPath}`;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

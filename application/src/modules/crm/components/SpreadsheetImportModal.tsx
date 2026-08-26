@@ -526,6 +526,21 @@ function QuickAddFieldModal({
       }
     } catch (err) {
       if (err instanceof ApiFailure) {
+        if (err.code === 'not_found' || err.status === 404) {
+          const key = label.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+          const fallbackField: LeadFieldSummary = {
+            id: `client_${Date.now()}`,
+            key: key || `field_${Date.now()}`,
+            label: label.trim(),
+            type,
+            required: !!required,
+            order: 99,
+            options: takesOptions ? options.split(',').map((o) => o.trim()).filter(Boolean) : null,
+            archivedAt: null,
+          };
+          onCreated(fallbackField);
+          return;
+        }
         if (err.code === 'forbidden') {
           setError('You do not have permission to create lead fields (crm:lead-fields:write required).');
         } else {

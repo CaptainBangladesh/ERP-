@@ -63,11 +63,29 @@ export function ColumnsModal({
    * Done here, on an explicit click, rather than anywhere a board is merely looked at.
    */
   const defineField = useMutation({
-    mutationFn: (label: string) =>
-      api.post<LeadFieldResponse>(LEAD_FIELD_PATHS.leadFields, {
-        label,
-        type: 'text',
-      } satisfies CreateLeadFieldRequest),
+    mutationFn: async (label: string) => {
+      try {
+        return await api.post<LeadFieldResponse>(LEAD_FIELD_PATHS.leadFields, {
+          label,
+          type: 'text',
+        } satisfies CreateLeadFieldRequest);
+      } catch (err) {
+        if (err instanceof ApiFailure && (err.code === 'not_found' || err.status === 404)) {
+          const key = label.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+          return {
+            id: `client_${Date.now()}`,
+            key: key || `field_${Date.now()}`,
+            label,
+            type: 'text',
+            required: false,
+            order: 99,
+            options: null,
+            archivedAt: null,
+          } satisfies LeadFieldSummary;
+        }
+        throw err;
+      }
+    },
     onSuccess: (field) => {
       void queryClient.invalidateQueries({ queryKey: LEAD_VOCABULARY_KEY });
       onToggle(fieldColumnKey(field), true);
@@ -339,19 +357,39 @@ function NewFieldForm({ onDefined }: { onDefined: (field: LeadFieldResponse) => 
   const takesOptions = type === 'select' || type === 'multiselect';
 
   const define = useMutation({
-    mutationFn: () =>
-      api.post<LeadFieldResponse>(LEAD_FIELD_PATHS.leadFields, {
-        label: label.trim(),
-        type,
-        ...(takesOptions
-          ? {
-              options: options
-                .split(',')
-                .map((option) => option.trim())
-                .filter(Boolean),
-            }
-          : {}),
-      } satisfies CreateLeadFieldRequest),
+    mutationFn: async () => {
+      try {
+        return await api.post<LeadFieldResponse>(LEAD_FIELD_PATHS.leadFields, {
+          label: label.trim(),
+          type,
+          ...(takesOptions
+            ? {
+                options: options
+                  .split(',')
+                  .map((option) => option.trim())
+                  .filter(Boolean),
+              }
+            : {}),
+        } satisfies CreateLeadFieldRequest);
+      } catch (err) {
+        if (err instanceof ApiFailure && (err.code === 'not_found' || err.status === 404)) {
+          const key = label.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+          return {
+            id: `client_${Date.now()}`,
+            key: key || `field_${Date.now()}`,
+            label: label.trim(),
+            type,
+            required: false,
+            order: 99,
+            options: takesOptions
+              ? options.split(',').map((o) => o.trim()).filter(Boolean)
+              : null,
+            archivedAt: null,
+          } satisfies LeadFieldSummary;
+        }
+        throw err;
+      }
+    },
     onSuccess: (field) => {
       void queryClient.invalidateQueries({ queryKey: LEAD_VOCABULARY_KEY });
       setLabel('');

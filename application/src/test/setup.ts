@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { afterAll, afterEach, beforeAll } from 'vitest';
+import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { server } from './server';
 
@@ -10,7 +10,10 @@ import { server } from './server';
  * is deliberate: a request no handler covers is a test asserting against a silent failure,
  * which is worse than no test at all.
  */
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+beforeAll(() => {
+  vi.stubEnv('VITE_API_URL', '');
+  server.listen({ onUnhandledRequest: 'error' });
+});
 
 afterEach(() => {
   server.resetHandlers();
