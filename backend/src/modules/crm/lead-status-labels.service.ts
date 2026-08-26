@@ -84,9 +84,14 @@ function describe(
   stored: { label: string; color: string } | undefined,
 ): LeadStatusLabelSummary {
   const fallback = LEAD_STATUS_LABEL_DEFAULTS[status];
+  const orderIndex = LEAD_STATUSES.indexOf(status);
+  const isSettable = status === 'new' || status === 'contacted';
   return {
     status,
     label: stored?.label ?? fallback.label,
     color: stored?.color ?? fallback.color,
+    isCustom: false,
+    order: orderIndex >= 0 ? orderIndex : 0,
+    isSettable,
   };
 }

@@ -60,7 +60,7 @@ export interface StatusLabel {
  * Always all four, even before the response lands — the contract's defaults stand in — so no
  * screen has to render a status pill with no caption on it while a request is in flight.
  */
-export function useLeadStatusLabels(): Record<LeadStatus, StatusLabel> {
+export function useLeadStatusLabels(): Record<LeadStatus, StatusLabel> & Record<string, StatusLabel> {
   const query = useQuery({
     queryKey: [...LEAD_VOCABULARY_KEY, 'status-labels'],
     queryFn: () => api.get<LeadStatusLabelListResponse>(LEAD_STATUS_LABEL_PATHS.labels),
@@ -76,7 +76,7 @@ export function useLeadStatusLabels(): Record<LeadStatus, StatusLabel> {
         color: stored.get(status)?.color ?? LEAD_STATUS_LABEL_DEFAULTS[status].color,
       },
     ]),
-  ) as Record<LeadStatus, StatusLabel>;
+  ) as Record<LeadStatus, StatusLabel> & Record<string, StatusLabel>;
 }
 
 /**
