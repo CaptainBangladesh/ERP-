@@ -1,107 +1,115 @@
-# Hosting ERP on Supabase & Cloud Platforms
+# Complete Step-by-Step Supabase & Cloud Deployment Guide
 
-This guide walks you step-by-step through setting up **Supabase PostgreSQL** as your database and deploying the full-stack ERP monorepo to production.
-
----
-
-## 1. Setting Up Supabase Database
-
-1. **Create a Supabase Project**:
-   - Log into [Supabase Console](https://database.new).
-   - Create a new project. Choose a strong database password and select a region near your users.
-
-2. **Retrieve Connection Strings**:
-   - Go to **Project Settings** -> **Database**.
-   - Under **Connection Strings**, copy:
-     - **Transaction Pooler URL** (Port `6543`, appended with `?pgbouncer=true` or Supavisor pooler mode). This will be your `DATABASE_URL`.
-     - **Direct Connection URL** (Port `5432`). This will be your `DIRECT_URL`.
+This document provides a complete, step-by-step guide to deploying this ERP monorepo to production using **Supabase** (Database), **Render/Railway** (Backend), and **Vercel** (Frontend).
 
 ---
 
-## 2. Environment Variables Setup
+## Phase 1: Supabase Database Setup & Migrations
 
-Configure the backend environment variables on your server or host platform:
+### 1. Create a Supabase Project
+1. Log in to [Supabase Console](https://database.new).
+2. Click **New Project**, select an Organization, and configure:
+   - **Project Name**: `ERP-Production`
+   - **Database Password**: Set a strong password *(save this password securely!)*
+   - **Region**: Choose a region closest to your target users.
+3. Click **Create new project** and wait 1–2 minutes for provision.
 
-```env
-# Supabase Transaction Pooler (Port 6543) for runtime queries
-DATABASE_URL="postgres://postgres.[PROJECT-REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true"
+### 2. Retrieve Connection Strings
+1. In Supabase dashboard, go to **Project Settings** (gear icon on bottom left) $\rightarrow$ **Database**.
+2. Scroll down to **Connection Strings**:
+   - Copy **Transaction Pooler URL** (Port `6543` with `?pgbouncer=true`). This will be your `DATABASE_URL`.
+   - Copy **Direct Connection URL** (Port `5432`). This will be your `DIRECT_URL`.
+3. Replace `[YOUR-PASSWORD]` in both strings with your actual database password.
 
-# Supabase Direct Connection (Port 5432) for Prisma migrations
-DIRECT_URL="postgres://postgres.[PROJECT-REF]:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres"
-
-PORT=3000
-
-# Secret key for session signing (Generate using: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-SESSION_SECRET="your-generated-32-byte-hex-secret"
-
-# Optional: CORS allowed origin (if backend & frontend have different domains)
-CORS_ORIGIN="https://your-frontend.vercel.app"
-```
-
----
-
-## 3. Running Prisma Migrations on Supabase
-
-Apply database migrations to your Supabase PostgreSQL instance:
+### 3. Deploy Prisma Migrations to Supabase
+Run the following commands in your local terminal:
 
 ```bash
-# Run from the repository root
+# 1. Build the shared package first
 npm run build --workspace packages
 
-# Run Prisma migrations against Supabase using DIRECT_URL
+# 2. Set environment variables (replace with your actual connection strings)
+# On Windows PowerShell:
+$env:DATABASE_URL="postgres://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true"
+$env:DIRECT_URL="postgres://postgres.[REF]:[PASSWORD]@db.[REF].supabase.co:5432/postgres"
+
+# On Linux / macOS / Bash:
+# export DATABASE_URL="postgres://..."
+# export DIRECT_URL="postgres://..."
+
+# 3. Apply Prisma migrations directly to Supabase Postgres
 cd backend
 npx prisma migrate deploy
 ```
 
 ---
 
-## 4. Deploying the NestJS Backend
+## Phase 2: Deploying the Backend (Render / Railway)
 
-You can deploy `@erp/backend` to any Node.js host or Docker container service:
-
-### Option A: Render / Railway / Fly.io (Docker)
-1. Push your repository to GitHub (`https://github.com/CaptainBangladesh/ERP-.git`).
-2. Create a **New Web Service** on Render or Railway.
-3. Point to `backend/Dockerfile` as the build context.
-4. Set environment variables (`DATABASE_URL`, `DIRECT_URL`, `SESSION_SECRET`, `CORS_ORIGIN`).
-5. Deploy service. Note your backend URL (e.g. `https://erp-backend.onrender.com`).
+### Deploying to Render (Free / Docker Container)
+1. Log in to [Render Dashboard](https://dashboard.render.com) using your GitHub account.
+2. Click **New +** $\rightarrow$ **Web Service**.
+3. Connect your GitHub repository: `CaptainBangladesh/ERP-`.
+4. Configure service parameters:
+   - **Name**: `erp-backend`
+   - **Region**: Select same region as Supabase
+   - **Branch**: `main`
+   - **Language / Environment**: `Docker`
+   - **Dockerfile Path**: `backend/Dockerfile`
+5. Scroll down to **Environment Variables** and add:
+   - `DATABASE_URL`: *(Your Supabase Pooled URL on port 6543)*
+   - `DIRECT_URL`: *(Your Supabase Direct URL on port 5432)*
+   - `PORT`: `3000`
+   - `SESSION_SECRET`: *(Generate a 32-byte secret using: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)*
+   - `CORS_ORIGIN`: `*` (or your Vercel URL once deployed)
+6. Click **Create Web Service**.
+7. Once deployed, copy your live backend URL (e.g. `https://erp-backend-xyz.onrender.com`).
 
 ---
 
-## 5. Deploying the React Frontend
+## Phase 3: Deploying the Frontend (Vercel)
 
-Deploy the Vite React frontend (`@erp/application`) to Vercel, Netlify, or Cloudflare Pages:
+### 1. Update `vercel.json` API Proxy Target
+In your local workspace, open `vercel.json` and set your backend URL as the destination:
 
-### Option A: Vercel
-1. Import your GitHub repository on Vercel.
-2. Select root directory or set build settings:
+```json
+{
+  "buildCommand": "npm run build --workspace packages && npm run build --workspace application",
+  "outputDirectory": "application/dist",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://erp-backend-xyz.onrender.com/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
+
+Commit and push to GitHub:
+```bash
+git add vercel.json
+git commit -m "chore: set production backend URL in vercel.json"
+git push origin main
+```
+
+### 2. Deploy on Vercel
+1. Log in to [Vercel](https://vercel.com/new) with GitHub.
+2. Import repository `CaptainBangladesh/ERP-`.
+3. Configure settings:
+   - **Framework Preset**: Vite
    - **Build Command**: `npm run build`
    - **Output Directory**: `application/dist`
-3. Update `vercel.json` rewrite target to point to your deployed backend URL:
-   ```json
-   {
-     "source": "/api/:path*",
-     "destination": "https://your-backend-url.com/api/:path*"
-   }
-   ```
-4. Deploy frontend.
+4. Click **Deploy**.
 
 ---
 
-## Summary Command Checklist
+## Phase 4: Verification & Security
 
-```bash
-# 1. Typecheck and verify modules
-npm run check:modules
-npm run check:tenancy
-npm run build
-
-# 2. Deploy Prisma migrations to Supabase
-cd backend
-npx prisma migrate deploy
-
-# 3. Push latest code to GitHub
-git add .
-git commit -m "feat: setup supabase database hosting and deployment config"
-git push -u origin main
-```
+1. Open your live Vercel URL (e.g. `https://erp-app.vercel.app`).
+2. Update `CORS_ORIGIN` in Render dashboard to `https://erp-app.vercel.app` to enforce origin restriction.
+3. Sign up to create the first company and owner account!
