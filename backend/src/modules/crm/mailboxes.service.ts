@@ -14,7 +14,7 @@ import {
   Tenancy,
   type ScopedPrisma,
 } from '../../platform/tenancy';
-import { MailboxOAuth, mailboxProviderUnavailable } from './mailbox-oauth';
+import { MailboxOAuth } from './mailbox-oauth';
 import { encryptSmtpPassword } from '../../platform/secrets';
 import { MailboxSender, type SendingMailbox } from './mailbox-sender';
 
@@ -31,44 +31,23 @@ export class MailboxesService {
     provider: MailboxProvider,
     actor: { userId: string },
   ): Promise<ConnectMailboxUrlResponse> {
-    // Refused here rather than at the callback, so somebody clicking "Connect Gmail" on a
-    // server with no credentials is told immediately instead of being sent to a consent
-    // screen that cannot lead anywhere.
-    if (provider !== 'gmail') throw mailboxProviderUnavailable(provider);
-
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    if (!clientId) throw mailboxProviderUnavailable(provider);
-
     const stateToken = `mbs_${randomBytes(16).toString('hex')}`;
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    // Before the pending-connection row exists, because this refuses for a provider that has
+    // no implementation or no credentials on this server — and a refusal that had already
+    // written a row would leave one behind for a consent screen nobody was ever sent to.
+    const url = this.oauth.consentUrl(provider, stateToken, mailboxRedirectUri());
 
     await this.prisma.mailboxAuthState.create({
       data: companyApplied({
         userId: actor.userId,
         provider,
         stateToken,
-        expiresAt,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
       }),
     });
 
-    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    url.search = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: mailboxRedirectUri(),
-      response_type: 'code',
-      // Identity, plus permission to send as this account — which `LiveMailboxSender` now
-      // actually exercises through the Gmail API. `gmail.send` is a restricted scope, so a
-      // deployment that publishes this app needs Google's verification; it is requested
-      // because mail genuinely goes out through it, not on the chance it might one day.
-      scope: 'openid email profile https://www.googleapis.com/auth/gmail.send',
-      // Offline plus an explicit consent prompt is what returns a refresh token. Without one
-      // the mailbox stops sending an hour after it is connected, with nothing to renew it.
-      access_type: 'offline',
-      prompt: 'consent',
-      state: stateToken,
-    }).toString();
-
-    return { url: url.toString(), stateToken };
+    return { url, stateToken };
   }
 
   /**

@@ -34,11 +34,53 @@ export interface MailboxIdentity {
  * far from the cause. A failure to establish who owns a mailbox is not a mailbox.
  */
 export abstract class MailboxOAuth {
+  /**
+   * Where to send somebody to consent, for this pending connection.
+   *
+   * Built here rather than in the service because it needs the provider's client id, and that
+   * is a credential — the one thing this seam exists to own. A service reading it from the
+   * environment made the whole flow untestable without a real Google project configured, and
+   * a suite that only passes on a machine holding live credentials is not a suite.
+   *
+   * The URL itself is assembled once, below, so the stub and the real implementation produce
+   * the same shape and a test asserting on it is asserting on what production sends.
+   */
+  consentUrl(provider: MailboxProvider, stateToken: string, redirectUri: string): string {
+    return googleConsentUrl(this.clientIdFor(provider), stateToken, redirectUri);
+  }
+
+  /** The client id to consent against, or a refusal if this provider cannot be used here. */
+  protected abstract clientIdFor(provider: MailboxProvider): string;
+
   abstract exchange(
     provider: MailboxProvider,
     code: string,
     redirectUri: string,
   ): Promise<MailboxIdentity>;
+}
+
+/**
+ * The consent screen's address, with everything the return trip depends on.
+ *
+ * `access_type=offline` with an explicit `prompt=consent` is what returns a refresh token;
+ * without one the mailbox stops sending an hour after it is connected, with nothing to renew
+ * it. `gmail.send` is requested because `LiveMailboxSender` genuinely calls the Gmail API —
+ * it is a restricted scope, so it is asked for only where it is used.
+ */
+function googleConsentUrl(clientId: string, stateToken: string, redirectUri: string): string {
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+
+  url.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile https://www.googleapis.com/auth/gmail.send',
+    access_type: 'offline',
+    prompt: 'consent',
+    state: stateToken,
+  }).toString();
+
+  return url.toString();
 }
 
 /**
@@ -49,18 +91,25 @@ export abstract class MailboxOAuth {
  */
 @Injectable()
 export class GoogleMailboxOAuth extends MailboxOAuth {
-  async exchange(
-    provider: MailboxProvider,
-    code: string,
-    redirectUri: string,
-  ): Promise<MailboxIdentity> {
+  protected clientIdFor(provider: MailboxProvider): string {
     // Outlook has no implementation yet. Saying so is better than the mock connection that
     // used to stand in for it, which looked like a working Outlook mailbox on the screen.
     if (provider !== 'gmail') throw mailboxProviderUnavailable(provider);
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) throw mailboxProviderUnavailable(provider);
+
+    return clientId;
+  }
+
+  async exchange(
+    provider: MailboxProvider,
+    code: string,
+    redirectUri: string,
+  ): Promise<MailboxIdentity> {
+    const clientId = this.clientIdFor(provider);
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    if (!clientId || !clientSecret) throw mailboxProviderUnavailable(provider);
+    if (!clientSecret) throw mailboxProviderUnavailable(provider);
 
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -118,6 +167,21 @@ export class GoogleMailboxOAuth extends MailboxOAuth {
 @Injectable()
 export class StubMailboxOAuth extends MailboxOAuth {
   readonly exchanged: { provider: MailboxProvider; code: string; redirectUri: string }[] = [];
+
+  /**
+   * A client id that is obviously not a real one.
+   *
+   * The suite needs *a* credential to build a consent URL with, and taking it from the
+   * environment is what made the tests pass only on a machine with a live Google project
+   * configured — and fail in CI, which has none.
+   */
+  static readonly CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
+
+  protected clientIdFor(provider: MailboxProvider): string {
+    // Still refuses what production refuses, so "this provider is unavailable" stays testable.
+    if (provider !== 'gmail') throw mailboxProviderUnavailable(provider);
+    return StubMailboxOAuth.CLIENT_ID;
+  }
 
   /** Codes the stub treats as a provider that refused, so refusal is testable too. */
   static readonly REFUSED_CODE = 'refused_by_provider';
