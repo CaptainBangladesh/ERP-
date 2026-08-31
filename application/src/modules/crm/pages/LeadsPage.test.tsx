@@ -8,6 +8,7 @@ import {
   LEAD_PATHS,
   LEAD_SOURCE_PATHS,
   LEAD_STATUS_LABEL_PATHS,
+  ACTIVITY_PATHS,
   PARTY_PATHS,
   type LeadListResponse,
   type LeadResponse,
@@ -41,6 +42,18 @@ describe('LeadsPage', () => {
       http.get(LEAD_STATUS_LABEL_PATHS.labels, () =>
         HttpResponse.json({ items: [] }),
       ),
+      // The colleague list and a lead's history are fetched by the board and the detail
+      // panel whatever a given test is about. Without a baseline here the tests that do not
+      // care about them assert against a failed request instead of an empty one, and the
+      // rejection lands after the test that caused it — an unhandled error, which fails the
+      // whole run. Tests that do care override these, `server.use` taking the later handler.
+      http.get(IDENTITY_PATHS.users, () =>
+        HttpResponse.json({
+          items: [],
+          page: { number: 1, size: 200, total: 0, pages: 0 },
+        } satisfies UserListResponse),
+      ),
+      http.get(ACTIVITY_PATHS.leadActivities(':id'), () => HttpResponse.json({ items: [] })),
     );
   });
 

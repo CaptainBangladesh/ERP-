@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import {
@@ -24,6 +24,14 @@ import { ContactsPage } from './ContactsPage';
  * separately for that reason.
  */
 describe('ContactsPage', () => {
+  // The board's role filter asks the company which roles it has actually used, on every
+  // render. No test here is about that list, but leaving it unanswered means each one runs
+  // against a failed request and leaves a rejection behind it — an unhandled error, which
+  // fails the run whatever the assertions did.
+  beforeEach(() => {
+    server.use(http.get(PARTY_PATHS.roles, () => HttpResponse.json({ items: [] })));
+  });
+
   function person(id: string, name: string, overrides: Partial<PartySummary> = {}): PartySummary {
     return {
       id,

@@ -131,10 +131,13 @@ describe('MovementsPage', () => {
       signedInWith();
       let reversedId: string | undefined;
 
+      // The filter controls name products and locations whatever the test is about, so the
+      // page asks for both alongside the history. Answering them keeps the request that
+      // fails on an unanswered handler — and the rejection it leaves behind the test — out
+      // of a case that is only about the reversal.
+      backend([movement({ id: 'm1', kind: 'receipt' })]);
+
       server.use(
-        http.get(MOVEMENT_PATHS.movements, () =>
-          HttpResponse.json(page([movement({ id: 'm1', kind: 'receipt' })])),
-        ),
         http.post('*/movements/:id/reverse', async ({ params }) => {
           reversedId = params.id as string;
           return HttpResponse.json(

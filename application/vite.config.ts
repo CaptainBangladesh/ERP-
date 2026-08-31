@@ -21,5 +21,12 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    // Well clear of anything these tests legitimately need — the slowest is under two
+    // seconds here. The default five is not: a CI runner is a fraction of a development
+    // machine and shares what it has, so a test doing real work against a real router and a
+    // real query cache can cross five seconds there while never coming near it locally. A
+    // timeout that only fires on the slower machine reports a scheduling accident as a
+    // broken feature.
+    testTimeout: 15_000,
   },
 });

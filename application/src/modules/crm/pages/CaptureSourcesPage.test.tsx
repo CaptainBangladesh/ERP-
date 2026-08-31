@@ -1,12 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { CAPTURE_SOURCE_PATHS, type CaptureSourceSummary } from '@erp/shared';
+import {
+  CAPTURE_SOURCE_PATHS,
+  LEAD_FIELD_PATHS,
+  LEAD_GROUP_PATHS,
+  LEAD_SOURCE_PATHS,
+  type CaptureSourceSummary,
+} from '@erp/shared';
 import { server } from '../../../test/server';
 import { renderPage, signedInWith } from '../../../test/render';
 import { CaptureSourcesPage } from './CaptureSourcesPage';
 
 describe('CaptureSourcesPage', () => {
+  // The editor offers a capture source its defaults — which group, which source, which
+  // fields — so it asks for all three the moment it opens, in every test that opens it.
+  // Without a baseline those requests go unhandled: the assertions run against a failed
+  // fetch, and the rejection arrives after the test that caused it, where vitest can only
+  // count it as an unhandled error and fail the run.
+  beforeEach(() => {
+    server.use(
+      http.get(LEAD_GROUP_PATHS.leadGroups, () => HttpResponse.json({ items: [] })),
+      http.get(LEAD_FIELD_PATHS.leadFields, () => HttpResponse.json({ items: [] })),
+      http.get(LEAD_SOURCE_PATHS.leadSources, () => HttpResponse.json({ items: [] })),
+    );
+  });
+
   function source(overrides: Partial<CaptureSourceSummary> = {}): CaptureSourceSummary {
     return {
       id: 'cs-1',

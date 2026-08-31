@@ -15,3 +15,8 @@ application/dist/
 
 # TypeScript incremental build state. A build artifact, not source.
 *.tsbuildinfo
+
+# Agent worktrees. Live checkouts of this repo, never content of it — committed as bare
+# gitlinks they make git submodule commands fail on checkout.
+.claude/worktrees/
+.claude/settings.local.json
