@@ -44,21 +44,102 @@ describe('CRM Outreach Modals', () => {
       expect(screen.getByText('sales@gmail.com')).toBeInTheDocument();
       expect(screen.getByText('Connect Gmail')).toBeInTheDocument();
 
-      // Trigger connect url
+      // Connecting sends the popup to the provider's own consent screen — the only way a
+      // mailbox gets connected. There is no second path that asks our own callback for one.
       (api.post as any).mockResolvedValueOnce({
-        url: '/auth/url',
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?state=mbs_123',
         stateToken: 'mbs_123',
       });
-      (api.get as any).mockResolvedValueOnce({ success: true, mailboxId: 'mb_2' });
+
+      const popup = { location: { href: '' }, closed: false, close: vi.fn() };
+      const open = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+
+      try {
+        fireEvent.click(screen.getByText('Connect Gmail'));
+
+        await waitFor(() => {
+          expect(api.post).toHaveBeenCalledWith('/api/crm/mailboxes/connect-url', {
+            provider: 'gmail',
+          });
+        });
+
+        await waitFor(() =>
+          expect(popup.location.href).toBe(
+            'https://accounts.google.com/o/oauth2/v2/auth?state=mbs_123',
+          ),
+        );
+
+        // Nothing is connected here, so nothing is fetched as though something were.
+        expect(api.get).toHaveBeenCalledTimes(1);
+      } finally {
+        open.mockRestore();
+      }
+    });
+
+    it('adds a company mailbox from its SMTP settings, with no popup at all', async () => {
       (api.get as any).mockResolvedValueOnce({ items: [] });
 
-      fireEvent.click(screen.getByText('Connect Gmail'));
+      render(<MailboxesModal isOpen={true} onClose={vi.fn()} />);
+      await waitFor(() => expect(api.get).toHaveBeenCalled());
 
-      await waitFor(() => {
-        expect(api.post).toHaveBeenCalledWith('/api/crm/mailboxes/connect-url', {
-          provider: 'gmail',
-        });
+      fireEvent.click(screen.getByText(/add company mailbox/i));
+
+      fireEvent.change(screen.getByLabelText('Host'), {
+        target: { value: 'mail.privateemail.com' },
       });
+      fireEvent.change(screen.getByLabelText('Email address'), {
+        target: { value: 'sales@northwind.test' },
+      });
+      fireEvent.change(screen.getByLabelText('Password'), {
+        target: { value: 'a-real-password' },
+      });
+
+      (api.post as any).mockResolvedValueOnce({ id: 'mb_2', provider: 'smtp' });
+      (api.get as any).mockResolvedValueOnce({ items: [] });
+
+      fireEvent.click(screen.getByRole('button', { name: /^add mailbox$/i }));
+
+      await waitFor(() =>
+        expect(api.post).toHaveBeenCalledWith(
+          '/api/crm/mailboxes/smtp',
+          expect.objectContaining({
+            host: 'mail.privateemail.com',
+            port: 465,
+            secure: true,
+            emailAddress: 'sales@northwind.test',
+            password: 'a-real-password',
+            // Left blank, so it falls back to the address rather than being sent empty.
+            username: 'sales@northwind.test',
+          }),
+        ),
+      );
+    });
+
+    it('reports a connection the popup says did not happen', async () => {
+      (api.get as any).mockResolvedValueOnce({ items: [] });
+
+      render(<MailboxesModal isOpen={true} onClose={vi.fn()} />);
+      await waitFor(() => expect(api.get).toHaveBeenCalled());
+
+      const fetchesBefore = (api.get as any).mock.calls.length;
+
+      // What the callback page posts back when the provider would not name the account.
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: window.location.origin,
+          data: {
+            type: 'MAILBOX_CONNECTION_RESULT',
+            connected: false,
+            message: 'The mailbox provider did not confirm the account.',
+          },
+        }),
+      );
+
+      expect(
+        await screen.findByText(/did not confirm the account/i),
+      ).toBeInTheDocument();
+      // A failure is not a reason to re-read the list — there is nothing new in it.
+      expect((api.get as any).mock.calls.length).toBe(fetchesBefore);
     });
   });
 
@@ -123,27 +204,33 @@ describe('CRM Outreach Modals', () => {
 
   describe('SendEmailModal', () => {
     it('selects mailbox and template, then sends 1-on-1 email', async () => {
-      (api.get as any)
-        .mockResolvedValueOnce({
-          items: [
-            {
-              id: 'mb_1',
-              displayName: 'Sales Rep',
-              emailAddress: 'rep@company.com',
-              status: 'connected',
-            },
-          ],
-        })
-        .mockResolvedValueOnce({
-          items: [
-            {
-              id: 'tpl_1',
-              name: 'Intro Pitch',
-              subject: 'Hello {{lead.name}}',
-              body: '<p>Hi {{lead.name}}, nice to meet you!</p>',
-            },
-          ],
-        });
+      (api.get as any).mockImplementation((url: string) => {
+        if (url === '/api/crm/mailboxes') {
+          return Promise.resolve({
+            items: [
+              {
+                id: 'mb_1',
+                displayName: 'Sales Rep',
+                emailAddress: 'rep@company.com',
+                status: 'connected',
+              },
+            ],
+          });
+        }
+        if (url === '/api/crm/email-templates') {
+          return Promise.resolve({
+            items: [
+              {
+                id: 'tpl_1',
+                name: 'Intro Pitch',
+                subject: 'Hello {{lead.name}}',
+                body: '<p>Hi {{lead.name}}, nice to meet you!</p>',
+              },
+            ],
+          });
+        }
+        return Promise.resolve({});
+      });
 
       const handleSuccess = vi.fn();
       const handleClose = vi.fn();

@@ -27,6 +27,20 @@ export const IDENTITY_ROUTE = 'api/identity';
 export const AUTH_PATHS = {
   signUp: `/${AUTH_ROUTE}/sign-up`,
   signIn: `/${AUTH_ROUTE}/sign-in`,
+  googleSignIn: `/${AUTH_ROUTE}/google`,
+  /**
+   * Where the browser is *sent* to begin Google sign-in. A full navigation, not a fetch:
+   * the server answers with a redirect to accounts.google.com, which is what keeps the
+   * client id and the registered redirect URI in one place — the backend's environment —
+   * instead of being repeated in a bundle that ships to every visitor.
+   */
+  googleLogin: `/${AUTH_ROUTE}/google/login`,
+  /**
+   * Where Google returns the browser to, with the one-time code. Registered in the Google
+   * project as an authorised redirect URI — it is an address Google must know, not one the
+   * application ever links to.
+   */
+  googleCallback: `/${AUTH_ROUTE}/google/callback`,
   signOut: `/${AUTH_ROUTE}/sign-out`,
   /** Who the bearer of this token is. The frontend calls it to restore a stored session. */
   session: `/${AUTH_ROUTE}/session`,
@@ -56,7 +70,32 @@ export const RECOVERY_SCREEN_PATHS = {
   acceptInvitation: '/accept-invitation',
 } as const;
 
+/**
+ * The three screens the Google round trip can land somebody on.
+ *
+ * Shared for the same reason the recovery paths are: the backend builds these URLs. It is the
+ * callback from Google that decides whether the browser comes back to the dashboard with a
+ * session or to one of the two forms with a message, so a rename has to be a type error in
+ * both workspaces rather than a redirect into a 404.
+ */
+export const AUTH_SCREEN_PATHS = {
+  signIn: '/sign-in',
+  signUp: '/sign-up',
+  /** Where a session lands. The dashboard is simply the application's root screen. */
+  dashboard: '/',
+} as const;
+
 export const RECOVERY_TOKEN_PARAM = 'token';
+
+/**
+ * How a session reaches the browser at the end of the Google round trip.
+ *
+ * On the URL because there is nowhere else: the tab that started the flow was navigated away
+ * to accounts.google.com and back, so nothing in it survived. The application reads this
+ * parameter once on load, stores the token, and strips it from the address bar — see
+ * `SessionProvider`.
+ */
+export const SESSION_TOKEN_PARAM = 'session_token';
 
 export const RECOVERY_LINKS = {
   resetPassword: (token: string) =>
@@ -72,20 +111,81 @@ export const IDENTITY_PATHS = {
     `/${IDENTITY_ROUTE}/users/${userId}/roles/${roleId}`,
   invitations: `/${IDENTITY_ROUTE}/invitations`,
   roles: `/${IDENTITY_ROUTE}/roles`,
+  /**
+   * The company's own outgoing mail — how invitations and password resets leave.
+   *
+   * Settings rather than environment variables, so whoever runs the company can fix a wrong
+   * password from a screen instead of asking somebody to edit a file on the server and
+   * restart it.
+   */
+  companyMail: `/${IDENTITY_ROUTE}/company/mail`,
   role: (id: string) => `/${IDENTITY_ROUTE}/roles/${id}`,
 } as const;
+
+/**
+ * Which of the two things somebody is doing on the sign-up screen.
+ *
+ * `company` opens a new company and makes them its owner; `account` puts them inside a
+ * company that already exists. The company's name is required either way, and it is the
+ * same field in both cases — what differs is the question asked of it: for `company` the
+ * name must be free, and for `account` it must already be taken. One field, two rules, so
+ * nobody can create a second "Northwind Trading" by choosing the wrong tab.
+ */
+export const SIGN_UP_INTENTS = ['company', 'account'] as const;
+
+export type SignUpIntent = (typeof SIGN_UP_INTENTS)[number];
+
+/**
+ * Whether a Google request is establishing a session for somebody who already has an
+ * account, or creating one.
+ *
+ * Sent explicitly rather than inferred from whether the email is known, because the two
+ * want opposite outcomes for the same input: an unknown address is a failure on sign-in
+ * ("you have no account yet") and the whole point on sign-up. A server that guessed would
+ * silently create an account for anybody who mistyped which screen they were on.
+ */
+export const GOOGLE_AUTH_MODES = ['signin', 'signup'] as const;
+
+export type GoogleAuthMode = (typeof GOOGLE_AUTH_MODES)[number];
 
 export interface SignUpRequest {
   companyName: string;
   name: string;
   email: string;
   password: string;
+  /** Absent means `company`, which is the safer of the two: it never joins anything. */
+  intent?: SignUpIntent;
 }
 
 export interface SignInRequest {
   email: string;
   password: string;
 }
+
+export interface GoogleSignInRequest {
+  email: string;
+  name?: string;
+  /** Required when `mode` is `signup`, for either intent. Ignored on sign-in. */
+  companyName?: string;
+  /** Absent means `signin` — the mode that never creates anything. */
+  mode?: GoogleAuthMode;
+  intent?: SignUpIntent;
+}
+
+/**
+ * What the browser carries back from the Google round trip, on the query string of whichever
+ * screen it lands on.
+ *
+ * The round trip leaves the application entirely, so nothing survives it but the URL: the
+ * refusal that ended it is a `IDENTITY_ERROR_CODES` value under `error`, and `intent` and
+ * `companyName` come back so the sign-up form can be repopulated with what the user had
+ * chosen and typed before they were sent to Google.
+ */
+export const GOOGLE_AUTH_RETURN_PARAMS = {
+  error: 'error',
+  intent: 'intent',
+  companyName: 'companyName',
+} as const;
 
 /** Sign-up and sign-in hand back the token that authenticates later calls. */
 export interface AuthenticatedSession extends Session {
@@ -111,6 +211,38 @@ export interface AcceptInvitationRequest {
   companyName: string;
   name: string;
   password: string;
+}
+
+/**
+ * A company's outgoing mail settings, as a screen sees them.
+ *
+ * No password, and there is no route that returns one: it is stored encrypted and can only be
+ * replaced, never read back. `configured` is what the screen branches on — whether this
+ * company sends its own mail or falls back to the deployment's.
+ */
+export interface CompanyMailSettingsResponse {
+  configured: boolean;
+  fromAddress: string;
+  fromName: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+}
+
+export interface UpdateCompanyMailSettingsRequest {
+  fromAddress: string;
+  fromName?: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  /**
+   * Omitted means "keep the password already stored", so changing the sender's name does not
+   * require typing a password again — a form that demands one for an unrelated edit is a form
+   * people end up pasting secrets into.
+   */
+  password?: string;
 }
 
 /**
@@ -208,7 +340,29 @@ export const IDENTITY_ERROR_CODES = {
   emailAlreadyRegistered: 'email_already_registered',
   invitationInvalid: 'invitation_invalid',
   companyNameMismatch: 'company_name_mismatch',
+  /** Joining a company by a name nothing is registered under. */
   companyDoesNotExist: 'company_does_not_exist',
+  /** Opening a company under a name somebody already registered. */
+  companyAlreadyExists: 'company_already_exists',
+  /** Signing up — either intent — without saying which company. */
+  companyNameRequired: 'company_name_required',
+  /**
+   * Google said who they are and this system has never seen them. Only sign-in raises it:
+   * it is the answer to "continue with Google" from somebody who has not signed up yet,
+   * and the screen turns it into a link to the sign-up form rather than an error to fix.
+   */
+  googleAccountNotRegistered: 'google_account_not_registered',
+  /**
+   * The Google round trip itself did not complete — the code would not exchange, or Google
+   * would not say who the user is. Distinct from every refusal above, which are decisions
+   * this system made about somebody it had successfully identified.
+   */
+  googleAuthFailed: 'google_auth_failed',
+  /** The mail host refused the company's outgoing-mail settings, so they were not saved. */
+  companyMailRejected: 'company_mail_rejected',
+  companyMailPasswordRequired: 'company_mail_password_required',
+  /** The company's own mail account refused a message. Nothing was sent. */
+  companyMailSendFailed: 'company_mail_send_failed',
   resetTokenInvalid: 'reset_token_invalid',
   roleNotFound: 'role_not_found',
   /** A role still assigned to somebody cannot be deleted — reassign them first. */

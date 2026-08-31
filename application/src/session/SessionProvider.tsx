@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AUTH_PATHS,
   ERROR_CODES,
+  SESSION_TOKEN_PARAM,
   type AuthenticatedSession,
   type Session,
 } from '@erp/shared';
@@ -39,7 +40,13 @@ const SessionContext = createContext<SessionContextValue | undefined>(undefined)
 export function SessionProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [token, setToken] = useState<string | undefined>(() => {
-    const stored = readStoredToken();
+    // A session arriving on the URL is how the Google flow ends: the browser was navigated
+    // away to Google and back, so the token reaches the application the only way anything
+    // can survive that — as a query parameter on the page it lands on.
+    const arriving = claimTokenFromUrl();
+    if (arriving) writeStoredToken(arriving);
+
+    const stored = arriving ?? readStoredToken();
     // Set before the first render so the restore request below already carries it.
     setAuthToken(stored);
     return stored;
@@ -54,11 +61,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
    * stale reading the check below exists to avoid.
    */
   const tokenRef = useRef(token);
-  tokenRef.current = token;
+  useEffect(() => {
+    setAuthToken(token);
+    tokenRef.current = token;
+  }, [token]);
 
   const sessionQuery = useQuery({
     queryKey: ['session', token],
-    queryFn: () => api.get<Session>(AUTH_PATHS.session),
+    queryFn: () => {
+      setAuthToken(token);
+      return api.get<Session>(AUTH_PATHS.session);
+    },
     enabled: Boolean(token),
     retry: false,
   });
@@ -140,4 +153,28 @@ export function useSession(): SessionContextValue {
   const value = useContext(SessionContext);
   if (!value) throw new Error('useSession must be used inside a SessionProvider');
   return value;
+}
+
+/**
+ * Takes the session token off the URL, if one came back on it, and removes it from the
+ * address bar.
+ *
+ * Stripped immediately because a credential in the address bar is a credential in the
+ * history, in a bookmark, and in whatever the user pastes when they share "the page I am
+ * on". `replaceState` rather than a navigation, so it leaves no entry to go back to.
+ */
+function claimTokenFromUrl(): string | undefined {
+  try {
+    const url = new URL(window.location.href);
+    const token = url.searchParams.get(SESSION_TOKEN_PARAM);
+    if (!token) return undefined;
+
+    url.searchParams.delete(SESSION_TOKEN_PARAM);
+    window.history.replaceState(null, '', url.pathname + url.search);
+    return token;
+  } catch {
+    // No usable location — a test environment, or a document with an opaque origin. Falling
+    // back to the stored token is the right answer either way.
+    return undefined;
+  }
 }

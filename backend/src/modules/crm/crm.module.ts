@@ -22,6 +22,8 @@ import { LeadStatusLabelsController } from './lead-status-labels.controller';
 import { LeadStatusLabelsService } from './lead-status-labels.service';
 import { MailboxesController } from './mailboxes.controller';
 import { MailboxesService } from './mailboxes.service';
+import { GoogleMailboxOAuth, MailboxOAuth, StubMailboxOAuth } from './mailbox-oauth';
+import { LiveMailboxSender, MailboxSender, RecordingMailboxSender } from './mailbox-sender';
 import { EmailTemplatesController } from './email-templates.controller';
 import { EmailTemplatesService } from './email-templates.service';
 import { CampaignsController } from './campaigns.controller';
@@ -68,6 +70,27 @@ import { PublicCampaignsController } from './public-campaigns.controller';
     LeadFieldsService,
     LeadStatusLabelsService,
     MailboxesService,
+    GoogleMailboxOAuth,
+    StubMailboxOAuth,
+    {
+      // Bound on the test environment alone. Not on whether credentials happen to be set:
+      // a developer without them gets the same refusal production would give, rather than a
+      // mailbox that looks connected and belongs to nobody. See `mailbox-oauth.ts`.
+      provide: MailboxOAuth,
+      useFactory: (google: GoogleMailboxOAuth, stub: StubMailboxOAuth) =>
+        process.env.NODE_ENV === 'test' ? stub : google,
+      inject: [GoogleMailboxOAuth, StubMailboxOAuth],
+    },
+    LiveMailboxSender,
+    RecordingMailboxSender,
+    {
+      // Same rule as the exchange above: the real sender everywhere but the suite, which has
+      // no mail server to reach and reads what was sent out of `DevMailer`.
+      provide: MailboxSender,
+      useFactory: (live: LiveMailboxSender, recording: RecordingMailboxSender) =>
+        process.env.NODE_ENV === 'test' ? recording : live,
+      inject: [LiveMailboxSender, RecordingMailboxSender],
+    },
     EmailTemplatesService,
     CampaignsService,
     CaptureSourcesService,

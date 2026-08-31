@@ -18,25 +18,26 @@ export function AppRoutes() {
 
   const needsSession = !route?.public;
   const shouldRedirect = !isRestoring && needsSession && !session;
+  const isAuthPage = path === '/sign-in' || path === '/sign-up';
+  const shouldRedirectToApp = !isRestoring && Boolean(session) && isAuthPage;
 
   useEffect(() => {
     // In an effect rather than during render: navigating is a side effect, and doing it
     // while rendering makes the redirect race the render that triggered it.
     if (shouldRedirect) navigate('/sign-in', { replace: true });
-  }, [shouldRedirect]);
+    else if (shouldRedirectToApp) navigate('/', { replace: true });
+  }, [shouldRedirect, shouldRedirectToApp]);
 
   // Checking a stored token takes a moment. Showing sign-in during it would flash the
   // wrong screen at somebody who is already signed in.
   if (isRestoring) return <Loading />;
 
-  if (shouldRedirect) return <Loading />;
+  if (shouldRedirect || shouldRedirectToApp) return <Loading />;
 
   if (!route) return <NotFound />;
 
   const Screen = route.component;
 
-  // A signed-in user on a public route — sign-in with a live session — gets the screen
-  // they asked for rather than a redirect. They may be about to sign in as somebody else.
   if (route.public) return <Screen />;
 
   return (

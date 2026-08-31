@@ -12,6 +12,7 @@ import { companyApplied, InjectPrisma, Tenancy, type ScopedPrisma } from '../../
 import type { Valid } from '../../platform/validation';
 import { Mailer } from '../../platform/mail';
 import { emailAlreadyRegistered, roleNotFound, userNotFound } from './errors';
+import { emailLink } from './google-auth-state';
 import { describeRole } from './roles.service';
 import { AssignRoleBody, INVITATION_LIST, InviteColleagueBody, USER_LIST } from './schemas';
 import { WITH_ROLES, type UserWithRoles } from './session-shape';
@@ -134,7 +135,7 @@ export class UsersService {
       to: input.email,
       subject: "You're invited to join your team",
       body:
-        `Accept your invitation: ${RECOVERY_LINKS.acceptInvitation(invitation.id)}\n\n` +
+        `Accept your invitation: ${emailLink(RECOVERY_LINKS.acceptInvitation(invitation.id))}\n\n` +
         `This link works once and expires in ${INVITATION_TTL_DAYS} days.`,
     });
 

@@ -5,4 +5,7 @@
  */
 export { Mailer, type MailMessage } from './mailer';
 export { DevMailer } from './dev-mailer';
+export { SmtpMailer } from './smtp-mailer';
+export { DeploymentMailer } from './deployment-mailer';
+export { UnconfiguredMailer } from './unconfigured-mailer';
 export { MailModule } from './mail.module';

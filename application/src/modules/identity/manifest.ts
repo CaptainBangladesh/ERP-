@@ -1,9 +1,10 @@
-import { IDENTITY_MODULE, RECOVERY_SCREEN_PATHS } from '@erp/shared';
+import { AUTH_SCREEN_PATHS, IDENTITY_MODULE, RECOVERY_SCREEN_PATHS } from '@erp/shared';
 import type { FrontendModuleManifest } from '../../app/module-manifest';
 import { AcceptInvitationPage } from './pages/AcceptInvitationPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { HomePage } from './pages/HomePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { CompanyMailPage } from './pages/CompanyMailPage';
 import { RolesPage } from './pages/RolesPage';
 import { SignInPage } from './pages/SignInPage';
 import { SignUpPage } from './pages/SignUpPage';
@@ -22,11 +23,14 @@ import { TeamPage } from './pages/TeamPage';
 export const manifest: FrontendModuleManifest = {
   name: IDENTITY_MODULE,
   routes: [
-    { path: '/', component: HomePage },
+    { path: AUTH_SCREEN_PATHS.dashboard, component: HomePage },
     { path: '/team', component: TeamPage },
     { path: '/roles', component: RolesPage },
-    { path: '/sign-in', component: SignInPage, public: true },
-    { path: '/sign-up', component: SignUpPage, public: true },
+    { path: '/company-mail', component: CompanyMailPage },
+    // From the shared contract for the same reason the recovery paths below are: the
+    // backend redirects a browser to these at the end of a Google sign-in.
+    { path: AUTH_SCREEN_PATHS.signIn, component: SignInPage, public: true },
+    { path: AUTH_SCREEN_PATHS.signUp, component: SignUpPage, public: true },
     // From the shared contract, because the backend writes these paths into the emails it
     // sends: a rename has to break both workspaces rather than one inbox.
     { path: RECOVERY_SCREEN_PATHS.forgotPassword, component: ForgotPasswordPage, public: true },

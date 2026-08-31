@@ -3,7 +3,7 @@ import {
   type SendLeadEmailRequest,
   type SendLeadEmailResponse,
 } from '@erp/shared';
-import { Mailer } from '../../platform/mail';
+import { MailboxSender } from './mailbox-sender';
 import { ActivitiesService } from './activities.service';
 import { EmailTemplatesService } from './email-templates.service';
 import { LeadsService } from './leads.service';
@@ -20,7 +20,7 @@ export class LeadOutreachService {
     private readonly mailboxesService: MailboxesService,
     private readonly templatesService: EmailTemplatesService,
     private readonly activitiesService: ActivitiesService,
-    private readonly mailer: Mailer,
+    private readonly mailboxSender: MailboxSender,
   ) {}
 
   async sendOneOnOneEmail(
@@ -65,7 +65,10 @@ export class LeadOutreachService {
 
     const recipientEmail = lead.email || 'lead@example.com';
 
-    await this.mailer.send({
+    // Through the mailbox the user picked, not the deployment's own mailer: this is mail
+    // from a person, and it has to leave from their address so the reply comes back to them.
+    const sending = await this.mailboxesService.sendingMailbox(req.mailboxConnectionId);
+    await this.mailboxSender.sendFrom(sending, {
       to: recipientEmail,
       subject: resolvedSubject,
       body: resolvedText,

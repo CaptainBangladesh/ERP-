@@ -1,18 +1,35 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  Redirect,
+  Req,
+} from '@nestjs/common';
 import {
   AUTH_ROUTE,
+  ERROR_CODES,
   type AuthenticatedSession,
+  type GoogleAuthMode,
   type InvitationDetails,
   type Session,
+  type SignUpIntent,
 } from '@erp/shared';
+import { ApiException } from '../../http/api-exception';
 import { CurrentSession, Public, type RequestSession } from '../../platform/auth';
 import { NoPermissionRequired } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
+import { encodeGoogleAuthState, frontendOrigin, googleRedirectUri } from './google-auth-state';
 import { IdentityService } from './identity.service';
 import { RecoveryService } from './recovery.service';
 import {
   AcceptInvitationBody,
   ForgotPasswordBody,
+  GoogleSignInBody,
   ResetPasswordBody,
   SignInBody,
   SignUpBody,
@@ -58,6 +75,101 @@ export class IdentityController {
     @Body(validated(SignInBody)) body: Valid<typeof SignInBody>,
   ): Promise<AuthenticatedSession> {
     return this.identity.signIn(body);
+  }
+
+  /**
+   * A Google identity that has already been established, exchanged for a session.
+   *
+   * Kept as an ordinary endpoint beside the redirect flow because it is what the tests and
+   * any non-browser client use. `mode` is what makes it safe to leave public: without it the
+   * request is read as a sign-in, and a sign-in never creates anything.
+   */
+  @Public()
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  async googleSignIn(
+    @Body(validated(GoogleSignInBody)) body: Valid<typeof GoogleSignInBody>,
+  ): Promise<AuthenticatedSession> {
+    return this.identity.googleSignIn(body);
+  }
+
+  /**
+   * The front half of the redirect flow: a full navigation the browser makes, answered with a
+   * redirect to Google's consent screen.
+   *
+   * The client id and the registered redirect URI are read here rather than in the frontend,
+   * so they live in one place — this server's environment. A bundle that carried them would
+   * have to be rebuilt to change a deployment, and would drift from what the callback below
+   * sends to Google when the code comes back.
+   *
+   * What the user had chosen before they left — sign in or sign up, which of the two options,
+   * and the company name they typed — is packed into `state`, because a round trip through
+   * accounts.google.com is a page load and nothing in the tab survives it. Google hands
+   * `state` back untouched with the code.
+   */
+  @Public()
+  @Get('google/login')
+  @Redirect()
+  async googleOAuthLogin(
+    @Query() query: Record<string, unknown>,
+    @Req() request: { headers?: Record<string, unknown> },
+  ): Promise<{ url: string; statusCode: number }> {
+    const mode = text(query.mode) as GoogleAuthMode | undefined;
+    const intent = text(query.intent) as SignUpIntent | undefined;
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      throw new ApiException(
+        ERROR_CODES.moduleUnavailable,
+        'Signing in with Google is not configured on this server.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    const googleUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    googleUrl.search = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: googleRedirectUri(),
+      response_type: 'code',
+      scope: 'openid email profile',
+      // Always ask which account, rather than silently reusing whichever one the browser
+      // happens to be signed into. Somebody adding a second account here is the ordinary
+      // case, not the exception.
+      prompt: 'select_account',
+      state: encodeGoogleAuthState({
+        mode: mode === 'signup' ? 'signup' : 'signin',
+        intent: intent === 'account' ? 'account' : 'company',
+        companyName: text(query.companyName) ?? '',
+        name: text(query.name) ?? '',
+        returnTo: frontendOrigin(request.headers?.referer),
+      }),
+    }).toString();
+
+    return { url: googleUrl.toString(), statusCode: HttpStatus.FOUND };
+  }
+
+  /**
+   * The back half of the redirect flow: where Google returns the browser, carrying the
+   * one-time code and the `state` that left with it.
+   *
+   * Public, and it has to be — nobody has a session yet; obtaining one is the point. What
+   * makes that safe is that it grants nothing on its own: a session comes back only if the
+   * code exchanges with Google using this server's client secret, and every other outcome is
+   * a redirect to a form with a message on it.
+   *
+   * The whole decision belongs to the service, which answers with the address to send the
+   * browser to. A `state` from somewhere else is not this flow's to interpret, so it goes to
+   * the application's front door rather than being guessed at.
+   */
+  @Public()
+  @Get('google/callback')
+  @Redirect()
+  async googleOAuthCallback(
+    @Query() query: Record<string, unknown>,
+  ): Promise<{ url: string; statusCode: number }> {
+    const destination = await this.identity.completeGoogleReturn(query);
+
+    return { url: destination ?? frontendOrigin(), statusCode: HttpStatus.FOUND };
   }
 
   /**
@@ -127,4 +239,9 @@ export class IdentityController {
   ): Promise<AuthenticatedSession> {
     return this.recovery.acceptInvitation(token, body);
   }
+}
+
+/** One query parameter, if it was given as a string at all. */
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }

@@ -13,6 +13,7 @@ import {
   type SignUpRequest,
   type UserListResponse,
 } from '@erp/shared';
+import { RECOVERY_SCREEN_PATHS } from '@erp/shared';
 import { DevMailer } from '../src/platform/mail';
 import { createTestApp, resetDatabase, type TestApp } from './harness/test-app';
 
@@ -96,6 +97,21 @@ describe('invitations', () => {
   }
 
   describe('inviting a colleague', () => {
+    it('mails a link somebody can actually click', async () => {
+      const owner = await signUp();
+      await invite(owner, { email: 'kit@northwind.test' });
+
+      const message = [...mailer.sent].reverse().find((m) => m.to === 'kit@northwind.test');
+
+      // An absolute URL, with a host. A path on its own — which is what this used to send —
+      // is unclickable text in a mailbox, and the recipient has no way to guess where it
+      // belongs.
+      const link = /(https?:\/\/\S+)/.exec(message!.body)?.[1];
+      expect(link).toBeDefined();
+      expect(new URL(link!).pathname).toBe(RECOVERY_SCREEN_PATHS.acceptInvitation);
+      expect(new URL(link!).searchParams.get('token')).toEqual(expect.any(String));
+    });
+
     it('sends a link, and it works to sign in once accepted', async () => {
       const owner = await signUp();
       await invite(owner, { email: 'kit@northwind.test' });

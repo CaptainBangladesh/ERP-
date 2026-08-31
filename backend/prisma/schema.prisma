@@ -42,6 +42,17 @@ model Company {
   ownerUserId String? @unique @map("owner_user_id") @db.Uuid
   owner       User?   @relation("CompanyOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
 
+  /// How this company's own mail leaves the building: invitations, password resets, anything
+  /// the system sends on its own behalf. Null throughout means the deployment's configured
+  /// mail is used instead - see platform/mail. The password is encrypted, never as typed.
+  mailFromAddress String? @map("mail_from_address")
+  mailFromName    String? @map("mail_from_name")
+  mailSmtpHost     String?  @map("mail_smtp_host")
+  mailSmtpPort     Int?     @map("mail_smtp_port")
+  mailSmtpSecure   Boolean? @map("mail_smtp_secure")
+  mailSmtpUsername String?  @map("mail_smtp_username")
+  mailSmtpPassword String?  @map("mail_smtp_password")
+
   users            User[]            @relation("CompanyMembers")
   inventorySetting InventorySetting?
 
@@ -1160,8 +1171,19 @@ model MailboxConnection {
   emailAddress String   @map("email_address")
   displayName  String   @map("display_name")
   status       String
+  /// OAuth providers only. Null for an SMTP mailbox, which authenticates per send.
   accessToken  String?  @map("access_token")
   refreshToken String?  @map("refresh_token")
+  /// When `accessToken` stops being accepted, so it can be refreshed before a send fails.
+  tokenExpiresAt DateTime? @map("token_expires_at")
+
+  /// SMTP mailboxes only. The password is encrypted at rest - see crm/mailbox-secrets.ts.
+  smtpHost     String?  @map("smtp_host")
+  smtpPort     Int?     @map("smtp_port")
+  smtpSecure   Boolean? @map("smtp_secure")
+  smtpUsername String?  @map("smtp_username")
+  smtpPassword String?  @map("smtp_password")
+
   connectedAt  DateTime @default(now()) @map("connected_at")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")

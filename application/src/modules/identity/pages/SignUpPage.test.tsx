@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { AUTH_PATHS, ERROR_CODES, IDENTITY_ERROR_CODES } from '@erp/shared';
 import { server } from '../../../test/server';
 import { renderPage } from '../../../test/render';
+import { captureNavigationAway } from '../../../test/navigation';
 import { SignUpPage } from './SignUpPage';
 
 /**
@@ -41,7 +42,7 @@ describe('SignUpPage', () => {
 
     const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
     await fillIn(user);
-    await user.click(screen.getByRole('button', { name: /create company/i }));
+    await user.click(screen.getByRole('button', { name: /^create company$/i }));
 
     await waitFor(() => {
       expect(submitted).toEqual({
@@ -49,6 +50,9 @@ describe('SignUpPage', () => {
         name: 'Ada Okafor',
         email: 'ada@northwind.test',
         password: 'correct-horse-battery',
+        // Which of the two things they were doing. The server cannot apply the right rule
+        // to the company name without it.
+        intent: 'company',
       });
     });
 
@@ -76,7 +80,7 @@ describe('SignUpPage', () => {
 
     const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
     await fillIn(user);
-    await user.click(screen.getByRole('button', { name: /create company/i }));
+    await user.click(screen.getByRole('button', { name: /^create company$/i }));
 
     // The message has to be reachable *from the input*, not merely present on the page —
     // that is the difference between a form somebody can fix and a wall of red text.
@@ -133,7 +137,7 @@ describe('SignUpPage', () => {
       await user.type(screen.getByLabelText(/company name/i), 'Northwind Trading');
       await user.type(screen.getByLabelText(/your name/i), 'Ada Okafor');
       await user.type(screen.getByLabelText(/email address/i), 'ada@northwind.test');
-      await user.click(screen.getByRole('button', { name: /create company/i }));
+      await user.click(screen.getByRole('button', { name: /^create company$/i }));
 
       await waitFor(() => expect(submitted).toBeTruthy());
     });
@@ -182,7 +186,7 @@ describe('SignUpPage', () => {
 
     const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
     await fillIn(user);
-    await user.click(screen.getByRole('button', { name: /create company/i }));
+    await user.click(screen.getByRole('button', { name: /^create company$/i }));
 
     const email = await screen.findByLabelText(/email address/i);
     await waitFor(() => expect(email).toHaveAccessibleDescription(/already registered/i));
@@ -205,7 +209,7 @@ describe('SignUpPage', () => {
 
     const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
     await fillIn(user);
-    await user.click(screen.getByRole('button', { name: /create company/i }));
+    await user.click(screen.getByRole('button', { name: /^create company$/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i);
   });
@@ -213,9 +217,163 @@ describe('SignUpPage', () => {
   it('says plainly that nothing is set up in advance', async () => {
     renderPage(<SignUpPage />, { path: '/sign-up' });
 
-    // An empty system is the normal first experience here, so the screen explains it
-    // rather than leaving somebody wondering which company to pick.
-    expect(screen.getByRole('heading', { name: /create your company/i })).toBeInTheDocument();
-    expect(screen.getByText(/nothing is set up in advance/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /create a company/i })).toBeInTheDocument();
+    expect(screen.getByText(/you will own it/i)).toBeInTheDocument();
+  });
+
+  /**
+   * The choice this screen exists to ask, and the field both answers depend on.
+   *
+   * Creating a company and joining one are opposite claims about the same name, so the tests
+   * below are mostly about what the screen *sends* — the option, and the name — because the
+   * rule itself is the server's and is covered there.
+   */
+  describe('creating a company or joining one', () => {
+    const chooseJoining = (user: ReturnType<typeof renderPage>['user']) =>
+      user.click(screen.getByRole('radio', { name: /i work for a company/i }));
+
+    it('offers both, and starts on creating a company', () => {
+      renderPage(<SignUpPage />, { path: '/sign-up' });
+
+      expect(screen.getByRole('radio', { name: /create a company/i })).toBeChecked();
+      expect(screen.getByRole('radio', { name: /i work for a company/i })).not.toBeChecked();
+    });
+
+    it('asks for the company name either way, and says what is being asked of it', async () => {
+      const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+
+      const companyName = screen.getByLabelText(/company name/i);
+      expect(companyName).toHaveAccessibleDescription(/cannot be one that already exists/i);
+
+      await chooseJoining(user);
+
+      // The same field, still required — what changed is the rule behind it.
+      expect(screen.getByLabelText(/company name/i)).toHaveAccessibleDescription(
+        /spelled the way it was registered/i,
+      );
+    });
+
+    it('submits the option that was chosen', async () => {
+      let submitted: any;
+      server.use(
+        http.post(AUTH_PATHS.signUp, async ({ request }) => {
+          submitted = await request.json();
+          return HttpResponse.json({}, { status: 201 });
+        }),
+        http.get(AUTH_PATHS.session, () => HttpResponse.json({})),
+      );
+
+      const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+      await chooseJoining(user);
+      await fillIn(user);
+      await user.click(screen.getByRole('button', { name: /^join company$/i }));
+
+      await waitFor(() => expect(submitted?.intent).toBe('account'));
+      expect(submitted.companyName).toBe('Northwind Trading');
+    });
+
+    it('puts a refused company name beside the box, whichever option was chosen', async () => {
+      server.use(
+        http.post(AUTH_PATHS.signUp, () =>
+          HttpResponse.json(
+            {
+              code: IDENTITY_ERROR_CODES.companyDoesNotExist,
+              message: "This company doesn't exist.",
+              fields: { companyName: 'No company is registered under that name.' },
+            },
+            { status: 400 },
+          ),
+        ),
+      );
+
+      const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+      await chooseJoining(user);
+      await fillIn(user);
+      await user.click(screen.getByRole('button', { name: /^join company$/i }));
+
+      const companyName = await screen.findByLabelText(/company name/i);
+      await waitFor(() =>
+        expect(companyName).toHaveAccessibleDescription(/no company is registered/i),
+      );
+      expect(companyName).toBeInvalid();
+    });
+  });
+
+  describe('signing up with Google', () => {
+    it('carries the option and the company name to the API endpoint', async () => {
+      const navigation = captureNavigationAway();
+      try {
+        const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+
+        await user.type(screen.getByLabelText(/company name/i), 'Northwind Trading');
+        await user.type(screen.getByLabelText(/your name/i), 'Ada Okafor');
+        await user.click(screen.getByRole('button', { name: /create company with google/i }));
+
+        const destination = new URL(navigation.destination() ?? '', 'http://localhost');
+        expect(destination.pathname).toBe(AUTH_PATHS.googleLogin);
+        expect(destination.searchParams.get('mode')).toBe('signup');
+        expect(destination.searchParams.get('intent')).toBe('company');
+        expect(destination.searchParams.get('companyName')).toBe('Northwind Trading');
+      } finally {
+        navigation.restore();
+      }
+    });
+
+    it('will not leave for Google without a company name', async () => {
+      const navigation = captureNavigationAway();
+      try {
+        const { user } = renderPage(<SignUpPage />, { path: '/sign-up' });
+        await user.click(screen.getByRole('button', { name: /create company with google/i }));
+
+        // Better here than after a round trip through another website, which would come
+        // back to say the box in front of them was empty.
+        expect(navigation.destination()).toBeUndefined();
+        const companyName = screen.getByLabelText(/company name/i);
+        expect(companyName).toHaveAccessibleDescription(/enter your company name/i);
+        expect(companyName).toBeInvalid();
+      } finally {
+        navigation.restore();
+      }
+    });
+
+    it('comes back from a refusal holding what was already chosen and typed', () => {
+      // A company name that was already taken, on the option that requires it to be free.
+      renderPage(<SignUpPage />, {
+        path:
+          `/sign-up?error=${IDENTITY_ERROR_CODES.companyAlreadyExists}` +
+          '&intent=company&companyName=Northwind+Trading',
+      });
+
+      expect(screen.getByLabelText(/company name/i)).toHaveValue('Northwind Trading');
+      expect(screen.getByRole('radio', { name: /create a company/i })).toBeChecked();
+      expect(screen.getByLabelText(/company name/i)).toHaveAccessibleDescription(
+        /already exists/i,
+      );
+    });
+
+    it('reopens on the joining option when that is what was refused', () => {
+      renderPage(<SignUpPage />, {
+        path:
+          `/sign-up?error=${IDENTITY_ERROR_CODES.companyDoesNotExist}` +
+          '&intent=account&companyName=Nowhere+Ltd',
+      });
+
+      expect(screen.getByRole('radio', { name: /i work for a company/i })).toBeChecked();
+      expect(screen.getByLabelText(/company name/i)).toHaveAccessibleDescription(
+        /no company is registered/i,
+      );
+    });
+
+    it('sends somebody who already has an account to sign in instead', () => {
+      renderPage(<SignUpPage />, {
+        path: `/sign-up?error=${IDENTITY_ERROR_CODES.emailAlreadyRegistered}&intent=company`,
+      });
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/already has an account here/i);
+      expect(screen.getByRole('link', { name: /sign in with google/i })).toHaveAttribute(
+        'href',
+        '/sign-in',
+      );
+    });
   });
 });

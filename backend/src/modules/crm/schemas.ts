@@ -698,6 +698,42 @@ export const CreateConnectUrlBody = validator({
   provider: text({ missing: 'Enter provider.', maxLength: 20, tooLong: 'Provider too long.' }),
 });
 
+/**
+ * A TCP port. Its own rule because nothing else in the system takes one, and the range is the
+ * whole check worth making — a host will say soon enough whether it is listening there.
+ */
+function port(options: { missing: string; invalid: string }): FieldRule<number> {
+  return rule(options.missing, (value) => {
+    const given = typeof value === 'number' ? value : Number(String(value ?? '').trim());
+    if (!Number.isInteger(given) || given < 1 || given > 65535) return refused(options.invalid);
+    return accepted(given);
+  });
+}
+
+/**
+ * The SMTP details of a company mailbox.
+ *
+ * The password is checked only for being present. Length and composition rules belong to
+ * whoever issued it — this is somebody else's credential, and refusing a valid one because it
+ * is short would simply make the mailbox unaddable.
+ */
+export const ConnectSmtpMailboxBody = validator({
+  host: text({ missing: 'Enter the mail server host.', maxLength: 255, tooLong: 'Host is too long.' }),
+  port: port({ missing: 'Enter the port.', invalid: 'Enter a port between 1 and 65535.' }),
+  secure: flag({ missing: 'Say whether the connection uses SSL.' }),
+  emailAddress: email({
+    missing: 'Enter the email address this mailbox sends from.',
+    invalid: 'Enter a valid email address.',
+  }),
+  displayName: text({
+    missing: 'Enter the name recipients will see.',
+    maxLength: 100,
+    tooLong: 'Name is too long.',
+  }),
+  username: text({ missing: 'Enter the username.', maxLength: 255, tooLong: 'Username is too long.' }),
+  password: text({ missing: 'Enter the password.', maxLength: 500, tooLong: 'Password is too long.' }),
+});
+
 export const CreateEmailTemplateBody = validator({
   name: text({ missing: 'Enter template name.', maxLength: 100, tooLong: 'Name is too long.' }),
   subject: text({ missing: 'Enter email subject.', maxLength: 200, tooLong: 'Subject is too long.' }),

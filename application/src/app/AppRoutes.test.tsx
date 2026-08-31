@@ -189,7 +189,7 @@ describe('AppRoutes', () => {
 
     // The one door into an empty system has to open without a key.
     expect(
-      await screen.findByRole('heading', { name: /create your company/i }),
+      await screen.findByRole('heading', { name: /create a company/i }),
     ).toBeInTheDocument();
   });
 

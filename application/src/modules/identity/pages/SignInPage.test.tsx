@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { AUTH_PATHS, ERROR_CODES, IDENTITY_ERROR_CODES } from '@erp/shared';
 import { server } from '../../../test/server';
 import { renderPage } from '../../../test/render';
+import { captureNavigationAway } from '../../../test/navigation';
 import { SignInPage } from './SignInPage';
 
 describe('SignInPage', () => {
@@ -116,10 +117,10 @@ describe('SignInPage', () => {
     await user.keyboard('{CapsLock}');
   });
 
-  it('offers the way to create a company when there is no account yet', () => {
+  it('offers the way to sign up when there is no account yet', () => {
     renderPage(<SignInPage />, { path: '/sign-in' });
 
-    expect(screen.getByRole('link', { name: /create your company/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /create a company/i })).toHaveAttribute(
       'href',
       '/sign-up',
     );
@@ -132,5 +133,49 @@ describe('SignInPage', () => {
       'href',
       '/forgot-password',
     );
+  });
+
+  describe('continue with Google', () => {
+    it('leaves for the API endpoint that begins a sign-in', async () => {
+      const navigation = captureNavigationAway();
+      try {
+        const { user } = renderPage(<SignInPage />, { path: '/sign-in' });
+        await user.click(screen.getByRole('button', { name: /continue with google/i }));
+
+        const destination = navigation.destination() ?? '';
+        expect(destination).toContain(AUTH_PATHS.googleLogin);
+
+        // As a sign-in, explicitly. The server creates nothing in this mode, so the button
+        // cannot become a way to sign up by accident.
+        expect(new URL(destination, 'http://localhost').searchParams.get('mode')).toBe('signin');
+      } finally {
+        navigation.restore();
+      }
+    });
+
+    it('explains an address Google knows and this system does not, and links to sign-up', () => {
+      // How the round trip comes back when Google confirmed somebody who never signed up —
+      // on the URL, because the tab that started it was navigated away and back.
+      renderPage(<SignInPage />, {
+        path: `/sign-in?error=${IDENTITY_ERROR_CODES.googleAccountNotRegistered}`,
+      });
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/nobody has signed up here/i);
+      expect(screen.getByRole('link', { name: /sign up with google/i })).toHaveAttribute(
+        'href',
+        '/sign-up',
+      );
+    });
+
+    it('says an attempt failed without inventing a reason for it', () => {
+      renderPage(<SignInPage />, {
+        path: `/sign-in?error=${IDENTITY_ERROR_CODES.googleAuthFailed}`,
+      });
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent(/did not complete/i);
+      // Specifically not the "you have no account" message: nothing established that.
+      expect(alert).not.toHaveTextContent(/nobody has signed up here/i);
+    });
   });
 });

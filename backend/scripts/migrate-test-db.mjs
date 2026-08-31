@@ -33,8 +33,13 @@ if (testDatabaseUrl === process.env.DATABASE_URL) {
   process.exit(1);
 }
 
+// `DIRECT_URL` as well as `DATABASE_URL`, and that is not belt-and-braces: the schema
+// declares `directUrl`, and Prisma runs migrations through *that* connection when it is set.
+// Overriding only `DATABASE_URL` sent every migration to whatever `DIRECT_URL` pointed at —
+// the development database — while the test database silently stayed behind, so a new column
+// appeared in development and the suite failed on it.
 execSync('npx prisma migrate deploy', {
   cwd: backendRoot,
   stdio: 'inherit',
-  env: { ...process.env, DATABASE_URL: testDatabaseUrl },
+  env: { ...process.env, DATABASE_URL: testDatabaseUrl, DIRECT_URL: testDatabaseUrl },
 });

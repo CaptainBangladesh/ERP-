@@ -1,14 +1,18 @@
 import {
+  GOOGLE_AUTH_MODES,
   INVITATION_FIELDS,
   PASSWORD_MIN_LENGTH,
   ROLE_FIELDS,
+  SIGN_UP_INTENTS,
   USER_FIELDS,
   sortParameter,
 } from '@erp/shared';
 import {
   accepted,
   email,
+  flag,
   identifier,
+  oneOf,
   optional,
   password,
   refused,
@@ -30,7 +34,21 @@ import type { ListSpec } from '../../platform/list';
  * than of this file — so a user fixing a form is told everything that is wrong at once.
  */
 
+/**
+ * Which of the sign-up screen's two options was chosen. Optional on the wire — the service
+ * reads an absent one as `company`, the option that joins nothing — so an older client that
+ * knows only about opening a company keeps working.
+ */
+const signUpIntent = optional(
+  oneOf(SIGN_UP_INTENTS, {
+    missing: 'Choose whether you are creating a company or joining one.',
+    invalid: 'That is not one of the two options.',
+  }),
+);
+
 export const SignUpBody = validator({
+  // Required for both intents. It names the company being opened, or the one being joined —
+  // see `SIGN_UP_INTENTS`.
   companyName: text({ missing: 'Enter your company name.' }),
   name: text({ missing: 'Enter your name.' }),
   email: email({
@@ -42,6 +60,7 @@ export const SignUpBody = validator({
     minLength: PASSWORD_MIN_LENGTH,
     tooShort: `Use at least ${PASSWORD_MIN_LENGTH} characters.`,
   }),
+  intent: signUpIntent,
 });
 
 export const SignInBody = validator({
@@ -55,6 +74,30 @@ export const SignInBody = validator({
     minLength: 1,
     tooShort: 'Enter your password.',
   }),
+});
+
+/**
+ * What comes back from the Google round trip, plus what the user had chosen before it.
+ *
+ * `companyName` is optional *here* and required by the service when the mode is `signup`,
+ * because the same body serves both modes and sign-in has no company to name. Making it
+ * required at this edge would refuse every sign-in; making it optional in the service would
+ * let a Google sign-up through with no company at all.
+ */
+export const GoogleSignInBody = validator({
+  email: email({
+    missing: 'Enter your email address.',
+    invalid: 'Enter a valid email address.',
+  }),
+  name: optional(text({ missing: 'Enter your name.' })),
+  companyName: optional(text({ missing: 'Enter your company name.' })),
+  mode: optional(
+    oneOf(GOOGLE_AUTH_MODES, {
+      missing: 'Say whether this is a sign-in or a sign-up.',
+      invalid: 'That is not one of the two modes.',
+    }),
+  ),
+  intent: signUpIntent,
 });
 
 /**
@@ -83,6 +126,34 @@ export const AcceptInvitationBody = validator({
     minLength: PASSWORD_MIN_LENGTH,
     tooShort: `Use at least ${PASSWORD_MIN_LENGTH} characters.`,
   }),
+});
+
+/** A TCP port. The range is the whole check — the host says soon enough if it is wrong. */
+function port(options: { missing: string; invalid: string }): FieldRule<number> {
+  return rule(options.missing, (value) => {
+    const given = typeof value === 'number' ? value : Number(String(value ?? '').trim());
+    if (!Number.isInteger(given) || given < 1 || given > 65535) return refused(options.invalid);
+    return accepted(given);
+  });
+}
+
+/**
+ * The company's outgoing mail settings.
+ *
+ * `password` is optional and that is deliberate — absent means "keep the stored one", so
+ * editing the sender name does not require retyping a secret. See `CompanyMailService`.
+ */
+export const UpdateCompanyMailSettingsBody = validator({
+  fromAddress: email({
+    missing: 'Enter the address this company sends from.',
+    invalid: 'Enter a valid email address.',
+  }),
+  fromName: optional(text({ missing: 'Enter the sender name.' })),
+  host: text({ missing: 'Enter the mail server host.' }),
+  port: port({ missing: 'Enter the port.', invalid: 'Enter a port between 1 and 65535.' }),
+  secure: flag({ missing: 'Say whether the connection uses SSL.' }),
+  username: text({ missing: 'Enter the username.' }),
+  password: optional(text({ missing: 'Enter the password.' })),
 });
 
 export const InviteColleagueBody = validator({

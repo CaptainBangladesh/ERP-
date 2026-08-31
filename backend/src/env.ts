@@ -14,6 +14,9 @@ import { resolve } from 'node:path';
  */
 const backendRoot = resolve(__dirname, '..');
 
+config({ path: resolve(process.cwd(), '.env'), quiet: true });
+config({ path: resolve(process.cwd(), 'backend/.env'), quiet: true });
 config({ path: resolve(backendRoot, '.env'), quiet: true });
+config({ path: resolve(backendRoot, '../.env'), quiet: true });
 
 export const BACKEND_ROOT = backendRoot;

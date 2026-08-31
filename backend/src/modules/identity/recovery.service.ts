@@ -4,6 +4,7 @@ import { RECOVERY_LINKS, type AuthenticatedSession, type InvitationDetails } fro
 import { InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { Mailer } from '../../platform/mail';
+import { emailLink } from './google-auth-state';
 import { companyDoesNotExist, companyNameMismatch, emailAlreadyRegistered, invitationInvalid, resetTokenInvalid } from './errors';
 import { hashPassword } from './passwords';
 import { SessionIssuer } from './session-issuer';

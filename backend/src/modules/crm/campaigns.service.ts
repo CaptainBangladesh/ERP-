@@ -11,7 +11,7 @@ import {
   type PublicUnsubscribeResponse,
   type SendCampaignBatchResponse,
 } from '@erp/shared';
-import { Mailer } from '../../platform/mail';
+import { MailboxSender } from './mailbox-sender';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import { type Valid } from '../../platform/validation';
@@ -37,7 +37,7 @@ export class CampaignsService {
     private readonly mailboxesService: MailboxesService,
     private readonly templatesService: EmailTemplatesService,
     private readonly activitiesService: ActivitiesService,
-    private readonly mailer: Mailer,
+    private readonly mailboxSender: MailboxSender,
   ) {}
 
   async createCampaign(input: Valid<typeof CreateCampaignBody>): Promise<CampaignResponse> {
@@ -257,6 +257,10 @@ export class CampaignsService {
       emailAddress: mailbox.emailAddress,
     };
 
+    // The campaign's own mailbox, with its credentials — resolved once for the batch rather
+    // than per recipient, so a run of ten sends opens one connection instead of ten.
+    const sending = await this.mailboxesService.sendingMailbox(mailbox.id);
+
     for (const recipient of pendingRecipients) {
       const lead = recipient.lead;
       const customValues = (lead.customValues ?? {}) as Record<string, unknown>;
@@ -281,7 +285,7 @@ export class CampaignsService {
       const fullHtmlBody = `${renderedHtml}${unsubscribeLink}${trackingPixel}`;
       const textBody = htmlToPlainText(renderedHtml);
 
-      await this.mailer.send({
+      await this.mailboxSender.sendFrom(sending, {
         to: recipient.emailAddress,
         subject: renderedSubject,
         body: textBody,

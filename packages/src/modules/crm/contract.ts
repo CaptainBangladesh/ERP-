@@ -707,7 +707,22 @@ export const MAILBOX_PATHS = {
   connectUrl: `/${CRM_ROUTE}/mailboxes/connect-url`,
   callback: `/${CRM_ROUTE}/mailboxes/callback`,
   revoke: (id: string) => `/${CRM_ROUTE}/mailboxes/${id}/revoke`,
+  /**
+   * Stops sending from a mailbox while keeping the row — the connection is still on the
+   * screen, marked revoked, and reconnecting restores it.
+   */
   disconnect: (id: string) => `/${CRM_ROUTE}/mailboxes/${id}/revoke`,
+  /**
+   * Deletes the connection outright. The other half of `disconnect`: one stops using a
+   * mailbox, this one stops listing it. A screen offering "Remove" needs a verb that
+   * actually removes, or the button does nothing the second time it is pressed.
+   */
+  remove: (id: string) => `/${CRM_ROUTE}/mailboxes/${id}`,
+  /**
+   * Adds a company mailbox by its SMTP details. No redirect and no consent screen — there is
+   * no third party to ask, which is the whole difference from the OAuth providers.
+   */
+  connectSmtp: `/${CRM_ROUTE}/mailboxes/smtp`,
 } as const;
 
 export const LEAD_EMAIL_PATHS = {
@@ -880,7 +895,27 @@ export const CAPTURE_SOURCE_ERROR_CODES = {
 
 export const MAILBOX_ERROR_CODES = {
   mailboxNotFound: 'mailbox_not_found',
+  /**
+   * The provider was reached and would not confirm whose mailbox this is. Nothing is
+   * recorded when this happens — a connection row means a provider vouched for the account,
+   * so a failure to establish that is the absence of a connection rather than a broken one.
+   */
   connectionFailed: 'connection_failed',
+  /** No credentials for this provider on this server, or no support for it yet. */
+  providerUnavailable: 'mailbox_provider_unavailable',
+  /**
+   * A mailbox a campaign still sends from cannot be deleted — the campaign would be left
+   * pointing at nothing. Disconnect it instead, or delete the campaign first.
+   */
+  mailboxInUse: 'mailbox_in_use',
+  /**
+   * The mail host rejected these details, or could not be reached. Raised while adding an
+   * SMTP mailbox, because settings are proved by connecting with them rather than saved on
+   * the assumption they are right and found wrong at the first send.
+   */
+  smtpSettingsRejected: 'smtp_settings_rejected',
+  /** Sending failed at the provider. The message did not go out. */
+  sendFailed: 'mailbox_send_failed',
   authStateNotFound: 'auth_state_not_found',
   mailboxNotConnected: 'mailbox_not_connected',
   invalidAuthState: 'invalid_auth_state',
@@ -904,7 +939,11 @@ export interface ConnectMailboxUrlResponse {
   stateToken?: string;
 }
 
-export type MailboxStatus = 'active' | 'revoked';
+/**
+ * `connected` is what the service writes on a successful exchange — not `active`, which this
+ * type claimed for a while and nothing ever stored.
+ */
+export type MailboxStatus = 'connected' | 'revoked';
 
 export interface PublicUnsubscribeResponse {
   success: true;
@@ -949,7 +988,43 @@ export const LEAD_IMPORT_ERROR_CODES = {
 
 export type LeadFieldValue = string | number | boolean | null | string[];
 
-export type MailboxProvider = 'gmail' | 'outlook';
+/**
+ * The kinds of mailbox somebody can send from.
+ *
+ * Two of them are OAuth providers, where the account is proved by consenting at the provider
+ * and mail leaves through that provider's API. `smtp` is the other shape entirely: a host,
+ * a username and a password, which is how company mail hosting (Namecheap Private Email,
+ * Fastmail, a corporate Exchange) is reached. Sending routes on this value — see the mailbox
+ * senders in the backend — so a person can hold a personal Gmail and a company address at
+ * once and choose per send.
+ */
+export type MailboxProvider = 'gmail' | 'outlook' | 'smtp';
+
+/** The SMTP details of a company mailbox. The password is never returned once stored. */
+export interface ConnectSmtpMailboxRequest {
+  /** e.g. `mail.privateemail.com` */
+  host: string;
+  /** 465 with `secure`, or 587 without. */
+  port: number;
+  secure: boolean;
+  /** The address mail is sent from, and what the CRM shows as the sender. */
+  emailAddress: string;
+  displayName: string;
+  /** Usually the same as `emailAddress`. Kept separate because some hosts differ. */
+  username: string;
+  password: string;
+}
+
+/**
+ * What a mailbox's SMTP settings look like coming back out. No password, ever: it is stored
+ * encrypted and there is no route that returns it, so a stolen response cannot send mail.
+ */
+export interface SmtpSettingsSummary {
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+}
 
 export interface MailboxConnectionSummary {
   id: string;
@@ -962,6 +1037,8 @@ export interface MailboxConnectionSummary {
   revokedAt?: string | null;
   createdAt: string;
   updatedAt?: string;
+  /** Present only on an SMTP mailbox, so a screen can show where it sends through. */
+  smtp?: SmtpSettingsSummary;
 }
 
 export interface CreateEmailTemplateRequest {

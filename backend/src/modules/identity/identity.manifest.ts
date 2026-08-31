@@ -40,6 +40,7 @@ export const manifest: ModuleManifest = {
   migrations: [
     '20260801000000_identity_companies_users_sessions',
     '20260803114923_identity_roles_and_recovery',
+    '20260830140000_identity_company_mail_settings',
   ],
 
   /**
@@ -60,6 +61,11 @@ export const manifest: ModuleManifest = {
     'identity:users:write',
     'identity:roles:read',
     'identity:roles:write',
+    // Company-wide settings — today, how the company's own mail is sent. Separate from
+    // managing colleagues: somebody trusted to invite people is not automatically trusted
+    // to change where every invitation and password reset comes from.
+    'identity:company:read',
+    'identity:company:write',
   ],
 
   /**
@@ -71,6 +77,12 @@ export const manifest: ModuleManifest = {
     { label: 'Home', path: '/', order: 0 },
     { label: 'Team', path: '/team', order: 90, permission: 'identity:users:read' },
     { label: 'Roles', path: '/roles', order: 91, permission: 'identity:roles:read' },
+    {
+      label: 'Company mail',
+      path: '/company-mail',
+      order: 92,
+      permission: 'identity:company:read',
+    },
   ],
 
   /**

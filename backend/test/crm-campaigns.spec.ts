@@ -69,12 +69,15 @@ describe('CRM Email Campaigns', () => {
       .send({ provider: 'gmail' })
       .expect(200);
 
-    const callbackRes = await app.http
+    await app.http
       .get(MAILBOX_PATHS.callback)
       .query({ state: connectRes.body.stateToken, code: 'code_campaign' })
       .expect(200);
 
-    const mailboxId = callbackRes.body.mailboxId;
+    // From the list rather than the callback: the callback answers a popup with a page, not
+    // a caller with JSON.
+    const listRes = await tenant.as(app.http.get(MAILBOX_PATHS.mailboxes)).expect(200);
+    const mailboxId = listRes.body.items[0].id as string;
 
     // 2. Create template
     const templateRes = await tenant

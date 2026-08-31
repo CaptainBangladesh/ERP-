@@ -82,6 +82,18 @@ export function setSessionUnusableHandler(
   onSessionUnusable = handler;
 }
 
+/**
+ * An API path as an absolute URL.
+ *
+ * Exported because one thing the application does with the API is not a `fetch` at all: the
+ * Google sign-in flow *navigates* the browser to an endpoint that answers with a redirect to
+ * Google. That still has to reach the same backend as every request, wherever it is
+ * configured to be.
+ */
+export function apiUrl(path: string): string {
+  return resolveUrl(path);
+}
+
 function resolveUrl(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
   const baseUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';

@@ -100,7 +100,12 @@ describe('identity and access', () => {
       // what makes two identical passwords store differently.
       const second = await app.http
         .post(AUTH_PATHS.signUp)
-        .send({ ...signUpBody, companyName: 'Other', email: 'b@northwind.test' })
+        .send({
+          ...signUpBody,
+          intent: 'account',
+          companyName: 'Northwind Trading',
+          email: 'b@northwind.test',
+        })
         .expect(201);
       const otherUser = await app.prisma.user.findUniqueOrThrow({
         where: { id: (second.body as AuthenticatedSession).user.id },
@@ -173,6 +178,119 @@ describe('identity and access', () => {
     });
   });
 
+  /**
+   * The two things "sign up" can mean, and the opposite rules they place on one field.
+   *
+   * Both require the company's name. Opening one requires the name to be free; joining one
+   * requires it to exist. Neither is inferred from the other's failure — asking is what
+   * stops somebody who works at Northwind from silently founding a second Northwind.
+   */
+  describe('the two ways to sign up', () => {
+    it('opens a company under a name nobody has taken', async () => {
+      const session = await signUp({ intent: 'company' });
+
+      expect(session.company.name).toBe('Northwind Trading');
+      expect(session.user.isOwner).toBe(true);
+      expect(session.permissions).toBe('all');
+    });
+
+    it('refuses to open a second company under a name that exists', async () => {
+      await signUp({ intent: 'company' });
+
+      const response = await app.http
+        .post(AUTH_PATHS.signUp)
+        .send({ ...signUpBody, intent: 'company', email: 'someone.else@northwind.test' })
+        .expect(409);
+
+      expect(response.body.code).toBe(IDENTITY_ERROR_CODES.companyAlreadyExists);
+      // Beside the input the person can act on, and it names the other option.
+      expect(response.body.fields?.companyName).toMatch(/already exists/i);
+
+      expect(await app.prisma.company.count()).toBe(1);
+    });
+
+    it('refuses a name that differs only in casing, because that is the same company', async () => {
+      await signUp({ intent: 'company' });
+
+      const response = await app.http
+        .post(AUTH_PATHS.signUp)
+        .send({
+          ...signUpBody,
+          intent: 'company',
+          companyName: 'northwind TRADING',
+          email: 'someone.else@northwind.test',
+        })
+        .expect(409);
+
+      expect(response.body.code).toBe(IDENTITY_ERROR_CODES.companyAlreadyExists);
+    });
+
+    it('puts somebody who works for a company inside the one that already exists', async () => {
+      const owner = await signUp({ intent: 'company' });
+
+      const joined = await signUp({
+        intent: 'account',
+        name: 'Bo Ferrer',
+        email: 'bo@northwind.test',
+      });
+
+      expect(joined.company.id).toBe(owner.company.id);
+      // Joining is not owning, and it grants nothing until somebody assigns a role.
+      expect(joined.user.isOwner).toBe(false);
+      expect(joined.permissions).toEqual([]);
+    });
+
+    it('matches the company to join whatever the casing', async () => {
+      const owner = await signUp({ intent: 'company' });
+
+      const joined = await signUp({
+        intent: 'account',
+        companyName: '  northwind trading  ',
+        email: 'bo@northwind.test',
+      });
+
+      expect(joined.company.id).toBe(owner.company.id);
+    });
+
+    it('refuses to join a company that does not exist, rather than inventing it', async () => {
+      const response = await app.http
+        .post(AUTH_PATHS.signUp)
+        .send({ ...signUpBody, intent: 'account', companyName: 'Nowhere Ltd' })
+        .expect(400);
+
+      expect(response.body.code).toBe(IDENTITY_ERROR_CODES.companyDoesNotExist);
+      expect(response.body.fields?.companyName).toMatch(/no company is registered/i);
+
+      // Nothing was created on the way to refusing — not the company, not the user.
+      expect(await app.prisma.company.count()).toBe(0);
+      expect(await app.prisma.user.count()).toBe(0);
+    });
+
+    it('requires the company name for both options', async () => {
+      for (const intent of ['company', 'account']) {
+        const response = await app.http
+          .post(AUTH_PATHS.signUp)
+          .send({ ...signUpBody, intent, companyName: '   ' })
+          .expect(422);
+
+        expect(response.body.fields.companyName).toMatch(/company name/i);
+      }
+    });
+
+    it('reads a request that names no option as opening a company', async () => {
+      // The safer of the two to assume: it joins nothing, so a client that has never heard
+      // of the choice cannot walk somebody into a company that is not theirs.
+      await signUp();
+
+      const response = await app.http
+        .post(AUTH_PATHS.signUp)
+        .send({ ...signUpBody, email: 'someone.else@northwind.test' })
+        .expect(409);
+
+      expect(response.body.code).toBe(IDENTITY_ERROR_CODES.companyAlreadyExists);
+    });
+  });
+
   describe('signing in', () => {
     it('establishes a session carrying the user and their company', async () => {
       const signedUp = await signUp();
@@ -222,6 +340,197 @@ describe('identity and access', () => {
 
       expect(response.body.code).toBe(ERROR_CODES.validationFailed);
       expect(Object.keys(response.body.fields).sort()).toEqual(['email', 'password']);
+    });
+  });
+
+  /**
+   * Signing in with Google, and signing up with it.
+   *
+   * Google establishes who somebody is. It says nothing about whether they have an account
+   * here, and the two screens want opposite things from an address that is new: sign-in
+   * refuses it, sign-up exists to create it. Every test below is about that distinction,
+   * because getting it wrong in either direction is silent — an account nobody meant to
+   * create, or a stranger adopted into somebody else's.
+   */
+  describe('google authentication', () => {
+    it('signs an existing user straight in, on the strength of their address', async () => {
+      const initial = await signUp();
+
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({ email: signUpBody.email, mode: 'signin' })
+        .expect(200);
+
+      const session = response.body as AuthenticatedSession;
+      expect(session.user.id).toBe(initial.user.id);
+      expect(session.company.id).toBe(initial.company.id);
+      // A session, which is what lands them on the dashboard rather than back on the form.
+      expect(session.token).toEqual(expect.any(String));
+    });
+
+    it('signs in whatever the casing Google reports the address in', async () => {
+      const initial = await signUp();
+
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({ email: 'ADA@Northwind.TEST', mode: 'signin' })
+        .expect(200);
+
+      expect((response.body as AuthenticatedSession).user.id).toBe(initial.user.id);
+    });
+
+    it('refuses to sign in an address that has no account here, and creates nothing', async () => {
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({ email: 'stranger@example.com', name: 'A Stranger', mode: 'signin' })
+        .expect(404);
+
+      expect(response.body.code).toBe(IDENTITY_ERROR_CODES.googleAccountNotRegistered);
+
+      // The point of the test: signing in must never be a way to sign up by accident.
+      expect(await app.prisma.user.count()).toBe(0);
+      expect(await app.prisma.company.count()).toBe(0);
+    });
+
+    it('reads a request that names no mode as a sign-in', async () => {
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({ email: 'stranger@example.com' })
+        .expect(404);
+
+      expect(response.body.code).toBe(IDENTITY_ERROR_CODES.googleAccountNotRegistered);
+      expect(await app.prisma.company.count()).toBe(0);
+    });
+
+    it('opens a company for somebody signing up with Google', async () => {
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({
+          email: 'gowner@example.com',
+          name: 'Google Owner',
+          mode: 'signup',
+          intent: 'company',
+          companyName: 'Acme Google Corp',
+        })
+        .expect(200);
+
+      const session = response.body as AuthenticatedSession;
+      expect(session.company.name).toBe('Acme Google Corp');
+      expect(session.user.email).toBe('gowner@example.com');
+      expect(session.user.name).toBe('Google Owner');
+      expect(session.user.isOwner).toBe(true);
+      expect(session.permissions).toBe('all');
+    });
+
+    it('puts a Google sign-up who works for a company inside the existing one', async () => {
+      const owner = await signUp();
+
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({
+          email: 'colleague@northwind.test',
+          name: 'Bo Ferrer',
+          mode: 'signup',
+          intent: 'account',
+          companyName: 'Northwind Trading',
+        })
+        .expect(200);
+
+      const session = response.body as AuthenticatedSession;
+      expect(session.company.id).toBe(owner.company.id);
+      expect(session.user.isOwner).toBe(false);
+      expect(session.permissions).toEqual([]);
+    });
+
+    it('applies the same company rules to a Google sign-up as to a typed one', async () => {
+      await signUp();
+
+      const taken = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({
+          email: 'gowner@example.com',
+          mode: 'signup',
+          intent: 'company',
+          companyName: 'Northwind Trading',
+        })
+        .expect(409);
+      expect(taken.body.code).toBe(IDENTITY_ERROR_CODES.companyAlreadyExists);
+
+      const missing = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({
+          email: 'gjoiner@example.com',
+          mode: 'signup',
+          intent: 'account',
+          companyName: 'Nowhere Ltd',
+        })
+        .expect(400);
+      expect(missing.body.code).toBe(IDENTITY_ERROR_CODES.companyDoesNotExist);
+
+      expect(await app.prisma.company.count()).toBe(1);
+    });
+
+    it('requires a company name to sign up with Google, for either option', async () => {
+      for (const intent of ['company', 'account']) {
+        const response = await app.http
+          .post(AUTH_PATHS.googleSignIn)
+          .send({ email: `g-${intent}@example.com`, mode: 'signup', intent })
+          .expect(400);
+
+        expect(response.body.code).toBe(IDENTITY_ERROR_CODES.companyNameRequired);
+        expect(response.body.fields?.companyName).toMatch(/company name/i);
+      }
+
+      expect(await app.prisma.company.count()).toBe(0);
+    });
+
+    it('refuses a Google sign-up for an address that already has an account', async () => {
+      await signUp();
+
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({
+          email: signUpBody.email,
+          mode: 'signup',
+          intent: 'company',
+          companyName: 'Some Other Company',
+        })
+        .expect(409);
+
+      // Not a second account and not a silent sign-in either: they are told, and the screen
+      // turns it into a link to the form they meant.
+      expect(response.body.code).toBe(IDENTITY_ERROR_CODES.emailAlreadyRegistered);
+      expect(await app.prisma.company.count()).toBe(1);
+    });
+
+    it('never leaves a Google account with a password anybody could guess', async () => {
+      await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({
+          email: 'gowner@example.com',
+          mode: 'signup',
+          intent: 'company',
+          companyName: 'Acme Google Corp',
+        })
+        .expect(200);
+
+      // The column is not nullable, so the row carries a hash of *something*. It has to be
+      // of something nobody can reproduce, or a Google account becomes reachable by password.
+      const user = await app.prisma.user.findUniqueOrThrow({
+        where: { email: 'gowner@example.com' },
+      });
+      expect(user.passwordHash).toMatch(/^scrypt\$/);
+      expect(user.passwordHash).not.toContain('google');
+    });
+
+    it('validates the email address it is given', async () => {
+      const response = await app.http
+        .post(AUTH_PATHS.googleSignIn)
+        .send({ email: 'invalid-email' })
+        .expect(422);
+
+      expect(response.body.code).toBe(ERROR_CODES.validationFailed);
+      expect(response.body.fields.email).toMatch(/valid email/i);
     });
   });
 
