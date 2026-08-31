@@ -1308,9 +1308,18 @@ describe('stock movements', () => {
       const p2 = await addProduct(tenant, { code: 'PROD-2' });
       const loc = await addLocation(tenant, 'WH-1');
 
+      // PROD-2 is stocked before the concurrent block, for the reason the transfer test
+      // below spells out: `Promise.all` starts four requests, it does not order them. The
+      // issue of 10 and the receive of 25 used to be started together, so whenever the issue
+      // won it was refused for insufficient stock — a scheduling accident reported as a
+      // broken feature, and one that only lost the race on a loaded machine, so it passed
+      // here and failed in CI. Stocking up front leaves every interleaving valid, which is
+      // what lets this assert on the thing it is named for: movements against different
+      // products do not block each other.
+      await receive(tenant, { productId: p2.id, locationId: loc.id, quantity: '25' });
+
       await Promise.all([
         receive(tenant, { productId: p1.id, locationId: loc.id, quantity: '10' }),
-        receive(tenant, { productId: p2.id, locationId: loc.id, quantity: '25' }),
         receive(tenant, { productId: p1.id, locationId: loc.id, quantity: '5' }),
         issue(tenant, { productId: p2.id, locationId: loc.id, quantity: '10' }),
       ]);
