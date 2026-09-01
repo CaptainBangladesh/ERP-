@@ -21,6 +21,8 @@ import { navigate, useLocationPath } from '../../../app/location';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
 import { LeadActivityFeed } from '../components/LeadActivityFeed';
+import { LeadFilesTab } from '../components/LeadFilesTab';
+import { LeadSurveyTab } from '../components/LeadSurveyTab';
 import { ConvertLeadModal } from '../components/ConvertLeadModal';
 import { MailboxesModal } from '../components/MailboxesModal';
 import { SendEmailModal } from '../components/SendEmailModal';
@@ -57,7 +59,11 @@ export function LeadWorkspace() {
   const canReadUsers = hasPermission(session, 'identity:users:read');
   const queryClient = useQueryClient();
 
-  const [tab, setTab] = useState<'activity' | 'details'>('activity');
+  /**
+   * Activity is the centre of the workspace; the other three are thin find-it tabs beside it,
+   * for retrieving one artifact without scrolling the whole history.
+   */
+  const [tab, setTab] = useState<'activity' | 'files' | 'survey' | 'details'>('activity');
   const [worklistOpen, setWorklistOpen] = useState(true);
   const [converting, setConverting] = useState(false);
   const [sendEmailOpen, setSendEmailOpen] = useState(false);
@@ -162,6 +168,7 @@ export function LeadWorkspace() {
                 <QuickAction label="Log a call" glyph="📞" onClick={() => openComposer('call')} />
                 <QuickAction label="Log a note" glyph="📝" onClick={() => openComposer('note')} />
                 <QuickAction label="Log a task" glyph="✅" onClick={() => openComposer('task')} />
+                <QuickAction label="Attach a file" glyph="📎" onClick={() => setTab('files')} />
               </div>
             )}
           </div>
@@ -190,20 +197,34 @@ export function LeadWorkspace() {
           <TabButton active={tab === 'activity'} onClick={() => setTab('activity')}>
             Activity
           </TabButton>
+          <TabButton active={tab === 'files'} onClick={() => setTab('files')}>
+            Files
+          </TabButton>
+          <TabButton active={tab === 'survey'} onClick={() => setTab('survey')}>
+            Survey
+          </TabButton>
           <TabButton active={tab === 'details'} onClick={() => setTab('details')}>
             Details
           </TabButton>
         </div>
 
         <div className="min-h-0 flex-1">
-          {tab === 'activity' ? (
+          {tab === 'activity' && (
             <LeadActivityFeed
               leadId={leadId}
               composerType={composerType}
               onComposerTypeChange={setComposerType}
               composerFocusSignal={composerFocusSignal}
             />
-          ) : (
+          )}
+
+          {tab === 'files' && <LeadFilesTab leadId={leadId} canWrite={canWrite} />}
+
+          {tab === 'survey' && (
+            <LeadSurveyTab lead={detail} customFieldDefinitions={customFields} canWrite={canWrite} />
+          )}
+
+          {tab === 'details' && (
             <DetailsPanel
               detail={detail}
               sourceLabel={sourceLabelOf(detail, sources)}

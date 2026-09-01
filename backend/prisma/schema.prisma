@@ -851,6 +851,9 @@ model Lead {
 
   activities Activity[]
   campaignRecipients CampaignRecipient[]
+  attachments LeadAttachment[]
+  submissions LeadSubmission[]
+  emailSends LeadEmailSend[]
 
   @@index([companyId])
   @@index([companyId, groupId])
@@ -861,6 +864,81 @@ model Lead {
   /// The source-performance dashboard's cohort window, per company.
   @@index([companyId, createdAt])
   @@map("leads")
+}
+
+/// A file attachment uploaded against a Lead.
+model LeadAttachment {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  leadId     String   @map("lead_id") @db.Uuid
+  filename   String
+  mimeType   String   @map("mime_type")
+  sizeBytes  Int      @map("size_bytes")
+  storageKey String   @map("storage_key")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, leadId])
+  @@map("lead_attachments")
+}
+
+/// One capture-form response tied to a Lead.
+///
+/// A lead may accumulate several: a second response from a known lead appends rather than being
+/// dropped, so the picture builds up. `rawPayload` holds every answer as it arrived — the ones
+/// no field maps included, which is what stops a survey answer being lost because nobody had
+/// defined a field for it yet. `mappedFields` records answer key → the Lead field it fed, so
+/// which answers were mapped stays answerable even when the two are named differently.
+model LeadSubmission {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  leadId          String   @map("lead_id") @db.Uuid
+  /// Null once the capture source it came through is deleted; the response itself outlives it.
+  captureSourceId String?  @map("capture_source_id") @db.Uuid
+  /// The form's name at the time of submission. A snapshot, because sources get renamed.
+  formName        String   @map("form_name")
+  rawPayload      Json     @map("raw_payload")
+  mappedFields    Json     @map("mapped_fields")
+  submittedAt     DateTime @default(now()) @map("submitted_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, leadId])
+  @@map("lead_submissions")
+}
+
+/// One 1:1 email sent to a Lead, and whatever its tracking pixel has since reported.
+///
+/// The same shape `CampaignRecipient` carries for campaign opens, for the same reason: an open
+/// is a token being fetched, so the token has to be stored somewhere it can be looked up
+/// without a session. `openCount` climbs on every fetch; `openedAt` is set once, and it is the
+/// first open alone that notifies anyone — Apple Mail Privacy Protection pre-fetches images, so
+/// a notification per fetch would be noise rather than news.
+model LeadEmailSend {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String    @map("company_id") @db.Uuid
+  leadId       String    @map("lead_id") @db.Uuid
+  /// The Correspondence entry this send produced on the Timeline.
+  activityId   String?   @map("activity_id") @db.Uuid
+  /// The `📬` Audit event the first open produced. Kept so a later open can raise the count it
+  /// shows rather than adding a second entry saying the same thing again.
+  openActivityId String? @map("open_activity_id") @db.Uuid
+  sentByUserId String    @map("sent_by_user_id") @db.Uuid
+  subject      String
+  openToken    String    @unique @default(uuid()) @map("open_token")
+  sentAt       DateTime  @default(now()) @map("sent_at")
+  openedAt     DateTime? @map("opened_at")
+  openCount    Int       @default(0) @map("open_count")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, leadId])
+  @@map("lead_email_sends")
 }
 
 /// A company's own swimlanes on the Leads board.

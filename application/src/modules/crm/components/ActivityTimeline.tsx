@@ -304,6 +304,7 @@ function ActivityCard({
 }) {
   const isTask = activity.type === 'task';
   const isCompleted = Boolean(activity.completedAt);
+  const isSystemAudit = /^(⚙️|📎|👤|🚀|📥|📝)/.test(activity.notes);
 
   const formattedOccurred = new Date(activity.occurredAt).toLocaleString(undefined, {
     dateStyle: 'medium',
@@ -318,36 +319,46 @@ function ActivityCard({
     : null;
 
   return (
-    <li className="flex flex-col gap-2 rounded-md border border-slate-200 bg-white p-3.5 shadow-sm">
+    <li
+      className={`flex flex-col gap-2 rounded-xl border p-4 shadow-2xs transition ${
+        isSystemAudit
+          ? 'border-slate-200 bg-slate-50/70'
+          : 'border-slate-200 bg-white hover:border-slate-300'
+      }`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span
             className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
-              TYPE_BADGE_CLASSES[activity.type]
+              isSystemAudit
+                ? 'bg-slate-200 text-slate-800 border-slate-300'
+                : TYPE_BADGE_CLASSES[activity.type] || 'bg-slate-100 text-slate-800 border-slate-200'
             }`}
           >
-            {TYPE_LABELS[activity.type]}
+            {isSystemAudit ? 'System Log' : TYPE_LABELS[activity.type] || 'Activity'}
           </span>
 
           {isTask && (
             <span
-              className={`text-xs font-medium ${
+              className={`text-xs font-semibold ${
                 isCompleted ? 'text-emerald-700' : 'text-amber-700'
               }`}
             >
-              {isCompleted ? 'Completed' : 'Pending Task'}
+              {isCompleted ? '✓ Completed' : '⏳ Pending Task'}
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-slate-500">
+        <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
           <span>{formattedOccurred}</span>
           <span>·</span>
-          <span>By {activity.createdByName}</span>
+          <span className="font-semibold text-slate-700">By {activity.createdByName}</span>
         </div>
       </div>
 
-      <p className="text-sm text-slate-800 whitespace-pre-wrap">{activity.notes}</p>
+      <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed pt-1">
+        {activity.notes}
+      </p>
 
       {isTask && (
         <div className="flex flex-wrap items-center justify-between border-t border-slate-100 pt-2 text-xs">

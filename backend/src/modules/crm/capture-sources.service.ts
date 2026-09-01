@@ -18,6 +18,7 @@ import { companyApplied, InjectPrisma, Tenancy, type ScopedPrisma } from '../../
 import { listQuery } from '../../platform/list';
 import { ApiException } from '../../http/api-exception';
 import { FieldException } from '../../http/validation-exception';
+import { SYSTEM_ACTOR_ID, SYSTEM_ACTOR_NAME, auditNotes } from './audit-events';
 import { LeadFieldsService } from './lead-fields.service';
 import { CAPTURE_SOURCE_LIST } from './schemas';
 import {
@@ -37,6 +38,7 @@ const rateLimitStore = new Map<string, RateLimitEntry>();
 function generateToken(): string {
   return `cs_${randomBytes(16).toString('hex')}`;
 }
+
 
 @Injectable()
 export class CaptureSourcesService {
@@ -260,6 +262,14 @@ export class CaptureSourcesService {
     }
 
     const mappedLeadData: Record<string, unknown> = {};
+    /**
+     * Which answer fed which Lead field, kept as the mapping is applied.
+     *
+     * It cannot be recovered afterwards: a webhook source maps `entry_104` onto `budget`, so
+     * once `mappedLeadData` is keyed by field the answer it came from is gone. The Survey tab
+     * needs exactly this to tell a mapped answer from one nothing maps.
+     */
+    const mappedFields: Record<string, string> = {};
 
     if (source.kind === 'form') {
       const config = (source.config as unknown) as FormConfig;
@@ -288,9 +298,11 @@ export class CaptureSourcesService {
         }
       }
 
+      // A form source names its own fields, so an answer's key is the field it feeds.
       for (const [k, v] of Object.entries(rawPayload)) {
         if (v !== undefined && v !== null && v !== '') {
           mappedLeadData[k] = v;
+          mappedFields[k] = k;
         }
       }
     } else if (source.kind === 'webhook') {
@@ -300,6 +312,7 @@ export class CaptureSourcesService {
       for (const [inboundKey, leadKey] of Object.entries(mapping)) {
         if (rawPayload[inboundKey] !== undefined && rawPayload[inboundKey] !== null) {
           mappedLeadData[leadKey] = rawPayload[inboundKey];
+          mappedFields[inboundKey] = leadKey;
         }
       }
     }
@@ -372,20 +385,61 @@ export class CaptureSourcesService {
         });
       }
 
-      if (!existingLead) {
-        await this.prisma.lead.create({
-          data: companyApplied<Prisma.LeadUncheckedCreateInput>({
-            name,
-            ...(email ? { email } : {}),
-            ...(organisationName ? { organisationName } : {}),
-            ...(phone ? { phone } : {}),
-            ...(sourceId ? { sourceId } : {}),
-            ...(groupId ? { groupId } : {}),
-            ...(assignedToUserId ? { assignedToUserId } : {}),
-            ...(Object.keys(customValues).length > 0 ? { customValues: customValues as any } : {}),
-          }),
-        });
-      }
+      /**
+       * A response from somebody already on the board used to be thrown away, so the second
+       * thing a lead told us was lost and only the first survived. It now appends: the
+       * submission attaches to the lead that matched, and the lead's *empty* fields — and only
+       * its empty ones — are filled in from it.
+       *
+       * Never overwriting is not caution for its own sake. This endpoint is public and
+       * unauthenticated, so anyone who knows a customer's email address can post as them; a
+       * submission that could overwrite would be a way to blank out a known lead's phone
+       * number from the outside. Filling a gap cannot destroy anything, so that is all it does.
+       */
+      const lead = existingLead
+        ? await this.fillEmptyFields(existingLead.id, {
+            email,
+            organisationName,
+            phone,
+            sourceId,
+            groupId,
+            assignedToUserId,
+            customValues,
+          })
+        : await this.prisma.lead.create({
+            data: companyApplied<Prisma.LeadUncheckedCreateInput>({
+              name,
+              ...(email ? { email } : {}),
+              ...(organisationName ? { organisationName } : {}),
+              ...(phone ? { phone } : {}),
+              ...(sourceId ? { sourceId } : {}),
+              ...(groupId ? { groupId } : {}),
+              ...(assignedToUserId ? { assignedToUserId } : {}),
+              ...(Object.keys(customValues).length > 0 ? { customValues: customValues as any } : {}),
+            }),
+          });
+
+      // The raw payload in full, mapped or not: an answer no field maps is still something the
+      // lead told us, and the Survey tab is where it stays readable until somebody promotes it.
+      await this.prisma.leadSubmission.create({
+        data: companyApplied<Prisma.LeadSubmissionUncheckedCreateInput>({
+          leadId: lead.id,
+          captureSourceId: source.id,
+          formName: source.name,
+          rawPayload: rawPayload as Prisma.InputJsonValue,
+          mappedFields: mappedFields as Prisma.InputJsonValue,
+        }),
+      });
+
+      await this.prisma.activity.create({
+        data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
+          type: 'note',
+          notes: auditNotes.surveyReceived(source.name),
+          leadId: lead.id,
+          createdByUserId: SYSTEM_ACTOR_ID,
+          createdByName: SYSTEM_ACTOR_NAME,
+        }),
+      });
 
       await this.prisma.captureSource.update({
         where: { id: source.id },
@@ -405,6 +459,56 @@ export class CaptureSourcesService {
       },
     };
   }
+
+  /**
+   * Writes only what the lead does not already have.
+   *
+   * "Empty" is the same question for a built-in column and a custom value: null, absent, an
+   * empty string, or an empty list. Anything else is a value somebody already has a reason to
+   * trust, and a public submission does not get to replace it — see the note at the call site.
+   */
+  private async fillEmptyFields(
+    leadId: string,
+    incoming: {
+      email?: string;
+      organisationName?: string;
+      phone?: string;
+      sourceId?: string;
+      groupId?: string;
+      assignedToUserId?: string;
+      customValues: LeadCustomValues;
+    },
+  ) {
+    const lead = await this.prisma.lead.findFirstOrThrow({ where: { id: leadId } });
+
+    const fills: Prisma.LeadUncheckedUpdateInput = {};
+    for (const column of ['email', 'organisationName', 'phone', 'sourceId', 'groupId', 'assignedToUserId'] as const) {
+      const value = incoming[column];
+      if (value && isEmptyValue(lead[column])) fills[column] = value;
+    }
+
+    const existingCustom = (lead.customValues as LeadCustomValues) || {};
+    const mergedCustom: Record<string, unknown> = { ...existingCustom };
+    let customChanged = false;
+    for (const [key, value] of Object.entries(incoming.customValues)) {
+      if (isEmptyValue(value)) continue;
+      if (!isEmptyValue(existingCustom[key])) continue;
+      mergedCustom[key] = value;
+      customChanged = true;
+    }
+    if (customChanged) fills.customValues = mergedCustom as Prisma.InputJsonValue;
+
+    if (Object.keys(fills).length === 0) return lead;
+
+    return this.prisma.lead.update({ where: { id: lead.id }, data: fills });
+  }
+}
+
+/** Nothing worth keeping: never answered, cleared, or an empty list. */
+function isEmptyValue(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  return Array.isArray(value) && value.length === 0;
 }
 
 function describeCaptureSource(raw: any): CaptureSourceSummary {

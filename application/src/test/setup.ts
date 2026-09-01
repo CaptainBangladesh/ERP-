@@ -30,7 +30,7 @@ beforeAll(() => {
  * alone: the router reads `defaultPrevented` and would decline to route if this touched
  * them, so only the schemes that leave the application are cancelled.
  */
-const LEAVES_THE_APP = /^(?:mailto:|tel:|sms:|https?:\/\/)/i;
+const LEAVES_THE_APP = /^(?:mailto:|tel:|sms:|blob:|https?:\/\/)/i;
 
 beforeAll(() => {
   document.addEventListener(
@@ -41,6 +41,21 @@ beforeAll(() => {
     },
     true,
   );
+});
+
+/**
+ * Object URLs, which jsdom does not implement at all.
+ *
+ * A file the application downloads or thumbnails is fetched with the session header and then
+ * handed to the browser as an object URL — there is no other way to reach an authenticated
+ * endpoint from an `<img>` or a save. jsdom leaves `createObjectURL` undefined, so without
+ * this every such component throws on render rather than being testable. The counter makes
+ * each URL distinguishable, which is what lets a test assert that the right file was fetched.
+ */
+beforeAll(() => {
+  let issued = 0;
+  URL.createObjectURL = () => `blob:test/${(issued += 1)}`;
+  URL.revokeObjectURL = () => {};
 });
 
 afterEach(() => {

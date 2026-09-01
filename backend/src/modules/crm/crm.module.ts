@@ -36,6 +36,7 @@ import { LeadOutreachService } from './lead-outreach.service';
 
 import { PublicCaptureController } from './public-capture.controller';
 import { PublicCampaignsController } from './public-campaigns.controller';
+import { PublicLeadEmailController } from './public-lead-email.controller';
 
 @Module({
   imports: [PartiesModule],
@@ -57,6 +58,7 @@ import { PublicCampaignsController } from './public-campaigns.controller';
     LeadImportsController,
     PublicCaptureController,
     PublicCampaignsController,
+    PublicLeadEmailController,
   ],
   providers: [
     DashboardService,

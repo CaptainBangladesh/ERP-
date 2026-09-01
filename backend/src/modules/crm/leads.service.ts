@@ -1,12 +1,17 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { ListResponse } from '@erp/shared';
 import {
   CRM_EVENTS,
   LEAD_ERROR_CODES,
+  type LeadAttachmentListResponse,
+  type LeadAttachmentResponse,
   type LeadCustomValues,
   type LeadListResponse,
   type LeadResponse,
   type LeadSource,
+  type LeadSubmissionListResponse,
+  type LeadSubmissionSummary,
   type LeadSummary,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
@@ -14,9 +19,16 @@ import { ValidationException } from '../../http/validation-exception';
 import { defined } from '../../prisma/columns';
 import { DomainEvents } from '../../platform/events';
 import { listQuery } from '../../platform/list';
+import { StorageProvider } from '../../platform/storage';
+import {
+  ATTACHMENT_UPLOAD_OPTIONS,
+  validateUploadedFile,
+  type UploadedFile,
+} from '../../platform/upload';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { PartyDirectory } from '../parties';
+import { SYSTEM_ACTOR_ID, SYSTEM_ACTOR_NAME, auditNotes } from './audit-events';
 import { LeadFieldsService } from './lead-fields.service';
 import { LeadStatusLabelsService } from './lead-status-labels.service';
 import { leadStatusNotSettable } from './refusals';
@@ -45,6 +57,7 @@ export class LeadsService {
     private readonly events: DomainEvents,
     private readonly statuses: LeadStatusLabelsService,
     private readonly leadFields: LeadFieldsService,
+    private readonly storage: StorageProvider,
   ) { }
 
   /**
@@ -125,6 +138,18 @@ export class LeadsService {
     });
 
     if (input.status !== undefined) {
+      if (input.status !== existing.status) {
+        await this.prisma.activity.create({
+          data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
+            type: 'note',
+            notes: auditNotes.statusChanged(existing.status, input.status),
+            leadId: existing.id,
+            createdByUserId: actor?.userId || SYSTEM_ACTOR_ID,
+            createdByName: actor?.name || SYSTEM_ACTOR_NAME,
+          }),
+        });
+      }
+
       await this.workflowRulesService.evaluateRules({
         triggerType: 'lead.status_changed',
         leadId: lead.id,
@@ -133,7 +158,123 @@ export class LeadsService {
       });
     }
 
+    if (input.assignedToUserId !== undefined && input.assignedToUserId !== existing.assignedToUserId) {
+      await this.prisma.activity.create({
+        data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
+          type: 'note',
+          notes: auditNotes.leadAssigned(),
+          leadId: existing.id,
+          createdByUserId: actor?.userId || SYSTEM_ACTOR_ID,
+          createdByName: actor?.name || SYSTEM_ACTOR_NAME,
+        }),
+      });
+    }
+
     return describe(lead);
+  }
+
+  /**
+   * Attaches a real file to a lead.
+   *
+   * The bytes go to the `StorageProvider` and the row keeps the key it answered with, so the
+   * attachment is a file somebody can open rather than a filename in a list. That distinction
+   * is the whole of this method: the previous cut fabricated a key that pointed at nothing, and
+   * every attachment it recorded was already lost by the time the list rendered it.
+   */
+  async addAttachment(
+    leadId: string,
+    file: UploadedFile,
+    actor: { userId: string; name: string },
+  ): Promise<LeadAttachmentResponse> {
+    const lead = await this.requireLead(leadId);
+    const validated = validateUploadedFile(file, ATTACHMENT_UPLOAD_OPTIONS);
+
+    const storageKey = await this.storage.put(
+      validated.originalname,
+      validated.buffer,
+      validated.mimetype,
+    );
+
+    const attachment = await this.prisma.leadAttachment.create({
+      data: companyApplied<Prisma.LeadAttachmentUncheckedCreateInput>({
+        leadId: lead.id,
+        filename: validated.originalname || 'Attachment',
+        mimeType: validated.mimetype || 'application/octet-stream',
+        sizeBytes: validated.buffer.length,
+        storageKey,
+        uploadedBy: actor.name || SYSTEM_ACTOR_NAME,
+      }),
+    });
+
+    await this.prisma.activity.create({
+      data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
+        type: 'note',
+        notes: auditNotes.fileAttached(attachment.filename),
+        leadId: lead.id,
+        createdByUserId: actor.userId,
+        createdByName: actor.name || SYSTEM_ACTOR_NAME,
+      }),
+    });
+
+    return describeAttachment(attachment);
+  }
+
+  async listAttachments(leadId: string): Promise<LeadAttachmentListResponse> {
+    await this.requireLead(leadId);
+    const rows = await this.prisma.leadAttachment.findMany({
+      where: { leadId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return listed(rows.map(describeAttachment));
+  }
+
+  /**
+   * The stored bytes, with what they are, for streaming back.
+   *
+   * The lead is required first and the attachment is found through it, so a file belonging to
+   * another company's lead is a not-found like any other — the id being a uuid somebody could
+   * guess is exactly why the lookup is not by attachment id alone.
+   */
+  async attachmentBytes(
+    leadId: string,
+    attachmentId: string,
+  ): Promise<{ filename: string; mimeType: string; bytes: Buffer }> {
+    const attachment = await this.requireAttachment(leadId, attachmentId);
+    const bytes = await this.storage.get(attachment.storageKey);
+    if (!bytes) throw attachmentBytesMissing();
+    return { filename: attachment.filename, mimeType: attachment.mimeType, bytes };
+  }
+
+  /** Removes the row *and* the stored object; an orphaned object is a file nobody can reach. */
+  async removeAttachment(leadId: string, attachmentId: string): Promise<void> {
+    const attachment = await this.requireAttachment(leadId, attachmentId);
+    await this.prisma.leadAttachment.delete({ where: { id: attachment.id } });
+    await this.storage.remove(attachment.storageKey);
+  }
+
+  private async requireAttachment(leadId: string, attachmentId: string) {
+    await this.requireLead(leadId);
+    const attachment = await this.prisma.leadAttachment.findFirst({
+      where: { id: attachmentId, leadId },
+    });
+    if (!attachment) throw attachmentNotFound();
+    return attachment;
+  }
+
+  /**
+   * Every capture-form response this lead has sent, newest first.
+   *
+   * A lead accumulates submissions rather than being overwritten by the latest one, so this is
+   * a list and not a field — the Survey tab reads it to show what the lead actually answered,
+   * including the answers no field maps.
+   */
+  async listSubmissions(leadId: string): Promise<LeadSubmissionListResponse> {
+    await this.requireLead(leadId);
+    const rows = await this.prisma.leadSubmission.findMany({
+      where: { leadId },
+      orderBy: { submittedAt: 'desc' },
+    });
+    return listed(rows.map(describeSubmission));
   }
 
   /**
@@ -298,6 +439,60 @@ function describe(row: any): LeadSummary {
   };
 }
 
+function describeAttachment(row: {
+  id: string;
+  leadId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedBy: string;
+  createdAt: Date;
+}): LeadAttachmentResponse {
+  return {
+    id: row.id,
+    leadId: row.leadId,
+    filename: row.filename,
+    mimeType: row.mimeType,
+    sizeBytes: row.sizeBytes,
+    uploadedBy: row.uploadedBy,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function describeSubmission(row: {
+  id: string;
+  leadId: string;
+  captureSourceId: string | null;
+  formName: string;
+  rawPayload: unknown;
+  mappedFields: unknown;
+  submittedAt: Date;
+}): LeadSubmissionSummary {
+  return {
+    id: row.id,
+    leadId: row.leadId,
+    captureSourceId: row.captureSourceId,
+    formName: row.formName,
+    rawPayload: (row.rawPayload as Record<string, unknown>) ?? {},
+    mappedFields: (row.mappedFields as Record<string, string>) ?? {},
+    submittedAt: row.submittedAt.toISOString(),
+  };
+}
+
+/**
+ * A lead's own artifacts, in the envelope every list endpoint answers with.
+ *
+ * Unpaged on purpose: these belong to one lead and are read all at once by a tab that shows
+ * them all. The envelope is still the standard one, so a caller reads them the same way it
+ * reads every other list and paging can be added later without changing the shape.
+ */
+function listed<T>(items: T[]): ListResponse<T> {
+  return {
+    items,
+    page: { number: 1, size: items.length, total: items.length, pages: items.length > 0 ? 1 : 0 },
+  };
+}
+
 /**
  * The same 404 a Lead in another company gets, deliberately. Telling a caller that an
  * identifier is real but not theirs would turn the endpoint into a way of counting somebody
@@ -340,5 +535,27 @@ function leadNotDisqualified(): ApiException {
     LEAD_ERROR_CODES.leadNotDisqualified,
     'This lead is not disqualified, so there is nothing to reopen.',
     HttpStatus.CONFLICT,
+  );
+}
+
+/** An attachment id that names nothing on this lead — including one on another company's lead. */
+function attachmentNotFound(): ApiException {
+  return new ApiException(
+    LEAD_ERROR_CODES.leadAttachmentNotFound,
+    'That attachment does not exist.',
+    HttpStatus.NOT_FOUND,
+  );
+}
+
+/**
+ * The row is there and the bytes are not. Distinct from a missing attachment because the two
+ * call for different things: this one is a store that lost an object, and saying so is what
+ * stops it being read as "the user deleted it".
+ */
+function attachmentBytesMissing(): ApiException {
+  return new ApiException(
+    LEAD_ERROR_CODES.leadAttachmentBytesMissing,
+    'That file is recorded but its contents could not be found in storage.',
+    HttpStatus.NOT_FOUND,
   );
 }

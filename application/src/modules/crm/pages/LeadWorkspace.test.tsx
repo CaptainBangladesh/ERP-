@@ -8,8 +8,11 @@ import {
   LEAD_PATHS,
   LEAD_SOURCE_PATHS,
   LEAD_STATUS_LABEL_PATHS,
+  LEAD_SUBMISSION_PATHS,
   type ActivitySummary,
+  type LeadAttachmentResponse,
   type LeadListResponse,
+  type LeadSubmissionSummary,
   type LeadSummary,
 } from '@erp/shared';
 import { server } from '../../../test/server';
@@ -46,6 +49,11 @@ describe('LeadWorkspace', () => {
       groupName: 'New Leads',
       ...overrides,
     };
+  }
+
+  /** The list envelope a lead's own artifacts come back in — unpaged, all at once. */
+  function listed<T>(items: T[]) {
+    return { items, page: { number: 1, size: items.length, total: items.length, pages: items.length ? 1 : 0 } };
   }
 
   function page(items: LeadSummary[]): LeadListResponse {
@@ -102,6 +110,8 @@ describe('LeadWorkspace', () => {
         }),
       ),
       http.get(ACTIVITY_PATHS.leadActivities('id-priya-kapoor'), () => HttpResponse.json({ items: [] })),
+      http.get(LEAD_PATHS.files('id-priya-kapoor'), () => HttpResponse.json(listed([]))),
+      http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () => HttpResponse.json(listed([]))),
     );
   });
 
@@ -317,6 +327,225 @@ describe('LeadWorkspace', () => {
       await user.click(within(rail).getByRole('button', { name: 'Qualify' }));
       expect(await screen.findByRole('heading', { name: /move .* to contacts/i })).toBeInTheDocument();
     });
+  });
+
+  describe('the Files tab', () => {
+    function attachment(overrides: Partial<LeadAttachmentResponse> = {}): LeadAttachmentResponse {
+      return {
+        id: 'file-1',
+        leadId: 'id-priya-kapoor',
+        filename: 'quote.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 245_760,
+        uploadedBy: 'Ada Okafor',
+        createdAt: '2026-08-30T09:00:00.000Z',
+        ...overrides,
+      };
+    }
+
+    it('lists each attachment with its type, size and date', async () => {
+      server.use(
+        http.get(LEAD_PATHS.files('id-priya-kapoor'), () =>
+          HttpResponse.json(listed([attachment()])),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      await user.click(await screen.findByRole('button', { name: 'Files' }));
+
+      const files = within(await screen.findByRole('region', { name: 'Files' }));
+      expect(await files.findByText('quote.pdf')).toBeInTheDocument();
+      expect(files.getByText('PDF')).toBeInTheDocument();
+      expect(files.getByText('240 KB')).toBeInTheDocument();
+    });
+
+    /**
+     * The upload carries the file itself rather than a description of it.
+     *
+     * The assertion is on the body being a `FormData` and not JSON, which is precisely the bug
+     * this replaced: the first cut posted `{ filename, sizeBytes }` and stored no bytes at all.
+     * It stops short of reading the parts back because jsdom's `FormData` and Node's `fetch`
+     * are different realms — undici does not recognise the former and stringifies it, so
+     * `request.formData()` here would be asserting on a quirk of the test environment. That the
+     * server receives real multipart is proven where it can be: `crm-lead-workspace.spec.ts`.
+     */
+    it('uploads the chosen file itself, not a description of it', async () => {
+      let body: string | undefined;
+      let contentType: string | null = null;
+      server.use(
+        http.post(LEAD_PATHS.files('id-priya-kapoor'), async ({ request }) => {
+          contentType = request.headers.get('content-type');
+          body = await request.text();
+          return HttpResponse.json(attachment(), { status: 201 });
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Files' }));
+
+      const picker = await screen.findByLabelText('Choose a file to attach');
+      await user.upload(picker, new File(['a quote'], 'quote.pdf', { type: 'application/pdf' }));
+
+      await waitFor(() => expect(body).toBeDefined());
+      expect(body).not.toContain('"filename"');
+      expect(contentType).not.toContain('application/json');
+    });
+
+    it('downloads a stored file through the authenticated endpoint', async () => {
+      let downloaded = false;
+      server.use(
+        http.get(LEAD_PATHS.files('id-priya-kapoor'), () =>
+          HttpResponse.json(listed([attachment()])),
+        ),
+        http.get(LEAD_PATHS.fileDownload('id-priya-kapoor', 'file-1'), () => {
+          downloaded = true;
+          return HttpResponse.text('the quote', { headers: { 'Content-Type': 'application/pdf' } });
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Files' }));
+
+      await user.click(await screen.findByRole('button', { name: 'Download quote.pdf' }));
+
+      await waitFor(() => expect(downloaded).toBe(true));
+    });
+
+    it('thumbnails an image attachment rather than showing it an icon', async () => {
+      server.use(
+        http.get(LEAD_PATHS.files('id-priya-kapoor'), () =>
+          HttpResponse.json(
+            listed([attachment({ id: 'file-2', filename: 'site.png', mimeType: 'image/png' })]),
+          ),
+        ),
+        http.get(LEAD_PATHS.fileDownload('id-priya-kapoor', 'file-2'), () =>
+          HttpResponse.text('pretend png', { headers: { 'Content-Type': 'image/png' } }),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Files' }));
+
+      const thumbnail = await screen.findByRole('img', { name: 'site.png' });
+      expect(thumbnail).toHaveAttribute('src', expect.stringContaining('blob:'));
+    });
+  });
+
+  describe('the Survey tab', () => {
+    function submission(overrides: Partial<LeadSubmissionSummary> = {}): LeadSubmissionSummary {
+      return {
+        id: 'sub-1',
+        leadId: 'id-priya-kapoor',
+        captureSourceId: 'cs-1',
+        formName: 'Site Survey Form',
+        rawPayload: { entry_104: '50k', entry_999: 'About 12 years' },
+        mappedFields: { entry_104: 'budget' },
+        submittedAt: '2026-08-30T09:00:00.000Z',
+        ...overrides,
+      };
+    }
+
+    it('lists each response, expanding to the full question and answer', async () => {
+      server.use(
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
+          HttpResponse.json(listed([submission()])),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Survey' }));
+
+      const survey = within(await screen.findByRole('region', { name: 'Survey' }));
+      expect(await survey.findByText('Site Survey Form')).toBeInTheDocument();
+      // Collapsed until asked for: the tab is for finding a response, not reading them all.
+      expect(survey.queryByText('About 12 years')).not.toBeInTheDocument();
+
+      await user.click(survey.getByRole('button', { expanded: false }));
+
+      expect(survey.getByText('About 12 years')).toBeInTheDocument();
+      expect(survey.getByText('50k')).toBeInTheDocument();
+      // A mapped answer is labelled by the field it fed, not by the form's own key for it.
+      expect(survey.getByText('Budget')).toBeInTheDocument();
+    });
+
+    it('tells a mapped answer from one no field maps', async () => {
+      server.use(
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
+          HttpResponse.json(listed([submission()])),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Survey' }));
+      await user.click(await screen.findByRole('button', { expanded: false }));
+
+      const survey = within(screen.getByRole('region', { name: 'Survey' }));
+      expect(survey.getByText('Mapped to a field')).toBeInTheDocument();
+      expect(survey.getByText('Not mapped')).toBeInTheDocument();
+    });
+
+    it('promotes an unmapped answer into a custom field, then onto the lead', async () => {
+      let definedField: unknown;
+      let patched: unknown;
+      server.use(
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
+          HttpResponse.json(listed([submission()])),
+        ),
+        http.post(LEAD_FIELD_PATHS.leadFields, async ({ request }) => {
+          definedField = await request.json();
+          return HttpResponse.json(
+            { id: 'f-roof', key: 'roof_age', label: 'Roof Age', type: 'text', required: false, order: 2, options: [], archivedAt: null },
+            { status: 201 },
+          );
+        }),
+        http.patch(LEAD_PATHS.lead('id-priya-kapoor'), async ({ request }) => {
+          patched = await request.json();
+          return HttpResponse.json(priya());
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Survey' }));
+      await user.click(await screen.findByRole('button', { expanded: false }));
+      await user.click(screen.getByRole('button', { name: 'Save as a field' }));
+
+      // The existing two writes, in order — there is no "promote" endpoint and none is wanted.
+      // The field is keyed readably: `entry_999` is the right thing to map *from* and a poor
+      // thing to name a field after.
+      await waitFor(() =>
+        expect(definedField).toEqual({ key: 'entry_999', label: 'Entry 999', type: 'text' }),
+      );
+      await waitFor(() =>
+        expect(patched).toEqual({
+          customValues: { priority: 'hot', budget: '50k', entry_999: 'About 12 years' },
+        }),
+      );
+    });
+  });
+
+  it('shows an email open in the feed as likelihood, with its count', async () => {
+    server.use(
+      http.get(ACTIVITY_PATHS.leadActivities('id-priya-kapoor'), () =>
+        HttpResponse.json({
+          items: [
+            activity({
+              id: 'a-open',
+              type: 'email',
+              notes: '📬 Email opened 3 times (probably seen): Your roof quote',
+            }),
+          ],
+        }),
+      ),
+    );
+
+    renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+    // Never "read" or "confirmed": the pixel is defeated by image-blocking and inflated by
+    // Apple Mail Privacy Protection's pre-fetch.
+    expect(
+      await screen.findByText('📬 Email opened 3 times (probably seen): Your roof quote'),
+    ).toBeInTheDocument();
   });
 
   it('returns the same not-found for a lead in another company as for one that does not exist', async () => {

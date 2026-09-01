@@ -22,6 +22,9 @@ export const manifest: ModuleManifest = {
     '20260824004534_deal_pipeline',
     '20260824010000_crm_activities',
     '20260824020000_crm_workflow_rules',
+    '20260901000000_lead_workspace_artifacts',
+    '20260901001000_lead_email_open_activity',
+    '20260901002000_lead_submission_mapped_fields',
   ],
 
   models: [
@@ -31,6 +34,9 @@ export const manifest: ModuleManifest = {
     'LeadFieldDefinition',
     'LeadStatusLabel',
     'LeadImport',
+    'LeadAttachment',
+    'LeadSubmission',
+    'LeadEmailSend',
     'Stage',
     'Deal',
     'Activity',

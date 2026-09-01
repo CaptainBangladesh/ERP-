@@ -747,10 +747,12 @@ describe('crm', () => {
         .as(app.http.get(ACTIVITY_PATHS.leadActivities(lead.id)))
         .expect(200);
 
+      // The status change is itself audited onto the Timeline, so the rule's task is asserted
+      // for by what it is rather than by being the only thing there.
       const items = (list.body as ActivityListResponse).items;
-      expect(items).toHaveLength(1);
-      expect(items[0]!.type).toBe('task');
-      expect(items[0]!.notes).toBe('Follow up with lead');
+      const tasks = items.filter((item) => item.type === 'task');
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.notes).toBe('Follow up with lead');
     });
 
     it('fires multiple matching rules and ignores disabled rules', async () => {
@@ -809,8 +811,11 @@ describe('crm', () => {
         .expect(200);
 
       const items = (list.body as ActivityListResponse).items;
-      expect(items).toHaveLength(1);
-      expect(items[0]!.notes).toBe('Automated task');
+      const tasks = items.filter((item) => item.type === 'task');
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.notes).toBe('Automated task');
+      // The disabled rule stayed disabled: nothing here says what it would have said.
+      expect(items.some((item) => item.notes === 'Should not create')).toBe(false);
     });
 
     it('enforces tenant isolation on workflow rules', async () => {

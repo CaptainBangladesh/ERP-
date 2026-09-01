@@ -165,6 +165,15 @@ export const api = {
    * could not parse the body.
    */
   postForm: <T>(path: string, form: FormData) => requestForm<T>(path, form),
+  /**
+   * A stored file's bytes, rather than JSON.
+   *
+   * Downloads go through the same request path as everything else because they need the same
+   * `Authorization` header, and a bare `<a href>` to an API route carries no token — it would
+   * be answered with a 401 the browser renders as a broken image or an empty tab. A screen
+   * turns what comes back into an object URL and lets go of it when it is done.
+   */
+  getBlob: (path: string) => requestBlob(path),
 };
 
 function send<T>(method: string, path: string, payload?: unknown): Promise<T> {
@@ -207,4 +216,37 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   }
 
   return body as T;
+}
+
+async function requestBlob(path: string): Promise<Blob> {
+  let response: Response;
+  const sentWith = currentToken();
+
+  try {
+    response = await fetch(resolveUrl(path), {
+      headers: sentWith ? { Authorization: `${AUTH_SCHEME} ${sentWith}` } : {},
+    });
+  } catch {
+    throw new ApiFailure(0, {
+      code: 'network_error',
+      message: 'Could not reach the server. Check your connection and try again.',
+    });
+  }
+
+  if (!response.ok) {
+    // A refusal is still JSON, even on an endpoint whose success is bytes.
+    const body: unknown = await response.json().catch(() => undefined);
+    const failure = new ApiFailure(
+      response.status,
+      isApiError(body)
+        ? body
+        : { code: 'internal_error', message: 'That file could not be downloaded.' },
+    );
+
+    if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code, sentWith);
+
+    throw failure;
+  }
+
+  return response.blob();
 }

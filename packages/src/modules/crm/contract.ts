@@ -23,6 +23,11 @@ export const LEAD_PATHS = {
   qualify: (id: string) => `/${CRM_ROUTE}/leads/${id}/qualify`,
   disqualify: (id: string) => `/${CRM_ROUTE}/leads/${id}/disqualify`,
   reopen: (id: string) => `/${CRM_ROUTE}/leads/${id}/reopen`,
+  files: (id: string) => `/${CRM_ROUTE}/leads/${id}/files`,
+  file: (leadId: string, fileId: string) => `/${CRM_ROUTE}/leads/${leadId}/files/${fileId}`,
+  /** The bytes themselves. A stored attachment nobody can open is only a filename. */
+  fileDownload: (leadId: string, fileId: string) =>
+    `/${CRM_ROUTE}/leads/${leadId}/files/${fileId}/download`,
 } as const;
 
 export const STAGE_PATHS = {
@@ -223,6 +228,53 @@ export type LeadResponse = LeadSummary;
 
 export type LeadListResponse = ListResponse<LeadSummary>;
 
+export interface LeadAttachmentResponse {
+  id: string;
+  leadId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedBy: string;
+  createdAt: string;
+}
+
+export type LeadAttachmentListResponse = ListResponse<LeadAttachmentResponse>;
+
+/** Where a lead's stored capture-form responses are read from. */
+export const LEAD_SUBMISSION_PATHS = {
+  byLead: (id: string) => `/${CRM_ROUTE}/leads/${id}/submissions`,
+} as const;
+
+/**
+ * One capture-form response tied to a Lead.
+ *
+ * `rawPayload` is every answer exactly as it arrived — including the ones no field maps, which
+ * is the whole point of storing it: an answer with nowhere to go is still something the lead
+ * told us.
+ *
+ * `mappedFields` says which of those answers reached the Lead, and what each one fed: it is
+ * keyed by the answer's own key and valued by the Lead field that key was mapped onto. Keyed
+ * that way round deliberately — a webhook source maps `entry_104` onto `budget`, so a set of
+ * *field* names could not tell you which answer was mapped, and the Survey tab's whole job is
+ * to distinguish a mapped answer from an unmapped one. The value read is not repeated here;
+ * it is in `rawPayload` under the same key.
+ */
+export interface LeadSubmissionSummary {
+  id: string;
+  leadId: string;
+  captureSourceId: string | null;
+  /** The form's name as it stood when the response arrived; the source may be renamed later. */
+  formName: string;
+  rawPayload: Record<string, unknown>;
+  /** Answer key → the Lead field it fed. Absent key means the answer mapped to nothing. */
+  mappedFields: Record<string, string>;
+  submittedAt: string;
+}
+
+export type LeadSubmissionResponse = LeadSubmissionSummary;
+
+export type LeadSubmissionListResponse = ListResponse<LeadSubmissionSummary>;
+
 export const LEAD_ERROR_CODES = {
   leadNotFound: 'lead_not_found',
   /** The `partyId` a qualify request named does not resolve, through `PartyDirectory`. */
@@ -231,6 +283,10 @@ export const LEAD_ERROR_CODES = {
   leadNotQualifiable: 'lead_not_qualifiable',
   leadAlreadyDisqualified: 'lead_already_disqualified',
   leadNotDisqualified: 'lead_not_disqualified',
+  /** A file id that names nothing on this lead — including a file on another company's lead. */
+  leadAttachmentNotFound: 'lead_attachment_not_found',
+  /** The attachment row exists but the store has no bytes under its key. */
+  leadAttachmentBytesMissing: 'lead_attachment_bytes_missing',
 } as const;
 
 // ─── stages ─────────────────────────────────────────────────────────────────────────
@@ -729,7 +785,30 @@ export const LEAD_EMAIL_PATHS = {
   send: (id: string) => `/${CRM_ROUTE}/leads/${id}/send-email`,
   sendEmail: (id: string) => `/${CRM_ROUTE}/leads/${id}/send-email`,
   preview: `/${CRM_ROUTE}/email-templates/preview`,
+  /**
+   * The tracking pixel a sent 1:1 email carries, mirroring `CAMPAIGN_PATHS.publicOpenPixel`.
+   * Public and unauthenticated by necessity — it is fetched by the recipient's mail client.
+   */
+  publicOpenPixel: (token: string) => `/api/public/lead-emails/open/${token}`,
 } as const;
+
+/**
+ * What became of one 1:1 email after it left.
+ *
+ * An open is a **soft** signal, never proof: image-blocking hides a read, and Apple Mail
+ * Privacy Protection's pre-fetch invents one. Anything rendering this must phrase it as
+ * likelihood — "probably seen" — which is why the field is `openedAt` rather than `readAt`.
+ */
+export interface LeadEmailSendSummary {
+  id: string;
+  leadId: string;
+  activityId: string | null;
+  sentByUserId: string;
+  subject: string;
+  sentAt: string;
+  openedAt: string | null;
+  openCount: number;
+}
 
 export const EMAIL_TEMPLATE_PATHS = {
   templates: `/${CRM_ROUTE}/email-templates`,
