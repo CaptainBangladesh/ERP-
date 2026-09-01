@@ -79,6 +79,37 @@ describe('CaptureSourcesPage', () => {
     });
   });
 
+  /**
+   * The URL this page hands out has to be the one the API answers on.
+   *
+   * It was not: the page wrote `/api/crm/capture/<token>` by hand while the public endpoint has
+   * always been `/api/public/capture/<token>`, so every Google Form pointed at the copied URL
+   * posted into a 404. Nothing surfaced it — the capture endpoint is fire-and-forget, so the
+   * form said "thanks" and no lead was ever created. Asserting against the contract constant is
+   * what stops the two drifting apart again.
+   */
+  it('gives a webhook source the URL the capture endpoint actually answers on', async () => {
+    signedInWith();
+    listing([source({ kind: 'webhook', name: 'Site Survey Form', config: { fieldMapping: {} } })]);
+
+    const { user } = renderPage(<CaptureSourcesPage />, { path: '/crm/capture-sources' });
+
+    await user.click(await screen.findByRole('button', { name: 'View Webhook URL' }));
+
+    const expected = CAPTURE_SOURCE_PATHS.publicSubmit('cs_1234567890abcdef1234567890abcdef');
+    const shown = await screen.findByText((_, element) =>
+      element?.tagName === 'CODE' && (element.textContent ?? '').endsWith(expected),
+    );
+    expect(shown).toBeInTheDocument();
+
+    // And the Apps Script it offers posts to that same URL, keyed by Google's stable item ids.
+    const script = screen.getByText((_, element) =>
+      element?.tagName === 'PRE' && (element.textContent ?? '').includes('onFormSubmit'),
+    );
+    expect(script.textContent).toContain(expected);
+    expect(script.textContent).toContain("'entry_' + item.getItem().getId()");
+  });
+
   it('opens modal to create a new capture source', async () => {
     signedInWith();
     listing([]);

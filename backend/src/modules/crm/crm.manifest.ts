@@ -101,6 +101,14 @@ export const manifest: ModuleManifest = {
     { label: 'Activities', path: '/crm/leads', order: 52, permission: 'crm:activities:read' },
     { label: 'Sales Dashboard', path: '/crm/dashboard', order: 53, permission: 'crm:dashboard:read' },
     { label: 'Workflow Rules', path: '/crm/workflow-rules', order: 54, permission: 'crm:workflow-rules:read' },
+    /**
+     * Where a company builds the forms its leads answer — its own web forms, and the webhook a
+     * Google Form posts to. The page and its route existed with no way to reach either: a
+     * screen nobody can navigate to is a screen that does not ship, and the Survey tab on a
+     * lead had nowhere to send somebody asking where submissions come from.
+     */
+    { label: 'Forms', path: '/crm/capture-sources', order: 55, permission: 'crm:capture-sources:read' },
+    { label: 'Campaigns', path: '/crm/campaigns', order: 56, permission: 'crm:campaigns:read' },
   ],
 
   events: {

@@ -10,6 +10,39 @@ import { FormError } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 import { CaptureSourceModal } from '../components/CaptureSourceModal';
 
+/**
+ * The Apps Script that carries a Google Form's answers to a capture source.
+ *
+ * Google offers no webhook of its own, so this is the supported path: a trigger on the form
+ * posts each response to the token URL. It sends every answer keyed by the question's **item
+ * ID** — a stable number Google assigns once — rather than by its title, because a title is
+ * free text somebody will eventually reword, and two questions may share one.
+ */
+function googleFormsScript(submitUrl: string): string {
+  return [
+    'function onFormSubmit(e) {',
+    "  var payload = {};",
+    '  e.response.getItemResponses().forEach(function (item) {',
+    "    payload['entry_' + item.getItem().getId()] = item.getResponse();",
+    '  });',
+    '',
+    `  UrlFetchApp.fetch('${submitUrl}', {`,
+    "    method: 'post',",
+    "    contentType: 'application/json',",
+    '    payload: JSON.stringify(payload),',
+    '    muteHttpExceptions: true,',
+    '  });',
+    '}',
+    '',
+    '// Run once to see each question\'s item ID, then map those IDs on the capture source.',
+    'function listItemIds() {',
+    '  FormApp.getActiveForm().getItems().forEach(function (item) {',
+    "    Logger.log('entry_' + item.getId() + '  ' + item.getTitle());",
+    '  });',
+    '}',
+  ].join('\n');
+}
+
 export function CaptureSourcesPage() {
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -40,13 +73,25 @@ export function CaptureSourcesPage() {
     },
   });
 
+  /**
+   * The URL a source is actually reachable at.
+   *
+   * Taken from the contract rather than written out here, which is the whole point: this page
+   * used to hand out `/api/crm/capture/<token>` for a webhook, and no such endpoint has ever
+   * existed — the public one is `/api/public/capture/<token>`. Every Google Form pointed at the
+   * copied URL posted into a 404, and because the capture endpoint is fire-and-forget by design
+   * nothing on either side ever said so.
+   */
+  function submitUrlFor(source: CaptureSourceSummary): string {
+    return `${window.location.origin}${CAPTURE_SOURCE_PATHS.publicSubmit(source.token ?? '')}`;
+  }
+
   function getEmbedSnippet(source: CaptureSourceSummary): string {
     if (source.kind === 'form') {
       const publicFormUrl = `${window.location.origin}/public/crm/form/${source.token}`;
       return `<iframe src="${publicFormUrl}" width="100%" height="600" frameborder="0"></iframe>`;
     }
-    const publicSubmitUrl = `${window.location.origin}/api/crm/capture/${source.token}`;
-    return `curl -X POST "${publicSubmitUrl}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"full_name": "John Doe", "contact_email": "john@example.com"}'`;
+    return googleFormsScript(submitUrlFor(source));
   }
 
   function handleCopySnippet(snippet: string, token: string) {
@@ -235,10 +280,27 @@ export function CaptureSourcesPage() {
               </button>
             </div>
 
-            <div className="text-xs text-slate-600">
-              {embedSource.kind === 'form'
-                ? 'Copy and paste this HTML iframe snippet into your website or landing page HTML code:'
-                : 'Send HTTP POST requests with JSON payload to this public webhook endpoint:'}
+            <div className="flex flex-col gap-2 text-xs text-slate-600">
+              {embedSource.kind === 'form' ? (
+                <p>Copy and paste this HTML iframe snippet into your website or landing page HTML code:</p>
+              ) : (
+                <>
+                  <p>
+                    Post JSON to this URL. Anything that can make an HTTP request can use it —
+                    Zapier, Make, your own site:
+                  </p>
+                  <code className="block break-all rounded border border-slate-200 bg-slate-50 p-2 font-mono text-[11px] text-slate-800">
+                    {submitUrlFor(embedSource)}
+                  </code>
+                  <p className="pt-1">
+                    <strong className="font-bold text-slate-800">For a Google Form:</strong> open
+                    the form, choose <em>Extensions → Apps Script</em>, paste the script below,
+                    then add a trigger for <code className="font-mono">onFormSubmit</code> on form
+                    submit. Map each question by its item ID on this source, not by its title —
+                    titles get edited and can repeat.
+                  </p>
+                </>
+              )}
             </div>
 
             <pre className="rounded border border-slate-300 bg-slate-900 p-4 text-xs font-mono text-emerald-400 whitespace-pre-wrap overflow-x-auto">

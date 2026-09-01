@@ -12,6 +12,7 @@ import {
   type LeadSubmissionSummary,
 } from '@erp/shared';
 import { ApiFailure, api } from '../../../api/client';
+import { navigate } from '../../../app/location';
 import { LEAD_VOCABULARY_KEY } from '../vocabulary';
 
 /**
@@ -62,9 +63,20 @@ export function LeadSurveyTab({ lead, customFieldDefinitions, canWrite }: LeadSu
         )}
 
         {!submissions.isPending && !submissions.error && items.length === 0 && (
-          <p className="py-8 text-center text-xs text-slate-500">
-            This lead has not answered a form yet. Submissions to your capture forms land here.
-          </p>
+          <div className="flex flex-col items-center gap-2 py-8 text-center">
+            <p className="text-xs text-slate-500">
+              This lead has not answered a form yet. Submissions to your capture forms land here.
+            </p>
+            {/* The tab is a record, not a builder — so it says where the forms themselves live,
+                rather than leaving somebody looking for a button that is on another screen. */}
+            <button
+              type="button"
+              onClick={() => navigate('/crm/capture-sources')}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 transition hover:bg-slate-50"
+            >
+              Set up a form or Google Form
+            </button>
+          </div>
         )}
 
         <ul className="flex flex-col gap-2.5">
