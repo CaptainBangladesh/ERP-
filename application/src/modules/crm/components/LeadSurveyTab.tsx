@@ -14,6 +14,7 @@ import {
 import { ApiFailure, api } from '../../../api/client';
 import { navigate } from '../../../app/location';
 import { LEAD_VOCABULARY_KEY } from '../vocabulary';
+import { answerLabel, fieldKeyFor, formatAnswer, humanise } from '../survey-answers';
 
 /**
  * The Survey tab: every capture-form submission this lead has sent, in full.
@@ -125,7 +126,7 @@ function SubmissionCard({
       if (!known) {
         await api.post<LeadFieldResponse>(LEAD_FIELD_PATHS.leadFields, {
           key: fieldKey,
-          label: labelFor(key),
+          label: humanise(key),
           type: 'text',
         } satisfies CreateLeadFieldRequest);
       }
@@ -179,16 +180,12 @@ function SubmissionCard({
              * A webhook source maps `entry_104` onto `budget`, so asking whether `entry_104`
              * is a known field name would call every Google Form answer unmapped.
              */
-            const mappedTo = submission.mappedFields[key];
-            const isMapped = Boolean(mappedTo);
-            const definition = customFieldDefinitions.find(
-              (field) => field.key === (mappedTo ?? key),
-            );
+            const isMapped = Boolean(submission.mappedFields[key]);
             return (
               <div key={key} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-white p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-bold text-slate-900">
-                    {definition?.label ?? labelFor(mappedTo ?? key)}
+                    {answerLabel(key, submission, customFieldDefinitions)}
                   </span>
                   <span
                     className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${
@@ -201,7 +198,9 @@ function SubmissionCard({
                   </span>
                 </div>
 
-                <p className="break-words text-xs text-slate-700">{renderAnswer(value)}</p>
+                <p className="break-words text-xs text-slate-700">
+                  {formatAnswer(value) || <span className="italic text-slate-400">No answer given</span>}
+                </p>
 
                 {!isMapped && canWrite && (
                   <div className="pt-1">
@@ -228,29 +227,4 @@ function SubmissionCard({
       )}
     </li>
   );
-}
-
-/**
- * A field key for an answer the form named itself.
- *
- * Google's `entry_104` says nothing to anyone reading a lead later, so it is not what the field
- * is called; the readable label is derived the same way and the two stay in step.
- */
-function fieldKeyFor(answerKey: string): string {
-  return labelFor(answerKey).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-}
-
-/** A form's own key, made readable, for an answer no field has named yet. */
-function labelFor(key: string): string {
-  return key
-    .replace(/[_-]+/g, ' ')
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function renderAnswer(value: unknown): string {
-  if (value === undefined || value === null || value === '') return '— no answer —';
-  if (Array.isArray(value)) return value.map(String).join(', ');
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return String(value);
 }

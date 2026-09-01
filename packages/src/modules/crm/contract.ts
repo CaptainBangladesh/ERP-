@@ -456,7 +456,112 @@ export const ACTIVITY_PATHS = {
   partyActivities: (id: string) => `/${CRM_ROUTE}/parties/${id}/activities`,
   completeTask: (id: string) => `/${CRM_ROUTE}/activities/${id}/complete`,
   reopenTask: (id: string) => `/${CRM_ROUTE}/activities/${id}/reopen`,
+  /**
+   * Push a task's due date out rather than finish it.
+   *
+   * The Next-step rail offers one action and one deferral, because a rail that can only say
+   * "done" makes somebody lie to it to clear the prompt. Snoozing moves `dueAt`; it never
+   * completes the task and never deletes it.
+   */
+  snoozeTask: (id: string) => `/${CRM_ROUTE}/activities/${id}/snooze`,
 } as const;
+
+/**
+ * The wire format of a system **Audit event**, owned by both ends at once.
+ *
+ * The glossary keeps two things apart that share one table and one feed: an **Activity** is
+ * person-authored, an **Audit event** is system-recorded. What actually tells them apart on the
+ * wire is the leading emoji on `notes` — so the backend writes these strings and the frontend
+ * reads them back, which makes the format a contract rather than a convention. It lives here
+ * for the same reason every request shape does: two copies of a format is one copy that will be
+ * wrong, and the failure is silent — a renamed prefix simply stops matching and the feed quietly
+ * renders a status change as somebody's note.
+ *
+ * `describeAudit` is the parser paired with the builders. It exists so the feed can render an
+ * email open as a card with its own count and caveat rather than as a line of raw text; when it
+ * cannot recognise a note, it says so and the caller falls back to showing the text as written.
+ */
+export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
+
+export const SYSTEM_ACTOR_NAME = 'System';
+
+export const auditNotes = {
+  statusChanged: (from: string, to: string) => `⚙️ Status updated from "${from}" to "${to}"`,
+
+  leadAssigned: () => '👤 Lead assigned to representative',
+
+  fileAttached: (filename: string) => `📎 Attached file: ${filename}`,
+
+  surveyReceived: (formName: string) => `📝 Survey response received: ${formName}`,
+
+  /**
+   * An email open, always as likelihood.
+   *
+   * "Probably seen" is not politeness. A tracking pixel is a fetched image: image-blocking hides
+   * a real read and Apple Mail Privacy Protection's pre-fetch invents one that never happened,
+   * so the only honest thing the feed can say is that it looks to have been opened. The count is
+   * carried for the same reason — three fetches are weak evidence of three readings, but they
+   * are something a salesperson can weigh, which a bare "opened" is not.
+   */
+  emailOpened: (subject: string, openCount: number) =>
+    `📬 Email opened${openCount > 1 ? ` ${openCount} times` : ''} (probably seen): ${subject}`,
+} as const;
+
+/** The emoji a system Audit event's notes begin with. Tolerant of a trailing variation selector. */
+export const SYSTEM_AUDIT_PREFIX = /^(⚙️|⚙|📎|👤|🚀|📥|📝|📬)/u;
+
+export function isSystemAudit(notes: string): boolean {
+  return SYSTEM_AUDIT_PREFIX.test(notes);
+}
+
+export type AuditEvent =
+  | { kind: 'status-changed'; from: string; to: string }
+  | { kind: 'lead-assigned' }
+  | { kind: 'file-attached'; filename: string }
+  | { kind: 'survey-received'; formName: string }
+  | { kind: 'email-opened'; subject: string; openCount: number }
+  /** Recognisably an audit event, but not one this version knows how to take apart. */
+  | { kind: 'other'; text: string };
+
+/** Takes an audit note back apart, or `undefined` if it was a person who wrote it. */
+export function describeAudit(notes: string): AuditEvent | undefined {
+  if (!isSystemAudit(notes)) return undefined;
+
+  const status = /^(?:⚙️|⚙)\s*Status updated from "(.*)" to "(.*)"$/u.exec(notes);
+  if (status) return { kind: 'status-changed', from: status[1]!, to: status[2]! };
+
+  if (/^👤/u.test(notes)) return { kind: 'lead-assigned' };
+
+  const file = /^📎\s*Attached file:\s*(.+)$/u.exec(notes);
+  if (file) return { kind: 'file-attached', filename: file[1]! };
+
+  const survey = /^📝\s*Survey response received:\s*(.+)$/u.exec(notes);
+  if (survey) return { kind: 'survey-received', formName: survey[1]! };
+
+  const opened = /^📬\s*Email opened(?:\s+(\d+)\s+times)?\s*\(probably seen\):\s*(.+)$/u.exec(notes);
+  if (opened) {
+    return {
+      kind: 'email-opened',
+      subject: opened[2]!,
+      openCount: opened[1] ? Number(opened[1]) : 1,
+    };
+  }
+
+  return { kind: 'other', text: notes.replace(SYSTEM_AUDIT_PREFIX, '').trim() };
+}
+
+/**
+ * A sent email, taken back apart for the feed.
+ *
+ * Correspondence is person-authored, so it carries no audit emoji; what marks it is the shape
+ * `LeadOutreachService` writes — a subject line, then the start of the body. Returns `undefined`
+ * for an email activity somebody typed by hand, which is then shown as written.
+ */
+export function describeSentEmail(notes: string): { subject: string; preview: string } | undefined {
+  const match = /^Email sent:\s*(.+?)(?:\n\n([\s\S]*))?$/u.exec(notes);
+  if (!match) return undefined;
+  return { subject: match[1]!.trim(), preview: (match[2] ?? '').trim() };
+}
 
 export const ACTIVITY_FIELDS = {
   type: 'type',

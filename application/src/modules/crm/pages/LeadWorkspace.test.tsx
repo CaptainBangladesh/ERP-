@@ -247,23 +247,24 @@ describe('LeadWorkspace', () => {
     it('interleaves person activities and system audit events, and filters between them', async () => {
       withActivities([
         activity({ id: 'a1', type: 'call', notes: 'Called and left a voicemail' }),
-        activity({ id: 'a2', type: 'note', notes: '📝 Survey response received' }),
+        activity({ id: 'a2', type: 'note', notes: '📝 Survey response received: Site Survey Form' }),
         activity({ id: 'a3', type: 'email', notes: 'Sent the intro email' }),
       ]);
 
       const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
 
       expect(await screen.findByText('Called and left a voicemail')).toBeInTheDocument();
-      expect(screen.getByText('📝 Survey response received')).toBeInTheDocument();
+      // The audit event is rendered as what it means, not as the emoji-tagged wire format.
+      expect(screen.getByText('Answered Site Survey Form')).toBeInTheDocument();
       expect(screen.getByText('Sent the intro email')).toBeInTheDocument();
 
       await user.click(screen.getByRole('tab', { name: 'System' }));
-      expect(screen.getByText('📝 Survey response received')).toBeInTheDocument();
+      expect(screen.getByText('Answered Site Survey Form')).toBeInTheDocument();
       expect(screen.queryByText('Called and left a voicemail')).not.toBeInTheDocument();
 
       await user.click(screen.getByRole('tab', { name: 'Notes' }));
       expect(screen.getByText('Called and left a voicemail')).toBeInTheDocument();
-      expect(screen.queryByText('📝 Survey response received')).not.toBeInTheDocument();
+      expect(screen.queryByText('Answered Site Survey Form')).not.toBeInTheDocument();
       expect(screen.queryByText('Sent the intro email')).not.toBeInTheDocument();
     });
 
@@ -282,7 +283,7 @@ describe('LeadWorkspace', () => {
         await screen.findByRole('textbox', { name: 'Activity notes' }),
         'Left a message with reception',
       );
-      await user.click(screen.getByRole('button', { name: 'Log activity' }));
+      await user.click(screen.getByRole('button', { name: 'Save' }));
 
       await waitFor(() =>
         expect(sent).toEqual({ type: 'note', notes: 'Left a message with reception', leadId: 'id-priya-kapoor' }),
@@ -524,7 +525,7 @@ describe('LeadWorkspace', () => {
     });
   });
 
-  it('shows an email open in the feed as likelihood, with its count', async () => {
+  it('shows an email open as a likelihood, naming the lead and counting the opens', async () => {
     server.use(
       http.get(ACTIVITY_PATHS.leadActivities('id-priya-kapoor'), () =>
         HttpResponse.json({
@@ -541,11 +542,180 @@ describe('LeadWorkspace', () => {
 
     renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
 
+    // The wire format is taken apart and rendered as what it means — who, which email, how many
+    // times — rather than printed with its emoji still on the front.
+    expect(
+      await screen.findByText('Priya Kapoor likely opened “Your roof quote”'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('3×')).toBeInTheDocument();
     // Never "read" or "confirmed": the pixel is defeated by image-blocking and inflated by
     // Apple Mail Privacy Protection's pre-fetch.
-    expect(
-      await screen.findByText('📬 Email opened 3 times (probably seen): Your roof quote'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Probably seen')).toBeInTheDocument();
+    expect(screen.getByText(/soft signal, not proof/)).toBeInTheDocument();
+  });
+
+  it('renders a sent email as its subject and a preview of what was said', async () => {
+    server.use(
+      http.get(ACTIVITY_PATHS.leadActivities('id-priya-kapoor'), () =>
+        HttpResponse.json({
+          items: [
+            activity({
+              id: 'a-sent',
+              type: 'email',
+              notes: 'Email sent: Your detailing quote\n\nHi Priya, great speaking with you.',
+            }),
+          ],
+        }),
+      ),
+    );
+
+    renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+    expect(await screen.findByText('Sent “Your detailing quote”')).toBeInTheDocument();
+    expect(screen.getByText('Hi Priya, great speaking with you.')).toBeInTheDocument();
+  });
+
+  describe('the redesigned shell', () => {
+    it('counts what each find-it tab holds, so the number is not a trip', async () => {
+      server.use(
+        http.get(ACTIVITY_PATHS.leadActivities('id-priya-kapoor'), () =>
+          HttpResponse.json({ items: [activity({ id: 'a1' }), activity({ id: 'a2' })] }),
+        ),
+        http.get(LEAD_PATHS.files('id-priya-kapoor'), () =>
+          HttpResponse.json(
+            listed([
+              {
+                id: 'file-1',
+                leadId: 'id-priya-kapoor',
+                filename: 'quote.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 1024,
+                uploadedBy: 'Ada Okafor',
+                createdAt: '2026-08-30T09:00:00.000Z',
+              },
+            ]),
+          ),
+        ),
+      );
+
+      renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const tabs = within(await screen.findByRole('navigation', { name: 'Lead sections' }));
+      // The count sits beside the label without becoming part of the tab's name, which would
+      // otherwise rename the tab every time a file is added.
+      await waitFor(() =>
+        expect(tabs.getByRole('button', { name: 'Activity' })).toHaveTextContent('2'),
+      );
+      expect(tabs.getByRole('button', { name: 'Files' })).toHaveTextContent('1');
+    });
+
+    it('shows the lead’s own contact details as things you can act on', async () => {
+      renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const workspace = within(await screen.findByRole('region', { name: 'Priya Kapoor' }));
+      expect(workspace.getByRole('link', { name: /priya@kapoor.example/ })).toHaveAttribute(
+        'href',
+        'mailto:priya@kapoor.example',
+      );
+      expect(workspace.getByRole('link', { name: /01711000000/ })).toHaveAttribute(
+        'href',
+        'tel:01711000000',
+      );
+    });
+
+    it('groups the worklist by the source that brought each lead in', async () => {
+      server.use(
+        http.get(LEAD_PATHS.leads, () =>
+          HttpResponse.json(
+            page([
+              priya(),
+              lead('Imran Ali', { sourceName: 'Referral' }),
+              lead('Shaan Auto', { sourceName: 'Referral' }),
+            ]),
+          ),
+        ),
+      );
+
+      renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const worklist = within(await screen.findByRole('complementary', { name: 'Worklist' }));
+      // Each source names itself and says how many it brought — four Facebook Ads leads are
+      // one batch to work, which a flat list of every lead in the company hides.
+      expect(worklist.getByText('Referral · 3')).toBeInTheDocument();
+    });
+
+    it('narrows the worklist to one tile when it is clicked, and back again', async () => {
+      server.use(
+        http.get(LEAD_PATHS.leads, () =>
+          HttpResponse.json(
+            page([priya(), lead('Imran Ali', { customValues: { priority: 'cold' } })]),
+          ),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const worklist = within(await screen.findByRole('complementary', { name: 'Worklist' }));
+      const hot = worklist.getByRole('button', { name: 'Show hot' });
+
+      await user.click(hot);
+      expect(worklist.queryByText('Imran Ali')).not.toBeInTheDocument();
+      expect(worklist.getByText('Priya Kapoor')).toBeInTheDocument();
+
+      await user.click(hot);
+      expect(worklist.getByText('Imran Ali')).toBeInTheDocument();
+    });
+
+    it('puts the lead’s survey answers in the rail, beside the next action', async () => {
+      server.use(
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
+          HttpResponse.json(
+            listed([
+              {
+                id: 'sub-1',
+                leadId: 'id-priya-kapoor',
+                captureSourceId: 'cs-1',
+                formName: 'Site Survey Form',
+                rawPayload: { entry_104: '৳50,000', entry_105: '12 vehicles', entry_101: 'Priya Kapoor' },
+                mappedFields: { entry_104: 'budget', entry_101: 'name' },
+                submittedAt: '2026-08-30T09:00:00.000Z',
+              },
+            ]),
+          ),
+        ),
+      );
+
+      renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const rail = within(await screen.findByRole('complementary', { name: 'Next step' }));
+      // The answers that say what this lead actually wants — not the name and email already
+      // in the header two inches away.
+      expect(await rail.findByText('৳50,000')).toBeInTheDocument();
+      expect(rail.getByText('12 vehicles')).toBeInTheDocument();
+      expect(rail.queryByText('Priya Kapoor')).not.toBeInTheDocument();
+    });
+
+    it('offers Snooze beside Mark done, so a task need not be finished to be cleared', async () => {
+      let snoozed: unknown;
+      server.use(
+        http.get(ACTIVITY_PATHS.leadActivities('id-priya-kapoor'), () =>
+          HttpResponse.json({
+            items: [activity({ id: 't1', type: 'task', notes: 'Follow up on the quote' })],
+          }),
+        ),
+        http.post(ACTIVITY_PATHS.snoozeTask('t1'), async ({ request }) => {
+          snoozed = await request.json();
+          return HttpResponse.json(activity({ id: 't1', type: 'task', notes: 'Follow up on the quote' }));
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const rail = within(await screen.findByRole('complementary', { name: 'Next step' }));
+      await user.click(await rail.findByRole('button', { name: 'Snooze' }));
+
+      await waitFor(() => expect(snoozed).toEqual({ days: 1 }));
+    });
   });
 
   it('returns the same not-found for a lead in another company as for one that does not exist', async () => {

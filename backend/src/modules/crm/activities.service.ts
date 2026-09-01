@@ -101,6 +101,30 @@ export class ActivitiesService {
     return describe(updated);
   }
 
+  /**
+   * Moves a task's due date forward, from whichever is later: when it was due, or now.
+   *
+   * Taking the later of the two is what stops a task that went overdue three weeks ago from
+   * snoozing to a date still in the past — one click would have to be twenty-two, and the rail
+   * would keep showing it as due. A task with no due date acquires one.
+   */
+  async snoozeTask(id: string, days: number): Promise<ActivityResponse> {
+    const activity = await this.prisma.activity.findFirst({ where: { id } });
+    if (!activity) throw activityNotFound();
+    if (activity.type !== 'task') throw activityNotTask();
+
+    const now = new Date();
+    const from = activity.dueAt && activity.dueAt > now ? activity.dueAt : now;
+    const dueAt = new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
+
+    const updated = await this.prisma.activity.update({
+      where: { id },
+      data: { dueAt },
+    });
+
+    return describe(updated);
+  }
+
   async reopenTask(id: string): Promise<ActivityResponse> {
     const activity = await this.prisma.activity.findFirst({ where: { id } });
     if (!activity) throw activityNotFound();

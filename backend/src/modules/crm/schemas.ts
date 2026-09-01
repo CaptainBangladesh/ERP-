@@ -787,6 +787,17 @@ export const UpdateCampaignBody = validator({
   if (!changed) report('name', 'Change something — this request changes nothing.');
 });
 
+/**
+ * How far to push a task out. Optional, and clamped rather than refused: the rail's Snooze is
+ * one click with no field behind it, so an absent or silly number means "tomorrow" instead of
+ * an error the button has nowhere to show.
+ */
+export const SnoozeTaskBody = validator({
+  days: optional(
+    rule('Days', (v) => (typeof v === 'number' && v > 0 && v <= 90 ? accepted(v) : accepted(1))),
+  ),
+});
+
 export const SendCampaignBatchBody = validator({
   batchSize: optional(rule('Batch size', (v) => (typeof v === 'number' && v > 0 && v <= 100 ? accepted(v) : accepted(10)))),
 });

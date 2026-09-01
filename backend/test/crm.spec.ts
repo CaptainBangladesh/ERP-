@@ -472,6 +472,66 @@ describe('crm', () => {
 
       expect((reopened.body as ActivityResponse).completedAt).toBeNull();
     });
+
+    /**
+     * Snoozing defers a task; it never finishes one.
+     *
+     * The Next-step rail offers it beside Mark done because a rail that can only say "done"
+     * makes somebody lie to it to clear the prompt — and a task marked done to get rid of it is
+     * a task nobody will ever do.
+     */
+    it('pushes a task’s due date out without completing it', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      // A date, not a timestamp: `dueAt` is a `day` field, as the composer's date input sends.
+      const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const created = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({
+          type: 'task',
+          notes: 'Follow up on the quote',
+          dueAt: tomorrow,
+          leadId: lead.id,
+        } satisfies CreateActivityRequest)
+        .expect(201);
+
+      const before = created.body as ActivityResponse;
+      expect(before.dueAt).not.toBeNull();
+
+      const snoozed = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.snoozeTask(before.id)))
+        .send({ days: 2 })
+        .expect(200);
+
+      const task = snoozed.body as ActivityResponse;
+      expect(task.completedAt).toBeNull();
+      // Two days on from when it was already due, not from now — snoozing a task that is due
+      // tomorrow should not quietly bring it forward.
+      const moved = new Date(task.dueAt!).getTime() - new Date(before.dueAt!).getTime();
+      expect(Math.round(moved / (24 * 60 * 60 * 1000))).toBe(2);
+
+      const refused = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.snoozeTask('00000000-0000-0000-0000-000000000009')))
+        .send({ days: 1 })
+        .expect(404);
+      expect(refused.body.code).toBeDefined();
+    });
+
+    it('refuses to snooze something that is not a task', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      const note = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'note', notes: 'Just a note', leadId: lead.id } satisfies CreateActivityRequest)
+        .expect(201);
+
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.snoozeTask((note.body as ActivityResponse).id)))
+        .send({ days: 1 })
+        .expect(409);
+    });
   });
 
   describe('statuses', () => {

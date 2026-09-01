@@ -4,7 +4,7 @@ import { CurrentSession, type RequestSession } from '../../platform/auth';
 import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { ActivitiesService } from './activities.service';
-import { CreateActivityBody } from './schemas';
+import { CreateActivityBody, SnoozeTaskBody } from './schemas';
 
 @Controller(CRM_ROUTE)
 export class ActivitiesController {
@@ -45,6 +45,16 @@ export class ActivitiesController {
   @RequirePermission('crm:activities:write')
   async completeTask(@Param('id') id: string): Promise<ActivityResponse> {
     return this.activitiesService.completeTask(id);
+  }
+
+  @Post('activities/:id/snooze')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('crm:activities:write')
+  async snoozeTask(
+    @Param('id') id: string,
+    @Body(validated(SnoozeTaskBody)) body: Valid<typeof SnoozeTaskBody>,
+  ): Promise<ActivityResponse> {
+    return this.activitiesService.snoozeTask(id, body.days ?? 1);
   }
 
   @Post('activities/:id/reopen')

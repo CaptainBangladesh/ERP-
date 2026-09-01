@@ -4,14 +4,17 @@ import {
   ACTIVITY_PATHS,
   IDENTITY_PATHS,
   LEAD_PATHS,
+  LEAD_SUBMISSION_PATHS,
   listPath,
   type ActivityListResponse,
   type ActivityResponse,
   type ActivityType,
+  type LeadAttachmentListResponse,
   type LeadCustomValues,
   type LeadFieldSummary,
   type LeadListResponse,
   type LeadResponse,
+  type LeadSubmissionListResponse,
   type LeadSummary,
   type UserListResponse,
   type UserSummary,
@@ -27,6 +30,25 @@ import { ConvertLeadModal } from '../components/ConvertLeadModal';
 import { MailboxesModal } from '../components/MailboxesModal';
 import { SendEmailModal } from '../components/SendEmailModal';
 import { useLeadFields, useLeadSources, useLeadStatusLabels, type StatusLabel } from '../vocabulary';
+import { avatarColour, initialsOf, topSurveyAnswers } from '../survey-answers';
+import {
+  ActivityIcon,
+  BoltIcon,
+  CalendarIcon,
+  CheckIcon,
+  ChecklistIcon,
+  ChevronLeftIcon,
+  FileIcon,
+  InfoIcon,
+  LinkIcon,
+  ListIcon,
+  MailIcon,
+  PaperclipIcon,
+  PencilIcon,
+  PhoneIcon,
+  SearchIcon,
+  StarIcon,
+} from '../icons';
 
 /**
  * The Lead Workspace: one full page to work a single lead, at its own route.
@@ -46,6 +68,8 @@ export function leadWorkspacePath(id: string): string {
   return `/crm/leads/${id}`;
 }
 
+type WorkspaceTab = 'activity' | 'files' | 'survey' | 'details';
+
 function useLeadIdFromPath(): string {
   const path = useLocationPath();
   const match = /^\/crm\/leads\/([^/]+)$/.exec(path);
@@ -57,13 +81,14 @@ export function LeadWorkspace() {
   const { session } = useSession();
   const canWrite = hasPermission(session, 'crm:leads:write');
   const canReadUsers = hasPermission(session, 'identity:users:read');
+  const canReadActivities = hasPermission(session, 'crm:activities:read');
   const queryClient = useQueryClient();
 
   /**
    * Activity is the centre of the workspace; the other three are thin find-it tabs beside it,
    * for retrieving one artifact without scrolling the whole history.
    */
-  const [tab, setTab] = useState<'activity' | 'files' | 'survey' | 'details'>('activity');
+  const [tab, setTab] = useState<WorkspaceTab>('activity');
   const [worklistOpen, setWorklistOpen] = useState(true);
   const [converting, setConverting] = useState(false);
   const [sendEmailOpen, setSendEmailOpen] = useState(false);
@@ -90,6 +115,31 @@ export function LeadWorkspace() {
     queryKey: ['identity', 'users', 'all'],
     queryFn: () => api.get<UserListResponse>(listPath(IDENTITY_PATHS.users, { pageSize: 200 })),
     enabled: canReadUsers,
+  });
+
+  /**
+   * The three counts on the tabs, read here rather than inside each pane.
+   *
+   * A find-it tab whose number you can only learn by opening it is not much of a find-it tab —
+   * the point of "Files 2" is to save the trip. React Query serves each pane from these same
+   * keys, so asking here costs no extra request.
+   */
+  const activities = useQuery({
+    queryKey: ['crm', 'activities', 'lead', leadId],
+    queryFn: () => api.get<ActivityListResponse>(ACTIVITY_PATHS.leadActivities(leadId)),
+    enabled: canReadActivities && Boolean(leadId),
+  });
+
+  const files = useQuery({
+    queryKey: ['crm', 'leads', 'files', leadId],
+    queryFn: () => api.get<LeadAttachmentListResponse>(LEAD_PATHS.files(leadId)),
+    enabled: Boolean(leadId),
+  });
+
+  const submissions = useQuery({
+    queryKey: ['crm', 'leads', 'submissions', leadId],
+    queryFn: () => api.get<LeadSubmissionListResponse>(LEAD_SUBMISSION_PATHS.byLead(leadId)),
+    enabled: Boolean(leadId),
   });
 
   const change = useMutation({
@@ -137,49 +187,81 @@ export function LeadWorkspace() {
   }
 
   const owner = users.data?.items.find((user) => user.id === detail.assignedToUserId);
+  const status = statusLabels.of(detail.status);
 
   return (
-    <section
-      aria-label={detail.name}
-      className="flex min-h-[calc(100vh-8rem)] gap-4"
-    >
+    <section aria-label={detail.name} className="flex min-h-[calc(100vh-8rem)] gap-4">
       <Worklist
         open={worklistOpen}
         onToggle={() => setWorklistOpen((open) => !open)}
         leads={worklist.data?.items ?? []}
         activeId={leadId}
         statusOf={statusLabels.of}
+        currentUserId={session?.user.id}
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-4">
-        <header className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">{detail.name}</h1>
-              <PriorityBadge value={priorityOf(detail.customValues)} />
-              {detail.organisationName && (
-                <span className="text-sm font-medium text-slate-500">{detail.organisationName}</span>
-              )}
+        <header className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <Avatar name={detail.name} size="lg" />
+
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-xl font-bold tracking-tight text-slate-900">{detail.name}</h1>
+                  <StatusPill label={status} />
+                  <PriorityBadge value={priorityOf(detail.customValues)} />
+                </div>
+
+                <ContactRow detail={detail} />
+              </div>
             </div>
 
             {canWrite && (
               <div className="flex items-center gap-1.5">
-                <QuickAction label="Send email" glyph="✉️" onClick={() => setSendEmailOpen(true)} />
-                <QuickAction label="Log a call" glyph="📞" onClick={() => openComposer('call')} />
-                <QuickAction label="Log a note" glyph="📝" onClick={() => openComposer('note')} />
-                <QuickAction label="Log a task" glyph="✅" onClick={() => openComposer('task')} />
-                <QuickAction label="Attach a file" glyph="📎" onClick={() => setTab('files')} />
+                {/* Email is the primary action and is filled to say so; the rest are the
+                    same button at rest, so the row reads as one set rather than five. */}
+                <QuickAction label="Send email" primary onClick={() => setSendEmailOpen(true)}>
+                  <MailIcon size={17} />
+                </QuickAction>
+                <QuickAction label="Log a call" onClick={() => openComposer('call')}>
+                  <PhoneIcon size={17} />
+                </QuickAction>
+                <QuickAction label="Log a note" onClick={() => openComposer('note')}>
+                  <PencilIcon size={17} />
+                </QuickAction>
+                <QuickAction label="Log a meeting" onClick={() => openComposer('meeting')}>
+                  <CalendarIcon size={17} />
+                </QuickAction>
+                <QuickAction label="Attach a file" onClick={() => setTab('files')}>
+                  <PaperclipIcon size={17} />
+                </QuickAction>
               </div>
             )}
           </div>
+
+          <nav aria-label="Lead sections" className="flex items-center gap-1 border-b border-slate-200">
+            <TabButton active={tab === 'activity'} onClick={() => setTab('activity')} label="Activity" count={activities.data?.items.length}>
+              <ActivityIcon size={15} />
+            </TabButton>
+            <TabButton active={tab === 'files'} onClick={() => setTab('files')} label="Files" count={files.data?.items.length}>
+              <FileIcon size={15} />
+            </TabButton>
+            <TabButton active={tab === 'survey'} onClick={() => setTab('survey')} label="Survey" count={submissions.data?.items.length}>
+              <ChecklistIcon size={15} />
+            </TabButton>
+            <TabButton active={tab === 'details'} onClick={() => setTab('details')} label="Details">
+              <InfoIcon size={15} />
+            </TabButton>
+          </nav>
 
           <StatusStepper
             status={detail.status}
             settable={statusLabels.settable}
             canWrite={canWrite}
             pending={change.isPending}
-            onSet={(status) =>
-              change.mutate(() => api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), { status }))
+            onSet={(next) =>
+              change.mutate(() => api.patch<LeadResponse>(LEAD_PATHS.lead(leadId), { status: next }))
             }
             onQualify={() => setConverting(true)}
             onDisqualify={() => change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.disqualify(leadId)))}
@@ -193,25 +275,11 @@ export function LeadWorkspace() {
           )}
         </header>
 
-        <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100/70 p-1 text-xs font-semibold self-start">
-          <TabButton active={tab === 'activity'} onClick={() => setTab('activity')}>
-            Activity
-          </TabButton>
-          <TabButton active={tab === 'files'} onClick={() => setTab('files')}>
-            Files
-          </TabButton>
-          <TabButton active={tab === 'survey'} onClick={() => setTab('survey')}>
-            Survey
-          </TabButton>
-          <TabButton active={tab === 'details'} onClick={() => setTab('details')}>
-            Details
-          </TabButton>
-        </div>
-
         <div className="min-h-0 flex-1">
           {tab === 'activity' && (
             <LeadActivityFeed
               leadId={leadId}
+              leadName={detail.name}
               composerType={composerType}
               onComposerTypeChange={setComposerType}
               composerFocusSignal={composerFocusSignal}
@@ -240,10 +308,14 @@ export function LeadWorkspace() {
         leadId={leadId}
         detail={detail}
         sourceLabel={sourceLabelOf(detail, sources)}
+        owner={owner}
         canWrite={canWrite}
         pending={change.isPending}
+        customFields={customFields}
+        submissions={submissions.data?.items ?? []}
         onQualify={() => setConverting(true)}
         onReopen={() => change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.reopen(leadId)))}
+        onOpenSurvey={() => setTab('survey')}
       />
 
       {converting && (
@@ -279,26 +351,61 @@ export function LeadWorkspace() {
 
 // ─── worklist ─────────────────────────────────────────────────────────────────────────
 
+/** The tiles across the top of the worklist. Each is also a filter — see `Worklist`. */
+type WorklistLens = 'new' | 'hot' | 'contacted' | 'mine';
+
 function Worklist({
   open,
   onToggle,
   leads,
   activeId,
   statusOf,
+  currentUserId,
 }: {
   open: boolean;
   onToggle: () => void;
   leads: LeadSummary[];
   activeId: string;
   statusOf: (status: LeadSummary['status']) => StatusLabel;
+  currentUserId: string | undefined;
 }) {
   const [search, setSearch] = useState('');
+  const [lens, setLens] = useState<WorklistLens | undefined>();
+
+  const matchesLens = useMemo(
+    () => ({
+      new: (lead: LeadSummary) => lead.status === 'new',
+      hot: (lead: LeadSummary) => classifyPriority(priorityOf(lead.customValues) ?? '')?.label === 'Hot',
+      contacted: (lead: LeadSummary) => lead.status === 'contacted',
+      mine: (lead: LeadSummary) => Boolean(currentUserId) && lead.assignedToUserId === currentUserId,
+    }),
+    [currentUserId],
+  );
 
   const shown = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return leads;
-    return leads.filter((lead) => lead.name.toLowerCase().includes(term));
-  }, [leads, search]);
+    return leads
+      .filter((lead) => (lens ? matchesLens[lens](lead) : true))
+      .filter((lead) => (term ? lead.name.toLowerCase().includes(term) : true));
+  }, [leads, search, lens, matchesLens]);
+
+  /**
+   * Cards under the source that brought them in.
+   *
+   * Where a lead came from is the thing a salesperson groups by without being asked — four
+   * Facebook Ads leads are one batch to work, and a flat list of every lead in the company
+   * hides that. Sources are ordered by size so the busiest channel is at the top.
+   */
+  const groups = useMemo(() => {
+    const bySource = new Map<string, LeadSummary[]>();
+    for (const lead of shown) {
+      const key = lead.sourceName || lead.source || 'No source';
+      const existing = bySource.get(key);
+      if (existing) existing.push(lead);
+      else bySource.set(key, [lead]);
+    }
+    return [...bySource.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [shown]);
 
   if (!open) {
     return (
@@ -307,81 +414,192 @@ function Worklist({
           type="button"
           onClick={onToggle}
           aria-label="Expand worklist"
-          className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-bold text-slate-500 shadow-2xs hover:bg-slate-50"
+          className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-2xs transition hover:bg-slate-50 hover:text-slate-800"
         >
-          ☰
+          <ListIcon size={16} />
         </button>
       </div>
     );
   }
 
   return (
-    <aside aria-label="Worklist" className="flex w-64 shrink-0 flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xs">
+    <aside
+      aria-label="Worklist"
+      className="flex w-72 shrink-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs"
+    >
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500">Worklist</h2>
+        <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+          <span className="text-slate-400">
+            <ListIcon size={16} />
+          </span>
+          Worklist
+        </h2>
         <button
           type="button"
           onClick={onToggle}
           aria-label="Collapse worklist"
-          className="rounded p-1 text-xs font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
         >
-          ⟨
+          <ChevronLeftIcon size={15} />
         </button>
       </div>
 
-      <input
-        type="search"
-        aria-label="Search the worklist"
-        placeholder="Search by name…"
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none"
-      />
+      <div className="grid grid-cols-2 gap-2">
+        <StatTile
+          label="New leads"
+          dotClass="bg-sky-500"
+          count={leads.filter(matchesLens.new).length}
+          active={lens === 'new'}
+          onClick={() => setLens((current) => (current === 'new' ? undefined : 'new'))}
+        />
+        <StatTile
+          label="Hot"
+          dotClass="bg-rose-500"
+          count={leads.filter(matchesLens.hot).length}
+          active={lens === 'hot'}
+          onClick={() => setLens((current) => (current === 'hot' ? undefined : 'hot'))}
+        />
+        <StatTile
+          label="Contacted"
+          dotClass="bg-violet-500"
+          count={leads.filter(matchesLens.contacted).length}
+          active={lens === 'contacted'}
+          onClick={() => setLens((current) => (current === 'contacted' ? undefined : 'contacted'))}
+        />
+        <StatTile
+          label="Assigned to me"
+          dotClass="bg-teal-500"
+          count={leads.filter(matchesLens.mine).length}
+          active={lens === 'mine'}
+          onClick={() => setLens((current) => (current === 'mine' ? undefined : 'mine'))}
+        />
+      </div>
 
-      <ul className="flex flex-col gap-1.5 overflow-y-auto">
-        {shown.map((lead) => {
-          const label = statusOf(lead.status);
-          const isActive = lead.id === activeId;
-          return (
-            <li key={lead.id}>
-              <button
-                type="button"
-                aria-current={isActive ? 'page' : undefined}
-                onClick={() => navigate(leadWorkspacePath(lead.id))}
-                className={`flex w-full flex-col gap-1.5 rounded-xl border p-2.5 text-left transition ${
-                  isActive
-                    ? 'border-teal-300 bg-teal-50/70'
-                    : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <span className="truncate text-xs font-bold text-slate-900">{lead.name}</span>
-                {lead.organisationName && (
-                  <span className="truncate text-[11px] text-slate-500">{lead.organisationName}</span>
-                )}
-                <span className="flex items-center gap-1.5">
-                  <span
-                    className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white"
-                    style={{ backgroundColor: label.color }}
-                  >
-                    {label.label}
-                  </span>
-                  <PriorityBadge value={priorityOf(lead.customValues)} compact />
-                </span>
-              </button>
-            </li>
-          );
-        })}
+      <div className="relative">
+        <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">
+          <SearchIcon size={14} />
+        </span>
+        <input
+          type="search"
+          aria-label="Search the worklist"
+          placeholder="Search leads…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none"
+        />
+      </div>
+
+      <div className="flex flex-col gap-4 overflow-y-auto">
+        {groups.map(([sourceName, entries]) => (
+          <div key={sourceName} className="flex flex-col gap-1.5">
+            <h3 className="px-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              {sourceName} · {entries.length}
+            </h3>
+            <ul className="flex flex-col gap-1.5">
+              {entries.map((entry) => (
+                <li key={entry.id}>
+                  <WorklistCard lead={entry} active={entry.id === activeId} statusOf={statusOf} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
 
         {shown.length === 0 && (
-          <li className="px-1 py-3 text-center text-[11px] text-slate-400">No leads match “{search}”.</li>
+          <p className="px-1 py-4 text-center text-[11px] text-slate-400">
+            No leads match what you are looking for.
+          </p>
         )}
-      </ul>
+      </div>
     </aside>
+  );
+}
+
+/**
+ * A count that is also a filter.
+ *
+ * Named for what it does rather than by what it reads: the count sits in the visible label, and
+ * a tile whose accessible name were "6 Hot" would rename itself every time somebody's priority
+ * changed — which is no name at all for anything trying to find it again.
+ */
+function StatTile({
+  label,
+  count,
+  dotClass,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  dotClass: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={`Show ${label.toLowerCase()}`}
+      className={`flex flex-col gap-0.5 rounded-xl border p-2.5 text-left transition ${
+        active ? 'border-teal-300 bg-teal-50/70' : 'border-slate-200 bg-white hover:border-slate-300'
+      }`}
+    >
+      <span className="text-xl font-bold leading-none text-slate-900">{count}</span>
+      <span className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500">
+        <span aria-hidden="true" className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+        <span className="truncate">{label}</span>
+      </span>
+    </button>
+  );
+}
+
+function WorklistCard({
+  lead,
+  active,
+  statusOf,
+}: {
+  lead: LeadSummary;
+  active: boolean;
+  statusOf: (status: LeadSummary['status']) => StatusLabel;
+}) {
+  const label = statusOf(lead.status);
+  return (
+    <button
+      type="button"
+      aria-current={active ? 'page' : undefined}
+      onClick={() => navigate(leadWorkspacePath(lead.id))}
+      className={`flex w-full items-start gap-2.5 rounded-xl border p-2.5 text-left transition ${
+        active
+          ? 'border-teal-300 bg-teal-50/60 ring-1 ring-teal-200'
+          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+      }`}
+    >
+      <Avatar name={lead.name} />
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="truncate text-xs font-bold text-slate-900">{lead.name}</span>
+        {lead.organisationName && (
+          <span className="truncate text-[11px] text-slate-500">{lead.organisationName}</span>
+        )}
+        <span className="flex flex-wrap items-center gap-1.5">
+          <StatusPill label={label} compact />
+          <PriorityBadge value={priorityOf(lead.customValues)} compact />
+        </span>
+      </span>
+    </button>
   );
 }
 
 // ─── status stepper ───────────────────────────────────────────────────────────────────
 
+/**
+ * The one control that moves a lead along, drawn as the pipeline it is.
+ *
+ * A connected rail rather than a row of buttons, because the question a salesperson opens a lead
+ * with is "where is this one and what comes next" — an answer a set of equal-looking pills does
+ * not give. Steps behind the current one are filled and ticked, the current one is filled in its
+ * own colour, and the ones ahead are hollow.
+ */
 function StatusStepper({
   status,
   settable,
@@ -403,42 +621,54 @@ function StatusStepper({
 }) {
   const isDisqualified = status === 'disqualified';
   const isQualified = status === 'qualified';
+  const currentIndex = settable.findIndex((step) => step.status === status);
 
   return (
-    <div role="group" aria-label="Status pipeline" className="flex flex-wrap items-center gap-2">
-      <ol className="flex flex-1 flex-wrap items-center gap-2">
-        {settable.map((step) => {
+    <div role="group" aria-label="Status pipeline" className="flex flex-wrap items-center gap-x-3 gap-y-3">
+      <ol className="flex min-w-0 flex-1 items-center">
+        {settable.map((step, index) => {
           const isCurrent = step.status === status;
+          // Qualified sits past every settable step, so when a lead reaches it the whole rail
+          // reads as behind — which is what has actually happened.
+          const isBehind = isQualified || (currentIndex >= 0 && index < currentIndex);
+          const isLast = index === settable.length - 1;
+
           return (
-            <li key={step.status}>
+            <li key={step.status} className={`flex items-center ${isLast ? '' : 'min-w-0 flex-1'}`}>
               <button
                 type="button"
                 aria-current={isCurrent ? 'step' : undefined}
                 disabled={!canWrite || pending || isCurrent}
                 onClick={() => onSet(step.status)}
-                className={`flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-bold transition disabled:cursor-default ${
-                  isCurrent ? 'border-transparent text-white shadow-xs' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-                style={isCurrent ? { backgroundColor: step.color } : undefined}
+                className="group flex shrink-0 items-center gap-2 rounded-lg py-1 pr-2 text-xs font-bold transition disabled:cursor-default"
               >
-                {/* The current step fills with its colour; the others carry it as a dot, so the
-                    company's whole pipeline reads in its own colours, in order. */}
-                {!isCurrent && (
-                  <span
-                    aria-hidden="true"
-                    className="inline-block h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: step.color }}
-                  />
-                )}
-                {step.label}
+                <span
+                  aria-hidden="true"
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 text-white transition ${
+                    isCurrent || isBehind ? 'border-transparent' : 'border-slate-300 bg-white group-hover:border-slate-400'
+                  }`}
+                  style={isCurrent || isBehind ? { backgroundColor: step.color } : undefined}
+                >
+                  {isBehind ? <CheckIcon size={13} /> : null}
+                </span>
+                <span className={isCurrent ? 'text-slate-900' : isBehind ? 'text-slate-600' : 'text-slate-500'}>
+                  {step.label}
+                </span>
               </button>
+
+              {!isLast && (
+                <span
+                  aria-hidden="true"
+                  className={`mx-1 h-0.5 min-w-4 flex-1 rounded-full ${isBehind ? 'bg-teal-500' : 'bg-slate-200'}`}
+                />
+              )}
             </li>
           );
         })}
       </ol>
 
       {/* Terminal actions — one-way and side-effecting, so set visibly apart from the steps. */}
-      <div className="flex items-center gap-2 border-l border-slate-200 pl-2">
+      <div className="flex shrink-0 items-center gap-2">
         {isDisqualified ? (
           <button
             type="button"
@@ -455,17 +685,18 @@ function StatusStepper({
               aria-current={isQualified ? 'step' : undefined}
               disabled={!canWrite || pending || isQualified}
               onClick={onQualify}
-              className={`rounded-lg px-3.5 py-2 text-xs font-bold text-white transition disabled:opacity-50 ${
+              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold text-white transition disabled:opacity-60 ${
                 isQualified ? 'bg-emerald-800' : 'bg-emerald-700 hover:bg-emerald-800'
               }`}
             >
+              <CheckIcon size={14} />
               {isQualified ? 'Qualified' : 'Qualify'}
             </button>
             <button
               type="button"
               disabled={!canWrite || pending}
               onClick={onDisqualify}
-              className="rounded-lg bg-rose-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-rose-700 disabled:opacity-50"
+              className="rounded-lg border border-rose-200 bg-white px-3.5 py-2 text-xs font-bold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
             >
               Disqualify
             </button>
@@ -482,18 +713,26 @@ function NextStepRail({
   leadId,
   detail,
   sourceLabel,
+  owner,
   canWrite,
   pending,
+  customFields,
+  submissions,
   onQualify,
   onReopen,
+  onOpenSurvey,
 }: {
   leadId: string;
   detail: LeadResponse;
   sourceLabel: string;
+  owner: UserSummary | undefined;
   canWrite: boolean;
   pending: boolean;
+  customFields: LeadFieldSummary[];
+  submissions: LeadSubmissionListResponse['items'];
   onQualify: () => void;
   onReopen: () => void;
+  onOpenSurvey: () => void;
 }) {
   const { session } = useSession();
   const canReadActivities = hasPermission(session, 'crm:activities:read');
@@ -505,23 +744,27 @@ function NextStepRail({
     enabled: canReadActivities && Boolean(leadId),
   });
 
-  const completeTask = useMutation({
-    mutationFn: (id: string) => api.post<ActivityResponse>(ACTIVITY_PATHS.completeTask(id)),
+  const settle = useMutation({
+    mutationFn: (act: () => Promise<ActivityResponse>) => act(),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['crm', 'activities', 'lead', leadId] }),
   });
 
-  const pendingTask = (activities.data?.items ?? []).find(
-    (activity) => activity.type === 'task' && !activity.completedAt,
-  );
+  const items = activities.data?.items ?? [];
+  const pendingTask = items.find((activity) => activity.type === 'task' && !activity.completedAt);
+  const answers = topSurveyAnswers(submissions, customFields);
 
   return (
-    <aside aria-label="Next step" className="hidden w-64 shrink-0 flex-col gap-4 lg:flex">
-      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
-        <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500">Next step</h2>
+    <aside aria-label="Next step" className="hidden w-72 shrink-0 flex-col gap-4 lg:flex">
+      <div className="flex flex-col gap-3 rounded-2xl border-2 border-teal-200 bg-white p-4 shadow-2xs">
+        <h2 className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-teal-700">
+          <BoltIcon size={13} />
+          Next step
+        </h2>
 
         {detail.status === 'disqualified' ? (
           <div className="flex flex-col gap-2">
-            <p className="text-xs text-slate-500">This lead was disqualified.</p>
+            <p className="text-sm font-bold text-slate-900">This lead was disqualified.</p>
+            <p className="text-xs text-slate-500">Reopen it if something changed.</p>
             {canWrite && (
               <button
                 type="button"
@@ -535,33 +778,54 @@ function NextStepRail({
           </div>
         ) : pendingTask ? (
           <div className="flex flex-col gap-2">
-            <p className="text-xs font-semibold text-slate-800">{pendingTask.notes}</p>
-            {pendingTask.dueAt && (
-              <p className="text-[11px] text-slate-500">
-                Due {new Date(pendingTask.dueAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
-              </p>
-            )}
+            <p className="text-sm font-bold leading-snug text-slate-900">{pendingTask.notes}</p>
+            <p className="text-xs leading-relaxed text-slate-500">{whyNow(pendingTask.dueAt, items)}</p>
             {canWrite && (
-              <button
-                type="button"
-                disabled={completeTask.isPending}
-                onClick={() => completeTask.mutate(pendingTask.id)}
-                className="rounded-lg bg-teal-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-teal-800 disabled:opacity-50"
-              >
-                Mark done
-              </button>
+              <div className="flex items-center gap-2 pt-0.5">
+                <button
+                  type="button"
+                  disabled={settle.isPending}
+                  onClick={() =>
+                    settle.mutate(() =>
+                      api.post<ActivityResponse>(ACTIVITY_PATHS.completeTask(pendingTask.id)),
+                    )
+                  }
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-teal-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-teal-800 disabled:opacity-50"
+                >
+                  <CheckIcon size={14} />
+                  Mark done
+                </button>
+                {/* A rail that can only say "done" makes somebody lie to it to clear the
+                    prompt, so deferring is offered beside finishing. */}
+                <button
+                  type="button"
+                  disabled={settle.isPending}
+                  onClick={() =>
+                    settle.mutate(() =>
+                      api.post<ActivityResponse>(ACTIVITY_PATHS.snoozeTask(pendingTask.id), { days: 1 }),
+                    )
+                  }
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Snooze
+                </button>
+              </div>
             )}
           </div>
         ) : detail.status !== 'qualified' ? (
           <div className="flex flex-col gap-2">
-            <p className="text-xs text-slate-500">Ready to become a contact?</p>
+            <p className="text-sm font-bold text-slate-900">Ready to become a contact?</p>
+            <p className="text-xs text-slate-500">
+              Nothing is outstanding on this lead. Qualifying moves it to Contacts and opens a deal.
+            </p>
             {canWrite && (
               <button
                 type="button"
                 disabled={pending}
                 onClick={onQualify}
-                className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-800 disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-800 disabled:opacity-50"
               >
+                <CheckIcon size={14} />
                 Qualify
               </button>
             )}
@@ -572,24 +836,105 @@ function NextStepRail({
       </div>
 
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
-        <h2 className="text-xs font-bold uppercase tracking-wide text-slate-500">What we know</h2>
-        <WhatWeKnowRow label="Source" value={sourceLabel} />
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-semibold text-slate-500">Priority</span>
+        <h2 className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          <StarIcon size={13} />
+          What we know
+        </h2>
+
+        <RailField label="Source">
+          {sourceLabel ? (
+            <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+              {sourceLabel}
+            </span>
+          ) : (
+            <span className="text-xs font-semibold text-slate-400">—</span>
+          )}
+        </RailField>
+
+        <RailField label="Priority">
           <PriorityBadge value={priorityOf(detail.customValues)} fallback="—" />
-        </div>
+        </RailField>
+
+        {/* The answers that actually say what this lead wants, which is the reason the rail is
+            worth a glance at all — source and priority alone are filing, not context. */}
+        {answers.map((answer) => (
+          <RailField key={answer.key} label={answer.label} stacked>
+            <span className="text-xs font-semibold text-slate-800">{answer.value}</span>
+          </RailField>
+        ))}
+
+        {submissions.length > 0 && (
+          <button
+            type="button"
+            onClick={onOpenSurvey}
+            className="self-start text-[11px] font-bold text-teal-700 transition hover:text-teal-900"
+          >
+            All survey answers →
+          </button>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
+        <h2 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Owner</h2>
+        {detail.assignedToUserId ? (
+          <div className="flex items-center gap-2.5">
+            <Avatar name={owner?.name ?? 'Unknown'} />
+            <span className="min-w-0 truncate text-xs font-bold text-slate-800">
+              {owner?.name ?? 'Someone no longer in this company'}
+            </span>
+          </div>
+        ) : (
+          <p className="text-xs text-slate-400">Unassigned</p>
+        )}
       </div>
     </aside>
   );
 }
 
-function WhatWeKnowRow({ label, value }: { label: string; value: string }) {
+function RailField({
+  label,
+  stacked = false,
+  children,
+}: {
+  label: string;
+  stacked?: boolean;
+  children: React.ReactNode;
+}) {
+  if (stacked) {
+    return (
+      <div className="flex flex-col gap-0.5 border-t border-slate-100 pt-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+        {children}
+      </div>
+    );
+  }
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] font-semibold text-slate-500">{label}</span>
-      <span className="truncate text-xs font-semibold text-slate-800">{value || '—'}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+      {children}
     </div>
   );
+}
+
+/**
+ * Why this task is the thing to do now.
+ *
+ * The rail states an action; a line saying what makes it urgent is what turns it from a to-do
+ * into a prompt worth obeying. An email the lead has probably opened is the strongest such
+ * reason the feed can offer, so it is preferred over the due date when both are true.
+ */
+function whyNow(dueAt: string | null, items: ActivityListResponse['items']): string {
+  const opened = items.find((item) => item.notes.startsWith('📬'));
+  const due = dueAt ? new Date(dueAt) : undefined;
+  const overdue = due ? due.getTime() < Date.now() : false;
+  const when = due
+    ? overdue
+      ? 'It is already overdue.'
+      : `Due ${due.toLocaleDateString(undefined, { dateStyle: 'medium' })}.`
+    : 'No due date set.';
+
+  if (opened) return `They have probably opened your email — call while it is warm. ${when}`;
+  return when;
 }
 
 // ─── details ──────────────────────────────────────────────────────────────────────────
@@ -620,7 +965,10 @@ function DetailsPanel({
     }));
 
   return (
-    <section aria-label="Lead details" className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
+    <section
+      aria-label="Lead details"
+      className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs"
+    >
       <h3 className="text-sm font-bold text-slate-900">Details</h3>
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
         <DetailRow label="Name" value={detail.name} />
@@ -648,31 +996,161 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
 // ─── shared bits ──────────────────────────────────────────────────────────────────────
 
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) {
+/**
+ * The lead's contact details on one line, each a live link.
+ *
+ * They were spread between a header pill and a sidebar before, which meant the two things
+ * somebody opens a lead to *do* — mail them, ring them — were never in the same place as their
+ * name. A website or social profile is shown when the company has defined a field holding one.
+ */
+function ContactRow({ detail }: { detail: LeadResponse }) {
+  const link = firstUrl(detail.customValues);
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+      {detail.email && (
+        <a
+          href={`mailto:${detail.email}`}
+          className="flex items-center gap-1.5 transition hover:text-slate-900"
+        >
+          <span className="text-slate-400">
+            <MailIcon size={13} />
+          </span>
+          {detail.email}
+        </a>
+      )}
+      {detail.phone && (
+        <a href={`tel:${detail.phone}`} className="flex items-center gap-1.5 transition hover:text-slate-900">
+          <span className="text-slate-400">
+            <PhoneIcon size={13} />
+          </span>
+          {detail.phone}
+        </a>
+      )}
+      {link && (
+        <a
+          href={link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 transition hover:text-slate-900"
+        >
+          <span className="text-slate-400">
+            <LinkIcon size={13} />
+          </span>
+          {link.replace(/^https?:\/\//, '')}
+        </a>
+      )}
+      {!detail.email && !detail.phone && !link && (
+        <span className="italic text-slate-400">No contact details yet.</span>
+      )}
+    </div>
+  );
+}
+
+function firstUrl(customValues: LeadCustomValues | undefined): string | undefined {
+  for (const value of Object.values(customValues ?? {})) {
+    if (typeof value === 'string' && /^https?:\/\/\S+$/i.test(value.trim())) return value.trim();
+  }
+  return undefined;
+}
+
+function Avatar({ name, size = 'sm' }: { name: string; size?: 'sm' | 'lg' }) {
+  const dimensions = size === 'lg' ? 'h-12 w-12 rounded-xl text-base' : 'h-8 w-8 rounded-lg text-[11px]';
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex shrink-0 items-center justify-center font-bold text-white ${dimensions} ${avatarColour(name)}`}
+    >
+      {initialsOf(name)}
+    </span>
+  );
+}
+
+function StatusPill({ label, compact = false }: { label: StatusLabel; compact?: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full font-bold ${
+        compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2.5 py-0.5 text-[11px]'
+      }`}
+      style={{ backgroundColor: `${label.color}1a`, color: label.color }}
+    >
+      <span
+        aria-hidden="true"
+        className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+        style={{ backgroundColor: label.color }}
+      />
+      {label.label}
+    </span>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  label,
+  count,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
+      // The visible label carries a count; the accessible name must not, or the tab renames
+      // itself every time a file is added.
+      aria-label={label}
       aria-current={active ? 'page' : undefined}
-      className={`rounded-md px-3.5 py-1 transition ${
-        active ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+      className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-bold transition ${
+        active
+          ? 'border-teal-600 text-teal-700'
+          : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800'
       }`}
     >
-      {children}
+      <span className={active ? 'text-teal-600' : 'text-slate-400'}>{children}</span>
+      <span aria-hidden="true">{label}</span>
+      {count !== undefined && count > 0 && (
+        <span
+          aria-hidden="true"
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+            active ? 'bg-teal-100 text-teal-700' : 'bg-slate-100 text-slate-500'
+          }`}
+        >
+          {count}
+        </span>
+      )}
     </button>
   );
 }
 
-function QuickAction({ label, glyph, onClick }: { label: string; glyph: string; onClick: () => void }) {
+function QuickAction({
+  label,
+  primary = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  primary?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm shadow-2xs transition hover:bg-slate-50"
+      className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${
+        primary
+          ? 'border-transparent bg-teal-700 text-white shadow-2xs hover:bg-teal-800'
+          : 'border-slate-200 bg-white text-slate-600 shadow-2xs hover:bg-slate-50 hover:text-slate-900'
+      }`}
     >
-      <span aria-hidden="true">{glyph}</span>
+      {children}
     </button>
   );
 }
@@ -699,25 +1177,30 @@ function PriorityBadge({
 
   const size = compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]';
   return (
-    <span className={`inline-flex items-center rounded-full border font-bold ${size} ${priority.classes}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full border font-bold ${size} ${priority.classes}`}>
+      <span aria-hidden="true" className={`inline-block h-1.5 w-1.5 rotate-45 ${priority.dotClass}`} />
       {priority.label}
     </span>
   );
 }
 
-function classifyPriority(raw: string): { label: string; classes: string } | null {
+function classifyPriority(raw: string): { label: string; classes: string; dotClass: string } | null {
   const value = raw.trim().toLowerCase();
   if (!value) return null;
   if (['hot', 'high', 'urgent'].includes(value)) {
-    return { label: 'Hot', classes: 'border-rose-200 bg-rose-50 text-rose-700' };
+    return { label: 'Hot', classes: 'border-rose-200 bg-rose-50 text-rose-700', dotClass: 'bg-rose-500' };
   }
   if (['warm', 'medium', 'med'].includes(value)) {
-    return { label: 'Warm', classes: 'border-amber-200 bg-amber-50 text-amber-700' };
+    return { label: 'Warm', classes: 'border-amber-200 bg-amber-50 text-amber-700', dotClass: 'bg-amber-500' };
   }
   if (['cold', 'low'].includes(value)) {
-    return { label: 'Cold', classes: 'border-sky-200 bg-sky-50 text-sky-700' };
+    return { label: 'Cold', classes: 'border-sky-200 bg-sky-50 text-sky-700', dotClass: 'bg-sky-500' };
   }
-  return { label: raw.trim(), classes: 'border-slate-200 bg-slate-50 text-slate-600' };
+  return {
+    label: raw.trim(),
+    classes: 'border-slate-200 bg-slate-50 text-slate-600',
+    dotClass: 'bg-slate-400',
+  };
 }
 
 function priorityOf(customValues: LeadCustomValues | undefined): string | null {
