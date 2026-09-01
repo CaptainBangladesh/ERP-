@@ -395,11 +395,20 @@ function StatusStepper({
                 aria-current={isCurrent ? 'step' : undefined}
                 disabled={!canWrite || pending || isCurrent}
                 onClick={() => onSet(step.status)}
-                className={`rounded-lg border px-3.5 py-2 text-xs font-bold transition disabled:cursor-default ${
+                className={`flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-bold transition disabled:cursor-default ${
                   isCurrent ? 'border-transparent text-white shadow-xs' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                 }`}
                 style={isCurrent ? { backgroundColor: step.color } : undefined}
               >
+                {/* The current step fills with its colour; the others carry it as a dot, so the
+                    company's whole pipeline reads in its own colours, in order. */}
+                {!isCurrent && (
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: step.color }}
+                  />
+                )}
                 {step.label}
               </button>
             </li>

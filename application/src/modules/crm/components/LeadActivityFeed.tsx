@@ -10,6 +10,7 @@ import {
 import { ApiFailure, api } from '../../../api/client';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
+import { isSystemAudit } from '../activity-audit';
 
 /**
  * The Timeline as one filterable feed, labelled **Activity** because that is what users call it.
@@ -50,18 +51,6 @@ const FILTER_LABELS: Record<FeedFilter, string> = {
   notes: 'Notes',
   system: 'System',
 };
-
-/**
- * A system Audit event is recognised by the leading emoji the backend stamps on its notes —
- * the same set the shared board already keys off. Kept forgiving of a trailing variation
- * selector, and 📬 is here ahead of email-open tracking so the feed classifies it correctly
- * the moment that ticket lands.
- */
-const SYSTEM_AUDIT_PREFIX = /^(⚙️|⚙|📎|👤|🚀|📥|📝|📬)/u;
-
-export function isSystemAudit(notes: string): boolean {
-  return SYSTEM_AUDIT_PREFIX.test(notes);
-}
 
 function matchesFilter(activity: ActivityResponse, filter: FeedFilter): boolean {
   if (filter === 'all') return true;
