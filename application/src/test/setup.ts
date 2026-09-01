@@ -1,7 +1,20 @@
 import '@testing-library/jest-dom/vitest';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { server } from './server';
+
+/**
+ * The same slow-runner problem `testTimeout` is set against, one layer down.
+ *
+ * `waitFor` and every `findBy*` query carry their own default of one second, which the
+ * vitest `testTimeout` does not touch. A single mutation round-trip — a file upload is the
+ * event, a React re-render, the fetch, and MSW parsing the multipart body back out — stays
+ * well under a second on a development machine and can cross it on a CI runner that is a
+ * fraction of one and shares what it has. Raising the async-utility ceiling to match keeps a
+ * green test as fast as it always was (the wait resolves the moment its condition holds) and
+ * stops a scheduling accident on the slower machine from being reported as a broken feature.
+ */
+configure({ asyncUtilTimeout: 5_000 });
 
 /**
  * Seam 2 — the frontend network boundary.
