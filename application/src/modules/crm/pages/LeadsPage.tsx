@@ -28,7 +28,7 @@ import { ApiFailure, api } from '../../../api/client';
 import { navigate } from '../../../app/location';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
-import { LeadDetail } from '../components/LeadDetail';
+import { leadWorkspacePath } from './LeadWorkspace';
 import { BoardSetupModal } from '../components/BoardSetupModal';
 import { ColumnsModal } from '../components/ColumnsModal';
 import { ConvertLeadModal } from '../components/ConvertLeadModal';
@@ -59,7 +59,6 @@ export function LeadsPage() {
   const { session } = useSession();
   const canWrite = hasPermission(session, 'crm:leads:write');
   const [query, setQuery] = useState<ListQuery>({});
-  const [selectedId, setSelectedId] = useState<string>();
   const [convertLead, setConvertLead] = useState<LeadSummary>();
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
@@ -566,14 +565,14 @@ export function LeadsPage() {
                                         </span>
                                         <button
                                           type="button"
-                                          onClick={() => setSelectedId(lead.id)}
+                                          onClick={() => navigate(leadWorkspacePath(lead.id))}
                                           className="font-bold text-slate-900 hover:text-teal-700 hover:underline text-left truncate"
                                         >
                                           {lead.name}
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => setSelectedId(lead.id)}
+                                          onClick={() => navigate(leadWorkspacePath(lead.id))}
                                           title="Open lead details"
                                           aria-label={`Open ${lead.name}`}
                                           className="rounded p-0.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 shrink-0 font-bold"
@@ -822,15 +821,6 @@ export function LeadsPage() {
           );
         })}
       </div>
-
-      {/* Side Detail Panel */}
-      {selectedId && (
-        <LeadDetail
-          leadId={selectedId}
-          onClose={() => setSelectedId(undefined)}
-          onChanged={refresh}
-        />
-      )}
 
       {/* Modals */}
       {convertLead && (

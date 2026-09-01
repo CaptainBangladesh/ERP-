@@ -28,5 +28,11 @@ export function routeFor(path: string): FrontendRoute | undefined {
   if (path.startsWith('/public/crm/form/')) {
     return routes.find((route) => route.path === '/public/crm/form');
   }
+  // A single lead lives at `/crm/leads/<id>` — a parameterised route the exact-match table
+  // cannot express. Matched here, ahead of the exact lookup, so the id segment resolves to the
+  // workspace while `/crm/leads` itself (no segment) still falls through to the board index.
+  if (/^\/crm\/leads\/[^/]+$/.test(path)) {
+    return routes.find((route) => route.path === '/crm/leads/:id');
+  }
   return routes.find((route) => route.path === path);
 }

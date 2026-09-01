@@ -9,13 +9,8 @@ import {
   LEAD_SOURCE_PATHS,
   LEAD_STATUS_LABEL_PATHS,
   ACTIVITY_PATHS,
-  PARTY_PATHS,
   type LeadListResponse,
-  type LeadResponse,
   type LeadSummary,
-  type PartyListResponse,
-  type PartyResponse,
-  type PartySummary,
   type UserListResponse,
 } from '@erp/shared';
 import { server } from '../../../test/server';
@@ -79,23 +74,6 @@ describe('LeadsPage', () => {
 
   function page(items: LeadSummary[], total = items.length): LeadListResponse {
     return { items, page: { number: 1, size: PAGE_SIZE, total, pages: Math.ceil(total / PAGE_SIZE) } };
-  }
-
-  function party(id: string, name: string): PartyResponse {
-    return {
-      id,
-      kind: 'organisation',
-      name,
-      email: null,
-      phone: null,
-      status: 'active',
-      roles: [],
-      organisationId: null,
-      organisationName: null,
-      mergedIntoId: null,
-      addresses: [],
-      members: [],
-    };
   }
 
   function listing(items: LeadSummary[]): void {
@@ -1013,150 +991,15 @@ describe('LeadsPage', () => {
     });
   });
 
-  describe('the lead detail panel', () => {
-    function openPanel(initial: LeadSummary): { current: () => LeadResponse } {
-      let current = initial;
-      let priorStatus: LeadSummary['status'] | undefined;
-
-      server.use(
-        http.get(LEAD_PATHS.leads, () => HttpResponse.json(page([current]))),
-        http.get(LEAD_PATHS.lead(initial.id), () => HttpResponse.json(current)),
-        http.patch(LEAD_PATHS.lead(initial.id), async ({ request }) => {
-          const body = (await request.json()) as Partial<LeadSummary>;
-          current = { ...current, ...body };
-          return HttpResponse.json(current);
-        }),
-        http.post(LEAD_PATHS.disqualify(initial.id), () => {
-          priorStatus = current.status;
-          current = { ...current, status: 'disqualified' };
-          return HttpResponse.json(current);
-        }),
-        http.post(LEAD_PATHS.reopen(initial.id), () => {
-          current = { ...current, status: priorStatus ?? 'new' };
-          return HttpResponse.json(current);
-        }),
-        http.get(IDENTITY_PATHS.users, () =>
-          HttpResponse.json({ items: [], page: { number: 1, size: 200, total: 0, pages: 0 } } satisfies UserListResponse),
-        ),
-        http.get(PARTY_PATHS.parties, () =>
-          HttpResponse.json({ items: [], page: { number: 1, size: 100, total: 0, pages: 0 } } satisfies PartyListResponse),
-        ),
-      );
-
-      return { current: () => current };
-    }
-
-    it('marks a new lead contacted, then disqualifies and reopens it — restoring contacted, not new', async () => {
+  describe('opening a lead', () => {
+    it('navigates to the lead workspace at its own route', async () => {
       signedInWith();
-      openPanel(lead('Priya Kapoor'));
+      listing([lead('Priya Kapoor')]);
 
       const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
       await user.click(await screen.findByRole('button', { name: 'Open Priya Kapoor' }));
 
-      const panel = () => within(screen.getByRole('region', { name: 'Priya Kapoor' }));
-
-      await user.click(await screen.findByRole('button', { name: /mark contacted/i }));
-      await waitFor(() => expect(panel().getByText(/^Contacted/)).toBeInTheDocument());
-
-      await user.click(panel().getByRole('button', { name: /disqualify/i }));
-      await waitFor(() => expect(panel().getByText(/^Disqualified/)).toBeInTheDocument());
-
-      await user.click(panel().getByRole('button', { name: /reopen/i }));
-
-      await waitFor(() => expect(panel().getByText(/^Contacted/)).toBeInTheDocument());
-    });
-
-    it('qualifies by creating a new party, then tags it prospect as a second call', async () => {
-      signedInWith();
-      openPanel(lead('Priya Kapoor', { organisationName: 'Kapoor Trading' }));
-
-      const createdParty = party('new-party-1', 'Kapoor Trading');
-      const calls: string[] = [];
-
-      server.use(
-        http.post(PARTY_PATHS.parties, async ({ request }) => {
-          calls.push('create-party');
-          const body = await request.json();
-          expect(body).toMatchObject({ kind: 'organisation', name: 'Kapoor Trading' });
-          return HttpResponse.json(createdParty, { status: 201 });
-        }),
-        http.post(LEAD_PATHS.qualify('id-priya-kapoor'), async ({ request }) => {
-          calls.push('qualify');
-          const body = await request.json();
-          expect(body).toEqual({ action: 'create', partyId: createdParty.id });
-          return HttpResponse.json(
-            { ...lead('Priya Kapoor'), status: 'qualified', partyId: createdParty.id },
-            { status: 200 },
-          );
-        }),
-        http.post(PARTY_PATHS.partyRoles(createdParty.id), async ({ request }) => {
-          calls.push('tag-prospect');
-          const body = await request.json();
-          expect(body).toEqual({ role: 'prospect' });
-          return HttpResponse.json(createdParty);
-        }),
-      );
-
-      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
-      await user.click(await screen.findByRole('button', { name: 'Open Priya Kapoor' }));
-
-      const panel = () => within(screen.getByRole('region', { name: 'Priya Kapoor' }));
-      await user.click(panel().getByRole('button', { name: /move to contacts/i }));
-
-      await screen.findByText(/move .* to contacts/i);
-      await user.click(screen.getByRole('button', { name: /convert to contact/i }));
-
-      await waitFor(() => expect(calls).toEqual(['create-party', 'qualify', 'tag-prospect']));
-    });
-
-    it('qualifies by linking an existing party, without ever calling POST /api/parties', async () => {
-      signedInWith();
-      openPanel(lead('Priya Kapoor', { email: 'priya@kapoor.test' }));
-
-      const existing = party('existing-1', 'Existing Trading Co');
-      let createPartyCalled = false;
-      const calls: string[] = [];
-
-      server.use(
-        http.get(PARTY_PATHS.parties, () =>
-          HttpResponse.json({
-            items: [existing as unknown as PartySummary],
-            page: { number: 1, size: 100, total: 1, pages: 1 },
-          } satisfies PartyListResponse),
-        ),
-        http.post(PARTY_PATHS.parties, () => {
-          createPartyCalled = true;
-          return HttpResponse.json(existing, { status: 201 });
-        }),
-        http.post(LEAD_PATHS.qualify('id-priya-kapoor'), async ({ request }) => {
-          calls.push('qualify');
-          const body = await request.json();
-          expect(body).toEqual({ action: 'link', partyId: existing.id });
-          return HttpResponse.json(
-            { ...lead('Priya Kapoor'), status: 'qualified', partyId: existing.id },
-            { status: 200 },
-          );
-        }),
-        http.post(PARTY_PATHS.partyRoles(existing.id), async ({ request }) => {
-          calls.push('tag-prospect');
-          const body = await request.json();
-          expect(body).toEqual({ role: 'prospect' });
-          return HttpResponse.json(existing);
-        }),
-      );
-
-      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
-      await user.click(await screen.findByRole('button', { name: 'Open Priya Kapoor' }));
-
-      const panel = () => within(screen.getByRole('region', { name: 'Priya Kapoor' }));
-      await user.click(panel().getByRole('button', { name: /move to contacts/i }));
-
-      await screen.findByText(/move .* to contacts/i);
-      await user.click(await screen.findByText(/existing trading co/i));
-      await user.click(screen.getByRole('button', { name: /convert to contact/i }));
-
-      await waitFor(() => expect(calls).toEqual(['qualify', 'tag-prospect']));
-      expect(createPartyCalled).toBe(false);
+      expect(window.location.pathname).toBe('/crm/leads/id-priya-kapoor');
     });
   });
 
