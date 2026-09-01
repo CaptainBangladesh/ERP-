@@ -12,7 +12,10 @@ import {
 } from '@nestjs/common';
 import {
   AUTH_ROUTE,
+  AUTH_SCREEN_PATHS,
   ERROR_CODES,
+  GOOGLE_AUTH_RETURN_PARAMS,
+  IDENTITY_ERROR_CODES,
   type AuthenticatedSession,
   type GoogleAuthMode,
   type InvitationDetails,
@@ -119,11 +122,24 @@ export class IdentityController {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
-      throw new ApiException(
+      const returnTo = frontendOrigin(request.headers?.referer);
+      const targetScreen = mode === 'signup' ? AUTH_SCREEN_PATHS.signUp : AUTH_SCREEN_PATHS.signIn;
+      const failureUrl = new URL(targetScreen, returnTo);
+      failureUrl.searchParams.set(
+        GOOGLE_AUTH_RETURN_PARAMS.error,
         ERROR_CODES.moduleUnavailable,
-        'Signing in with Google is not configured on this server.',
-        HttpStatus.SERVICE_UNAVAILABLE,
       );
+      if (mode === 'signup') {
+        failureUrl.searchParams.set(
+          GOOGLE_AUTH_RETURN_PARAMS.intent,
+          intent === 'account' ? 'account' : 'company',
+        );
+        const companyName = text(query.companyName);
+        if (companyName) {
+          failureUrl.searchParams.set(GOOGLE_AUTH_RETURN_PARAMS.companyName, companyName);
+        }
+      }
+      return { url: failureUrl.toString(), statusCode: HttpStatus.FOUND };
     }
 
     const googleUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -166,10 +182,22 @@ export class IdentityController {
   @Redirect()
   async googleOAuthCallback(
     @Query() query: Record<string, unknown>,
+    @Req() request: { headers?: Record<string, unknown> },
   ): Promise<{ url: string; statusCode: number }> {
     const destination = await this.identity.completeGoogleReturn(query);
+    if (destination) {
+      return { url: destination, statusCode: HttpStatus.FOUND };
+    }
 
-    return { url: destination ?? frontendOrigin(), statusCode: HttpStatus.FOUND };
+    const fallbackUrl = new URL(
+      AUTH_SCREEN_PATHS.signIn,
+      frontendOrigin(request.headers?.referer),
+    );
+    fallbackUrl.searchParams.set(
+      GOOGLE_AUTH_RETURN_PARAMS.error,
+      IDENTITY_ERROR_CODES.googleAuthFailed,
+    );
+    return { url: fallbackUrl.toString(), statusCode: HttpStatus.FOUND };
   }
 
   /**

@@ -80,13 +80,14 @@ export function decodeGoogleAuthState(state: unknown): GoogleAuthState | null {
  * pointed at the other's callback.
  */
 export function googleRedirectUri(): string {
-  return (
-    process.env.GOOGLE_AUTH_REDIRECT_URI || `${backendOrigin()}${AUTH_PATHS.googleCallback}`
-  );
+  const envUri = process.env.GOOGLE_AUTH_REDIRECT_URI?.trim();
+  return envUri || `${backendOrigin()}${AUTH_PATHS.googleCallback}`;
 }
 
 function backendOrigin(): string {
-  return process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+  const url = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL;
+  if (url) return url.trim().replace(/\/$/, '');
+  return `http://localhost:${process.env.PORT || 3000}`;
 }
 
 /**
@@ -97,15 +98,26 @@ function backendOrigin(): string {
  * `FRONTEND_URL` for a request that carried none.
  */
 export function frontendOrigin(referer?: unknown): string {
+  if (process.env.FRONTEND_URL) {
+    try {
+      return new URL(process.env.FRONTEND_URL).origin;
+    } catch {
+      // Invalid FRONTEND_URL, fall through to referer check
+    }
+  }
+
   if (typeof referer === 'string' && referer.length > 0) {
     try {
-      return new URL(referer).origin;
+      const url = new URL(referer);
+      if (!url.hostname.includes('google.com') && !url.hostname.includes('googleapis.com')) {
+        return url.origin;
+      }
     } catch {
       // Not a URL. The configured origin below is the better answer than a guess.
     }
   }
 
-  return process.env.FRONTEND_URL || 'http://localhost:5173';
+  return 'http://localhost:5173';
 }
 
 /**

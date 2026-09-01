@@ -117,6 +117,8 @@ export function SignUpPage() {
                   Sign in with Google →
                 </a>
               </>
+            ) : googleReturn.error === ERROR_CODES.moduleUnavailable ? (
+              <span>Signing up with Google is not configured on this server. Use the form below.</span>
             ) : (
               <span>Signing up with Google did not complete. Try again.</span>
             )}

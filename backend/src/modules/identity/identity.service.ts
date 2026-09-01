@@ -305,8 +305,8 @@ export class IdentityService implements SessionAuthority {
     code: string,
     redirectUri: string,
   ): Promise<{ email: string; name?: string }> {
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 
     // Credentials belong in the environment and nowhere else. A hard-coded fallback would be
     // a client secret in the repository, and a deployment that quietly authenticated against
@@ -323,9 +323,18 @@ export class IdentityService implements SessionAuthority {
         redirect_uri: redirectUri,
         grant_type: 'authorization_code',
       }),
-    }).catch(() => undefined);
+    }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[Google OAuth Token Network Error]:', err);
+      return undefined;
+    });
 
-    if (!tokenResponse?.ok) throw googleExchangeFailed();
+    if (!tokenResponse?.ok) {
+      const errBody = await tokenResponse?.text().catch(() => '');
+      // eslint-disable-next-line no-console
+      console.error('[Google OAuth Token Exchange Failure]:', tokenResponse?.status, errBody);
+      throw googleExchangeFailed(errBody);
+    }
 
     const tokens = (await tokenResponse.json()) as { id_token?: string; access_token?: string };
 
@@ -497,10 +506,12 @@ function googleUnconfigured(): ApiException {
  * arrived without a session: this is a round trip that did not complete, and it is the one
  * outcome both screens render as "try again" rather than as anything about the user.
  */
-function googleExchangeFailed(): ApiException {
+function googleExchangeFailed(detail?: string): ApiException {
   return new ApiException(
     IDENTITY_ERROR_CODES.googleAuthFailed,
-    'Google did not confirm who you are. Please try again.',
+    detail
+      ? `Google did not confirm who you are: ${detail}`
+      : 'Google did not confirm who you are. Please try again.',
     HttpStatus.UNAUTHORIZED,
   );
 }

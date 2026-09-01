@@ -70,8 +70,9 @@ export function SignInPage() {
               role="alert"
               className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-medium text-amber-900 shadow-2xs"
             >
-              Signing in with Google did not complete. Try again, or use your email address
-              and password below.
+              {googleReturn.error === ERROR_CODES.moduleUnavailable
+                ? 'Signing in with Google is not configured on this server. Please use your email address and password below.'
+                : 'Signing in with Google did not complete. Try again, or use your email address and password below.'}
             </div>
           )}
 

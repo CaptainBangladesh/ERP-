@@ -532,6 +532,22 @@ describe('identity and access', () => {
       expect(response.body.code).toBe(ERROR_CODES.validationFailed);
       expect(response.body.fields.email).toMatch(/valid email/i);
     });
+
+    it('redirects to sign-in with error=module_unavailable when Google auth is not configured on the server', async () => {
+      const oldClientId = process.env.GOOGLE_CLIENT_ID;
+      delete process.env.GOOGLE_CLIENT_ID;
+
+      try {
+        const response = await app.http
+          .get(`${AUTH_PATHS.googleLogin}?mode=signin`)
+          .expect(302);
+
+        expect(response.headers.location).toContain('/sign-in');
+        expect(response.headers.location).toContain('error=module_unavailable');
+      } finally {
+        if (oldClientId) process.env.GOOGLE_CLIENT_ID = oldClientId;
+      }
+    });
   });
 
   describe('using a session', () => {
