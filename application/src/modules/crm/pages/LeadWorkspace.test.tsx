@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import {
@@ -364,33 +364,55 @@ describe('LeadWorkspace', () => {
     /**
      * The upload carries the file itself rather than a description of it.
      *
-     * The assertion is on the body being a `FormData` and not JSON, which is precisely the bug
-     * this replaced: the first cut posted `{ filename, sizeBytes }` and stored no bytes at all.
-     * It stops short of reading the parts back because jsdom's `FormData` and Node's `fetch`
-     * are different realms — undici does not recognise the former and stringifies it, so
-     * `request.formData()` here would be asserting on a quirk of the test environment. That the
-     * server receives real multipart is proven where it can be: `crm-lead-workspace.spec.ts`.
+     * The correctness here is that the component posts the file's bytes as multipart, not a
+     * JSON description of them: the first cut posted `{ filename, sizeBytes }` and stored no
+     * bytes at all. Reading that back off the received request is the wrong place to assert it,
+     * because jsdom's `FormData` and Node's `fetch` are different realms and what undici does
+     * with a foreign `FormData` — stringify it on one Node, refuse to record it on another — is
+     * a property of the runtime rather than of the code, and it is exactly what made this test
+     * pass on a developer machine while failing in CI. So the body is caught at the `fetch`
+     * boundary, as the object the component actually handed over, before any serialisation can
+     * turn it into something the runtime happens to disagree about. That the server then
+     * receives real multipart is proven where it can be: `crm-lead-workspace.spec.ts`.
      */
     it('uploads the chosen file itself, not a description of it', async () => {
-      let body: string | undefined;
-      let contentType: string | null = null;
-      server.use(
-        http.post(LEAD_PATHS.files('id-priya-kapoor'), async ({ request }) => {
-          contentType = request.headers.get('content-type');
-          body = await request.text();
-          return HttpResponse.json(attachment(), { status: 201 });
-        }),
-      );
+      const realFetch = globalThis.fetch;
+      const filesUrl = LEAD_PATHS.files('id-priya-kapoor');
+      let sentBody: unknown;
 
-      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
-      await user.click(await screen.findByRole('button', { name: 'Files' }));
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+          const url =
+            typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+          if (init?.method === 'POST' && url.includes(filesUrl)) {
+            sentBody = init.body;
+            return Promise.resolve(
+              new Response(JSON.stringify(attachment()), {
+                status: 201,
+                headers: { 'content-type': 'application/json' },
+              }),
+            );
+          }
+          // Everything else — the workspace's own loads — is left to the network layer the
+          // suite already stands up, so the page renders exactly as in every other test.
+          return realFetch(input, init);
+        });
 
-      const picker = await screen.findByLabelText('Choose a file to attach');
-      await user.upload(picker, new File(['a quote'], 'quote.pdf', { type: 'application/pdf' }));
+      try {
+        const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+        await user.click(await screen.findByRole('button', { name: 'Files' }));
 
-      await waitFor(() => expect(body).toBeDefined());
-      expect(body).not.toContain('"filename"');
-      expect(contentType).not.toContain('application/json');
+        const picker = await screen.findByLabelText('Choose a file to attach');
+        await user.upload(picker, new File(['a quote'], 'quote.pdf', { type: 'application/pdf' }));
+
+        await waitFor(() => expect(sentBody).toBeInstanceOf(FormData));
+        const attached = (sentBody as FormData).get('file');
+        expect(attached).toBeInstanceOf(File);
+        expect((attached as File).name).toBe('quote.pdf');
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
 
     it('downloads a stored file through the authenticated endpoint', async () => {
