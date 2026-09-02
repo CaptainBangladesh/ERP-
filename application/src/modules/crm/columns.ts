@@ -150,8 +150,22 @@ export const PROVISIONED_COLUMNS: (ColumnOption & { fieldLabel: string })[] = [
 
 /** A custom field's column key. Namespaced so no field can ever collide with a core column. */
 export function fieldColumnKey(field: Pick<LeadFieldSummary, 'key'>): string {
-  return `field:${field.key}`;
+  return `${FIELD_PREFIX}${field.key}`;
 }
+
+/**
+ * The field key a column key was made from, or `undefined` for a core column.
+ *
+ * The inverse lives beside the function that applies the prefix, so the prefix itself is
+ * written once. A caller that reconstructed it — `key.replace(/^field:/, '')` — would be a
+ * second place to edit on the day the namespace changes, and the kind of second place nothing
+ * points at.
+ */
+export function customFieldKey(columnKey: string): string | undefined {
+  return columnKey.startsWith(FIELD_PREFIX) ? columnKey.slice(FIELD_PREFIX.length) : undefined;
+}
+
+const FIELD_PREFIX = 'field:';
 
 const STORAGE_KEY = 'erp.crm.leads.columns';
 
@@ -220,6 +234,13 @@ export interface BoardColumn {
   width?: number;
   align?: 'left' | 'center' | 'right';
 }
+
+/**
+ * A column the board never draws, because a group is the *section* a row sits in rather than a
+ * cell on it. An export has no sections, so it needs somewhere to put the answer — and this is
+ * board vocabulary, so it is declared here with the rest of it.
+ */
+export const GROUP_COLUMN: BoardColumn = { key: 'group', label: 'Group' };
 
 /** What the elastic Lead column may not shrink below before the board starts scrolling. */
 const LEAD_MIN_WIDTH = 200;

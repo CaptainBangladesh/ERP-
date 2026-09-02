@@ -1034,6 +1034,28 @@ describe('LeadsPage', () => {
       return { patched: () => patched, deleted: () => deleted };
     }
 
+    /**
+     * What a save actually looks like from outside: jsdom has no downloads, so the anchor's
+     * `click` is the only observable moment. Held per test and restored after, so nothing else
+     * in the file inherits a stubbed anchor.
+     */
+    let downloads: string[] = [];
+    function saved(): string[] {
+      return downloads;
+    }
+
+    beforeEach(() => {
+      downloads = [];
+      const realClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function stubbed(this: HTMLAnchorElement) {
+        if (this.download) downloads.push(this.download);
+        else realClick.call(this);
+      };
+      return () => {
+        HTMLAnchorElement.prototype.click = realClick;
+      };
+    });
+
     it('gives the Owner column somewhere to write to, once it is switched on', async () => {
       signedInWith();
       const { patched } = boardWith([lead('Priya Kapoor')]);
@@ -1069,7 +1091,9 @@ describe('LeadsPage', () => {
       await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
       await user.click(screen.getByRole('checkbox', { name: 'Select Sadia Rahman' }));
 
-      expect(await screen.findByText('2 leads selected')).toBeInTheDocument();
+      const toolbar = await screen.findByRole('toolbar', { name: 'Actions for the selected leads' });
+      expect(within(toolbar).getByText('2')).toBeInTheDocument();
+      expect(within(toolbar).getByText(/leads selected/)).toBeInTheDocument();
 
       await user.selectOptions(
         screen.getByRole('combobox', { name: 'Assign selected leads to' }),
@@ -1080,6 +1104,38 @@ describe('LeadsPage', () => {
         expect(patched().map((call) => call.id).sort()).toEqual(['id-priya-kapoor', 'id-sadia-rahman']),
       );
       expect(patched().every((call) => JSON.stringify(call.body) === '{"assignedToUserId":"user-1"}')).toBe(true);
+    });
+
+    /**
+     * The failure that reads as "bulk assign does not work": one lead the server refuses used to
+     * reject the whole `Promise.all`, leaving a bare error banner over a board where the other
+     * assignments had in fact landed. The count in the message is what tells those two apart.
+     */
+    it('says how many an assignment reached when the server refuses one of them', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor'), lead('Imran Ali')]);
+      server.use(
+        http.patch('/api/crm/leads/:id', ({ params }) =>
+          String(params.id) === 'id-imran-ali'
+            ? HttpResponse.json(
+                { code: 'validation_failed', message: 'That is not a user.' },
+                { status: 422 },
+              )
+            : HttpResponse.json(lead('Priya Kapoor')),
+        ),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Imran Ali' }));
+      await user.selectOptions(
+        screen.getByRole('combobox', { name: 'Assign selected leads to' }),
+        'user-1',
+      );
+
+      expect(await screen.findByText(/assigned 1 of 2.*that is not a user/i)).toBeInTheDocument();
     });
 
     it('will not delete a selection until it is asked twice', async () => {
@@ -1098,6 +1154,175 @@ describe('LeadsPage', () => {
       await user.click(screen.getByRole('button', { name: 'Delete' }));
 
       await waitFor(() => expect(deleted()).toEqual(['id-imran-ali']));
+    });
+
+    it('archives a selection by disqualifying each lead, and says what it did', async () => {
+      signedInWith();
+      const disqualified: string[] = [];
+      boardWith([lead('Priya Kapoor'), lead('Imran Ali')]);
+      server.use(
+        http.post('/api/crm/leads/:id/disqualify', ({ params }) => {
+          disqualified.push(String(params.id));
+          return HttpResponse.json(lead('Priya Kapoor'));
+        }),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Imran Ali' }));
+      await user.click(await screen.findByRole('button', { name: 'Archive' }));
+
+      await waitFor(() => expect(disqualified.sort()).toEqual(['id-imran-ali', 'id-priya-kapoor']));
+
+      // Archiving clears the selection, which takes the toolbar away with it — so the notice
+      // has to outlive the toolbar rather than live inside it, or the two acts most worth
+      // reporting are the two that report nothing.
+      expect(await screen.findByText(/archived 2 leads/i)).toBeInTheDocument();
+      expect(
+        screen.queryByRole('toolbar', { name: 'Actions for the selected leads' }),
+      ).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(screen.queryByText(/archived 2 leads/i)).not.toBeInTheDocument();
+    });
+
+    /**
+     * The half of a bulk act that is easy to get wrong: `Promise.all` would reject on the first
+     * refusal and lose the successes, and a bar that then said nothing would leave somebody
+     * guessing which rows took. The count in the message is the whole assertion.
+     */
+    it('reports a partial archive rather than swallowing the leads it could not archive', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor'), lead('Imran Ali')]);
+      server.use(
+        http.post('/api/crm/leads/:id/disqualify', ({ params }) =>
+          String(params.id) === 'id-imran-ali'
+            ? HttpResponse.json(
+                { code: 'lead_already_disqualified', message: 'Already archived.' },
+                { status: 409 },
+              )
+            : HttpResponse.json(lead('Priya Kapoor')),
+        ),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Imran Ali' }));
+      await user.click(await screen.findByRole('button', { name: 'Archive' }));
+
+      expect(await screen.findByText(/archived 1 of 2/i)).toBeInTheDocument();
+    });
+
+    it('exports only the ticked leads, and saves the file without leaving the board', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor'), lead('Imran Ali')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(await screen.findByRole('button', { name: 'Export' }));
+
+      expect(await screen.findByText(/exported 1 lead/i)).toBeInTheDocument();
+      // `leads-csv.test.ts` owns what is inside the file; this owns that the button saves one.
+      expect(saved()).toHaveLength(1);
+      expect(saved()[0]).toMatch(/^leads-\d{4}-\d{2}-\d{2}\.csv$/);
+    });
+
+    /**
+     * A sequence is several emails on a schedule, and there is no such thing in this CRM yet.
+     * The button is on the bar because the shape of the toolbar is the deliverable; what it must
+     * not do is look like it worked.
+     */
+    it('says plainly that sequences do not exist yet rather than pretending to enrol anybody', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(await screen.findByRole('button', { name: 'Add to sequence' }));
+
+      expect(await screen.findByText(/sequences are not built yet/i)).toBeInTheDocument();
+    });
+
+    it('opens mass email on the selection, and sends through the campaign it builds', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor'), lead('Imran Ali')]);
+
+      let createdWith: any;
+      let materialized = false;
+      server.use(
+        http.get('/api/crm/mailboxes', () =>
+          HttpResponse.json({
+            items: [{ id: 'mailbox-1', emailAddress: 'sales@nearbuy.example', status: 'connected' }],
+          }),
+        ),
+        http.get('/api/crm/email-templates', () =>
+          HttpResponse.json({ items: [{ id: 'template-1', name: 'First touch' }] }),
+        ),
+        http.post('/api/crm/campaigns', async ({ request }) => {
+          createdWith = await request.json();
+          return HttpResponse.json({ id: 'campaign-1', name: 'x', status: 'draft' });
+        }),
+        http.post('/api/crm/campaigns/:id/materialize', () => {
+          materialized = true;
+          return HttpResponse.json({ id: 'campaign-1', name: 'x', status: 'draft' });
+        }),
+        http.get('/api/crm/campaigns/:id/recipients', () =>
+          HttpResponse.json({
+            items: [
+              {
+                id: 'r1',
+                leadId: 'id-priya-kapoor',
+                leadName: 'Priya Kapoor',
+                emailAddress: 'priya@kapoor.test',
+                status: 'pending',
+                excludeReason: null,
+                sentAt: null,
+                openedAt: null,
+              },
+              {
+                id: 'r2',
+                leadId: 'id-imran-ali',
+                leadName: 'Imran Ali',
+                emailAddress: '',
+                status: 'excluded',
+                excludeReason: 'no_email',
+                sentAt: null,
+                openedAt: null,
+              },
+            ],
+          }),
+        ),
+        http.post('/api/crm/campaigns/:id/send-batch', () =>
+          HttpResponse.json({ batchSent: 1, remainingPending: 0, status: 'completed' }),
+        ),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Imran Ali' }));
+      await user.click(await screen.findByRole('button', { name: 'Mass email' }));
+
+      await user.click(await screen.findByRole('button', { name: 'Continue' }));
+
+      // The pause is the point: who is actually going to be written to, and who was set aside.
+      expect(await screen.findByText(/1 of 2 will be written to/i)).toBeInTheDocument();
+      expect(screen.getByText(/no email address/i)).toBeInTheDocument();
+      expect(createdWith.segmentConfig).toEqual({ leadIds: ['id-priya-kapoor', 'id-imran-ali'] });
+      expect(materialized).toBe(true);
+
+      await user.click(screen.getByRole('button', { name: 'Send to 1' }));
+
+      expect(await screen.findByText(/sent to 1 lead/i)).toBeInTheDocument();
     });
 
     it('opens the new lead row above the group, not below it', async () => {

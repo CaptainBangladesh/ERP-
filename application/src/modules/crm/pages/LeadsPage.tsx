@@ -30,6 +30,8 @@ import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
 import { leadWorkspacePath } from './LeadWorkspace';
 import { BoardSetupModal } from '../components/BoardSetupModal';
+import { BulkActionToolbar, BulkLayer, BulkNotice } from '../components/BulkActionToolbar';
+import { MassEmailModal } from '../components/MassEmailModal';
 import { ColumnsModal } from '../components/ColumnsModal';
 import { ConvertLeadModal } from '../components/ConvertLeadModal';
 import { CustomFieldCell } from '../components/CustomFieldCell';
@@ -40,11 +42,14 @@ import { SpreadsheetImportModal } from '../components/SpreadsheetImportModal';
 import { StatusLabelsModal } from '../components/StatusLabelsModal';
 import { StatusPicker } from '../components/StatusPicker';
 import { WebFormModal } from '../components/WebFormModal';
+import { leadsToCsv } from '../leads-csv';
 import {
   boardColumns,
   boardMinWidth,
+  customFieldKey,
   fieldColumnKey,
   useVisibleColumns,
+  GROUP_COLUMN,
   type BoardColumn,
 } from '../columns';
 import {
@@ -54,6 +59,19 @@ import {
   useLeadFields,
   LEAD_VOCABULARY_KEY,
 } from '../vocabulary';
+
+/** One act, applied to every ticked lead. See `bulkAct`. */
+interface BulkAct {
+  ids: string[];
+  /** The write to repeat. One lead in, whatever the endpoint answers with out. */
+  run: (id: string) => Promise<unknown>;
+  /** How the notice names what happened — "Assigned", "Moved", "Archived", "Deleted". */
+  what: string;
+  /** A sentence appended on full success, for an act whose next step is not obvious. */
+  andThen?: string;
+  /** True where the rows are gone or off the board afterwards, so the ticks mean nothing. */
+  clearsSelection?: boolean;
+}
 
 export function LeadsPage() {
   const { session } = useSession();
@@ -71,7 +89,10 @@ export function LeadsPage() {
   const [isLabelsOpen, setIsLabelsOpen] = useState(false);
   const [boardSetupTab, setBoardSetupTab] = useState<'groups' | 'sources'>();
   const [isColumnsOpen, setIsColumnsOpen] = useState(false);
+  const [isMassEmailOpen, setIsMassEmailOpen] = useState(false);
   const [addingLeadInGroup, setAddingLeadInGroup] = useState<string>();
+  /** Something a bulk act wants to say that is not a failure — what it did, or why it did not. */
+  const [bulkNotice, setBulkNotice] = useState<string>();
 
   const queryClient = useQueryClient();
   const { visible, toggle } = useVisibleColumns();
@@ -143,28 +164,91 @@ export function LeadsPage() {
     ? (updateFailure.fields.email || updateFailure.fields.phone || updateFailure.fields.name || updateFailure.message)
     : undefined;
 
-  // The selection checkboxes existed with nothing to spend a selection on. These are what
-  // they are for. There is no bulk endpoint, so a bulk act is the same write repeated — fine
-  // at a board's scale, and it means a partial failure still leaves the rest applied.
-  const bulkUpdate = useMutation({
-    mutationFn: async ({ ids, data }: { ids: string[]; data: Record<string, unknown> }) => {
-      await Promise.all(ids.map((id) => api.patch<LeadResponse>(LEAD_PATHS.lead(id), data)));
+  /**
+   * Every act the selection toolbar performs, which is the same act four times.
+   *
+   * There is no bulk endpoint, so a bulk act is one write repeated — fine at a board's scale.
+   * `allSettled` rather than `all` is the part that matters, and it is why this is one function
+   * rather than four mutations: with `all`, a single lead the server refuses rejects the whole
+   * thing, the other eight writes still land, and the screen shows a bare error over a board
+   * that did in fact change. Somebody watching that reasonably concludes bulk assign does not
+   * work — which is the complaint this arm of the work started from. Delete had exactly that
+   * shape and is the least recoverable of the four, so it gets the same treatment as the rest.
+   *
+   * Every outcome is counted and said out loud, success included: a bulk act whose only feedback
+   * is rows quietly re-rendering is indistinguishable from one that did nothing.
+   */
+  const bulkAct = useMutation({
+    mutationFn: async ({ ids, run }: BulkAct) => {
+      const results = await Promise.allSettled(ids.map(run));
+      const refused = results.filter((result) => result.status === 'rejected');
+      const firstRefusal = refused[0];
+      return {
+        refusedCount: refused.length,
+        reason:
+          firstRefusal && firstRefusal.reason instanceof ApiFailure
+            ? firstRefusal.reason.message
+            : undefined,
+      };
     },
-    onSuccess: refresh,
-  });
-
-  const bulkDelete = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await Promise.all(ids.map((id) => api.delete(LEAD_PATHS.lead(id))));
-    },
-    onSuccess: () => {
-      setSelectedLeadIds(new Set());
+    onMutate: () => setBulkNotice(undefined),
+    onSuccess: ({ refusedCount, reason }, { ids, what, clearsSelection, andThen }) => {
+      const done = ids.length - refusedCount;
+      setBulkNotice(
+        refusedCount === 0
+          ? `${what} ${done} ${done === 1 ? 'lead' : 'leads'}.${andThen ? ` ${andThen}` : ''}`
+          : `${what} ${done} of ${ids.length}. ${refusedCount} refused${reason ? `: ${reason}` : '.'}`,
+      );
+      if (clearsSelection) setSelectedLeadIds(new Set());
       refresh();
     },
   });
 
-  const bulkFailure = [bulkUpdate.error, bulkDelete.error].find((e) => e instanceof ApiFailure);
-  const bulkFailureMsg = bulkFailure instanceof ApiFailure ? bulkFailure.message : undefined;
+  /**
+   * The selection as a CSV file, written here in the browser.
+   *
+   * `leadsToCsv` says why it is not a server route; what belongs here is the saving. The link
+   * is created, clicked and dropped in one turn: an object URL held past the click keeps the
+   * whole file alive for as long as the tab is open, and there is nothing left to point at it.
+   */
+  function exportSelection(ids: string[]) {
+    setBulkNotice(undefined);
+    const chosen = leads.filter((lead) => ids.includes(lead.id));
+    const csv = leadsToCsv(chosen, [...columns, GROUP_COLUMN], {
+      owner: (userId) => users.find((user) => user.id === userId)?.name ?? '',
+      group: (groupId) => groups.find((group) => group.id === groupId)?.name ?? '',
+      status: (status) => statusLabels.of(status).label,
+      // The board falls back to the lead's own `source` when no named source resolves, and the
+      // file is meant to be the board — so it falls back to exactly the same thing.
+      source: (lead) =>
+        lead.sourceName ?? sources.find((s) => s.id === lead.sourceId)?.name ?? lead.source ?? '',
+      custom: (lead, columnKey) =>
+        String(lead.customValues?.[customFieldKey(columnKey) ?? columnKey] ?? ''),
+    });
+
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setBulkNotice(`Exported ${ids.length} ${ids.length === 1 ? 'lead' : 'leads'} to a CSV file.`);
+  }
+
+  /**
+   * A bulk act only rejects outright now — network down, a bug — because a refusal per lead is
+   * counted rather than thrown. `reset()` on the way into the next act is what stops one dead
+   * request masking every later notice: the banner shows a failure before it shows a notice, so
+   * an error left standing would hide "Archived 2 leads" for the rest of the session.
+   */
+  const bulkFailureMsg = bulkAct.error instanceof ApiFailure ? bulkAct.error.message : undefined;
+
+  function runBulk(act: BulkAct) {
+    bulkAct.reset();
+    bulkAct.mutate(act);
+  }
 
   // A selection outlives the rows it was made on — a filter change, a group move — so the bar
   // counts what is actually still on the board rather than what was once ticked.
@@ -360,22 +444,75 @@ export function LeadsPage() {
         )}
       </div>
 
+      {/* Failures only. What a bulk act *did* is said on the toolbar that did it. */}
       {(failure || updateFailureMsg || bulkFailureMsg) && (
         <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3.5 text-xs font-medium text-rose-700">
           {failure?.message || updateFailureMsg || bulkFailureMsg}
         </div>
       )}
 
-      {selectedIds.length > 0 && canWrite && (
-        <BulkActionBar
-          count={selectedIds.length}
-          groups={groups}
-          users={users}
-          isBusy={bulkUpdate.isPending || bulkDelete.isPending}
-          onAssign={(userId) => bulkUpdate.mutate({ ids: selectedIds, data: { assignedToUserId: userId } })}
-          onMove={(groupId) => bulkUpdate.mutate({ ids: selectedIds, data: { groupId } })}
-          onDelete={() => bulkDelete.mutate(selectedIds)}
-          onClear={() => setSelectedLeadIds(new Set())}
+      {canWrite && (bulkNotice || selectedIds.length > 0) && (
+        <BulkLayer>
+          {bulkNotice && <BulkNotice onDismiss={() => setBulkNotice(undefined)}>{bulkNotice}</BulkNotice>}
+
+          {selectedIds.length > 0 && (
+            <BulkActionToolbar
+              count={selectedIds.length}
+              groups={groups}
+              users={users}
+              isBusy={bulkAct.isPending}
+              onMassEmail={() => setIsMassEmailOpen(true)}
+              onAddToSequence={() =>
+                setBulkNotice(
+                  'Sequences are not built yet — a sequence is several emails on a schedule, not one send. Mass email will write to this selection once, today.',
+                )
+              }
+              onAssign={(userId) =>
+                runBulk({
+                  ids: selectedIds,
+                  run: (id) => api.patch<LeadResponse>(LEAD_PATHS.lead(id), { assignedToUserId: userId }),
+                  what: userId ? 'Assigned' : 'Unassigned',
+                })
+              }
+              onMove={(groupId) =>
+                runBulk({
+                  ids: selectedIds,
+                  run: (id) => api.patch<LeadResponse>(LEAD_PATHS.lead(id), { groupId }),
+                  what: 'Moved',
+                })
+              }
+              onExport={() => exportSelection(selectedIds)}
+              onArchive={() =>
+                runBulk({
+                  ids: selectedIds,
+                  run: (id) => api.post<LeadResponse>(LEAD_PATHS.disqualify(id)),
+                  what: 'Archived',
+                  andThen: 'Reopen one from its own page to bring it back.',
+                  clearsSelection: true,
+                })
+              }
+              onDelete={() =>
+                runBulk({
+                  ids: selectedIds,
+                  run: (id) => api.delete(LEAD_PATHS.lead(id)),
+                  what: 'Deleted',
+                  clearsSelection: true,
+                })
+              }
+              onClear={() => setSelectedLeadIds(new Set())}
+            />
+          )}
+        </BulkLayer>
+      )}
+
+      {isMassEmailOpen && (
+        <MassEmailModal
+          leadIds={selectedIds}
+          onClose={() => setIsMassEmailOpen(false)}
+          onSent={() => {
+            setSelectedLeadIds(new Set());
+            refresh();
+          }}
         />
       )}
 
@@ -1196,127 +1333,6 @@ function OwnerPicker({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/**
- * What a selection is for.
- *
- * Reassigning forty leads after somebody leaves, or clearing out an import that went in wrong,
- * is the reason a person ticks forty boxes — and until this bar existed the ticks did nothing
- * at all. It appears only with a selection and sticks to the top of the board, because the rows
- * being acted on are usually scrolled past by the time the decision is made.
- *
- * Delete asks twice. Every other act here is reversible by repeating it with a different value;
- * that one is not, and it is one careless click away from the whole board.
- */
-/** Taking a lead off somebody is a choice, not the absence of one, so it needs a value of its own
- *  — sharing the placeholder's empty string would make the two indistinguishable to the select. */
-const UNASSIGN = '__unassign__';
-
-function BulkActionBar({
-  count,
-  groups,
-  users,
-  isBusy,
-  onAssign,
-  onMove,
-  onDelete,
-  onClear,
-}: {
-  count: number;
-  groups: { id: string; name: string }[];
-  users: { id: string; name: string }[];
-  isBusy: boolean;
-  onAssign: (userId: string | null) => void;
-  onMove: (groupId: string) => void;
-  onDelete: () => void;
-  onClear: () => void;
-}) {
-  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-
-  // A confirmation is for the selection it was asked about. Change the selection and it lapses.
-  useEffect(() => setIsConfirmingDelete(false), [count]);
-
-  return (
-    <div className="sticky top-2 z-30 flex flex-wrap items-center gap-2 rounded-xl border border-teal-200 bg-teal-50/95 p-2.5 shadow-xs backdrop-blur-xs">
-      <span className="px-1 text-xs font-bold text-teal-900">
-        {count} {count === 1 ? 'lead' : 'leads'} selected
-      </span>
-
-      <select
-        aria-label="Assign selected leads to"
-        value=""
-        disabled={isBusy}
-        onChange={(event) => event.target.value && onAssign(event.target.value === UNASSIGN ? null : event.target.value)}
-        className="cursor-pointer rounded-lg border border-teal-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:border-teal-600 focus:outline-none disabled:opacity-50"
-      >
-        <option value="" disabled>
-          Assign owner...
-        </option>
-        <option value={UNASSIGN}>Unassigned</option>
-        {users.map((user) => (
-          <option key={user.id} value={user.id}>
-            {user.name}
-          </option>
-        ))}
-      </select>
-
-      <select
-        aria-label="Move selected leads to group"
-        value=""
-        disabled={isBusy || groups.length === 0}
-        onChange={(event) => event.target.value && onMove(event.target.value)}
-        className="cursor-pointer rounded-lg border border-teal-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:border-teal-600 focus:outline-none disabled:opacity-50"
-      >
-        <option value="" disabled>
-          Move to group...
-        </option>
-        {groups.map((group) => (
-          <option key={group.id} value={group.id}>
-            {group.name}
-          </option>
-        ))}
-      </select>
-
-      {isConfirmingDelete ? (
-        <span className="flex items-center gap-2 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700">
-          Delete {count} for good?
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={isBusy}
-            className="rounded-md bg-rose-600 px-2.5 py-1 text-xs font-bold text-white transition hover:bg-rose-700 disabled:opacity-50"
-          >
-            {isBusy ? 'Deleting...' : 'Delete'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsConfirmingDelete(false)}
-            className="font-medium text-slate-500 hover:text-slate-700"
-          >
-            Keep
-          </button>
-        </span>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setIsConfirmingDelete(true)}
-          disabled={isBusy}
-          className="rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
-        >
-          Delete
-        </button>
-      )}
-
-      <button
-        type="button"
-        onClick={onClear}
-        className="ml-auto rounded-lg px-2.5 py-1.5 text-xs font-semibold text-teal-800 transition hover:bg-teal-100"
-      >
-        Clear selection
-      </button>
     </div>
   );
 }
