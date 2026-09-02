@@ -57,6 +57,30 @@ export class CampaignsService {
     return describeCampaign(campaign);
   }
 
+  /**
+   * Throws away a draft, and the recipients materializing built for it.
+   *
+   * Only a draft. A campaign that has sent is the record that email reached real people — and
+   * opens are still arriving against its recipients' tracking tokens hours and days later — so
+   * removing one would be destroying evidence of something that actually happened, in a module
+   * whose whole discipline is that nothing is deleted. A draft has reached nobody, which is the
+   * entire difference.
+   *
+   * The recipients go first and in the same transaction: they are this campaign's own rows and
+   * nothing else points at them, so leaving them behind would be leaving the larger half of the
+   * litter this endpoint exists to clear.
+   */
+  async discardCampaign(id: string): Promise<void> {
+    const campaign = await this.prisma.campaign.findUnique({ where: { id } });
+    if (!campaign) throw campaignNotFound();
+    if (campaign.status !== 'draft') throw campaignNotDraft();
+
+    await this.prisma.$transaction([
+      this.prisma.campaignRecipient.deleteMany({ where: { campaignId: id } }),
+      this.prisma.campaign.delete({ where: { id } }),
+    ]);
+  }
+
   async updateCampaign(id: string, input: Valid<typeof UpdateCampaignBody>): Promise<CampaignResponse> {
     const existing = await this.prisma.campaign.findUnique({
       where: { id },

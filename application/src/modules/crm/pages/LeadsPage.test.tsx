@@ -1325,6 +1325,67 @@ describe('LeadsPage', () => {
       expect(await screen.findByText(/sent to 1 lead/i)).toBeInTheDocument();
     });
 
+    /**
+     * Working out who a mass email would actually reach means building a real campaign, so
+     * backing out has to take that campaign with it — otherwise every change of mind leaves a
+     * draft on the Campaigns page.
+     */
+    it('throws away the draft campaign it built when the send is cancelled', async () => {
+      signedInWith();
+      boardWith([lead('Priya Kapoor')]);
+
+      const discarded: string[] = [];
+      server.use(
+        http.get('/api/crm/mailboxes', () =>
+          HttpResponse.json({
+            items: [{ id: 'mailbox-1', emailAddress: 'sales@nearbuy.example', status: 'connected' }],
+          }),
+        ),
+        http.get('/api/crm/email-templates', () =>
+          HttpResponse.json({ items: [{ id: 'template-1', name: 'First touch' }] }),
+        ),
+        http.post('/api/crm/campaigns', () =>
+          HttpResponse.json({ id: 'campaign-1', name: 'x', status: 'draft' }),
+        ),
+        http.post('/api/crm/campaigns/:id/materialize', () =>
+          HttpResponse.json({ id: 'campaign-1', name: 'x', status: 'draft' }),
+        ),
+        http.get('/api/crm/campaigns/:id/recipients', () =>
+          HttpResponse.json({
+            items: [
+              {
+                id: 'r1',
+                leadId: 'id-priya-kapoor',
+                leadName: 'Priya Kapoor',
+                emailAddress: 'priya@kapoor.test',
+                status: 'pending',
+                excludeReason: null,
+                sentAt: null,
+                openedAt: null,
+              },
+            ],
+          }),
+        ),
+        http.delete('/api/crm/campaigns/:id', ({ params }) => {
+          discarded.push(String(params.id));
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(await screen.findByRole('button', { name: 'Mass email' }));
+      await user.click(await screen.findByRole('button', { name: 'Continue' }));
+      await screen.findByText(/1 of 1 will be written to/i);
+
+      // Scoped to the dialog: the board's own inline add-lead row has a Cancel too.
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => expect(discarded).toEqual(['campaign-1']));
+    });
+
     it('opens the new lead row above the group, not below it', async () => {
       signedInWith();
       boardWith([lead('Priya Kapoor')]);

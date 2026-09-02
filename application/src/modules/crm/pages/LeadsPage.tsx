@@ -848,10 +848,26 @@ export function LeadsPage() {
                                           Contact created ↗
                                         </button>
                                       ) : (
+                                        /*
+                                          Quiet until the row is pointed at.
+
+                                          This was a solid green button on every row, and with
+                                          nine rows on screen that is nine of the loudest thing
+                                          on the board, all saying the same thing, none of them
+                                          the thing anybody came to read. It outshouted the lead
+                                          name — which is what a person actually scans for — and
+                                          fought the Status pill for the same attention, so the
+                                          row had two winners and therefore none.
+
+                                          The action has not moved or changed; only its weight
+                                          has. It carries a border at rest and fills in on hover
+                                          and on focus, so a pointer and a keyboard both find it,
+                                          and one saturated element is left per row: Status.
+                                        */
                                         <button
                                           type="button"
                                           onClick={() => setConvertLead(lead)}
-                                          className="whitespace-nowrap rounded-md bg-[#107c41] px-3.5 py-1 text-xs font-bold text-white shadow-2xs transition-colors hover:bg-[#0c6233]"
+                                          className="whitespace-nowrap rounded-md border border-emerald-200 bg-white px-3.5 py-1 text-xs font-semibold text-emerald-800 transition-colors hover:border-emerald-700 hover:bg-emerald-700 hover:text-white focus-visible:border-emerald-700 focus-visible:bg-emerald-700 focus-visible:text-white focus-visible:outline-none"
                                         >
                                           Move to Contacts
                                         </button>

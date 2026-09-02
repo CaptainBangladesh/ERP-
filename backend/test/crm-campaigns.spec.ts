@@ -275,6 +275,86 @@ describe('CRM Email Campaigns', () => {
       .expect(400);
   });
 
+  /**
+   * A draft is somebody changing their mind, and changing your mind should not leave litter.
+   * The Leads board builds a campaign in order to *show* who a mass email would reach — leads
+   * with no address, unsubscribed ones, duplicates — which cannot be known until the recipients
+   * are materialized. Cancel at that point and the draft has to go somewhere, and until this
+   * endpoint existed there was nowhere for it to go.
+   */
+  describe('discarding a draft', () => {
+    it('removes a draft campaign and the recipients it materialized', async () => {
+      const tenant = await signUp('DiscardCorp');
+      const { mailboxId, templateId } = await setupOutreach(tenant);
+
+      await tenant
+        .as(app.http.post(LEAD_PATHS.leads))
+        .send({ name: 'Erin', email: 'erin@example.com' })
+        .expect(201);
+
+      const campaign = await tenant
+        .as(app.http.post(CAMPAIGN_PATHS.campaigns))
+        .send({ name: 'Abandoned', mailboxConnectionId: mailboxId, templateId })
+        .expect(201);
+
+      await tenant.as(app.http.post(CAMPAIGN_PATHS.materialize(campaign.body.id))).expect(200);
+      expect(
+        (await tenant.as(app.http.get(CAMPAIGN_PATHS.recipients(campaign.body.id))).expect(200)).body
+          .items,
+      ).toHaveLength(1);
+
+      await tenant.as(app.http.delete(CAMPAIGN_PATHS.campaign(campaign.body.id))).expect(204);
+
+      await tenant.as(app.http.get(CAMPAIGN_PATHS.campaign(campaign.body.id))).expect(404);
+      const listed = await tenant.as(app.http.get(CAMPAIGN_PATHS.campaigns)).expect(200);
+      expect(listed.body.items.some((c: CampaignResponse) => c.id === campaign.body.id)).toBe(false);
+    });
+
+    /**
+     * The one that matters. A campaign that has sent is a record of email that reached real
+     * people — deleting it would delete the evidence, and the open tracking still arriving
+     * against it. Discarding is for drafts; a sent campaign stays.
+     */
+    it('refuses to discard a campaign that has already sent', async () => {
+      const tenant = await signUp('SentCorp');
+      const { mailboxId, templateId } = await setupOutreach(tenant);
+
+      await tenant
+        .as(app.http.post(LEAD_PATHS.leads))
+        .send({ name: 'Frank', email: 'frank@example.com' })
+        .expect(201);
+
+      const campaign = await tenant
+        .as(app.http.post(CAMPAIGN_PATHS.campaigns))
+        .send({ name: 'Already Out', mailboxConnectionId: mailboxId, templateId })
+        .expect(201);
+
+      await tenant.as(app.http.post(CAMPAIGN_PATHS.materialize(campaign.body.id))).expect(200);
+      await tenant.as(app.http.post(CAMPAIGN_PATHS.sendBatch(campaign.body.id))).expect(200);
+
+      const refused = await tenant
+        .as(app.http.delete(CAMPAIGN_PATHS.campaign(campaign.body.id)))
+        .expect(400);
+      expect(refused.body.code).toBe(CAMPAIGN_ERROR_CODES.campaignNotDraft);
+
+      await tenant.as(app.http.get(CAMPAIGN_PATHS.campaign(campaign.body.id))).expect(200);
+    });
+
+    it('will not let one company discard another’s draft', async () => {
+      const mine = await signUp('MineCorp');
+      const theirs = await signUp('TheirsCorp');
+      const outreach = await setupOutreach(theirs);
+
+      const campaign = await theirs
+        .as(app.http.post(CAMPAIGN_PATHS.campaigns))
+        .send({ name: 'Not Yours', mailboxConnectionId: outreach.mailboxId, templateId: outreach.templateId })
+        .expect(201);
+
+      await mine.as(app.http.delete(CAMPAIGN_PATHS.campaign(campaign.body.id))).expect(404);
+      await theirs.as(app.http.get(CAMPAIGN_PATHS.campaign(campaign.body.id))).expect(200);
+    });
+  });
+
   it('enforces tenant isolation for campaigns and recipients', async () => {
     const tenantA = await signUp('TenantA');
     const tenantB = await signUp('TenantB');

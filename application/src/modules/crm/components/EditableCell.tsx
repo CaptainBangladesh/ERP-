@@ -172,7 +172,18 @@ export function EditableText({
               setError(undefined);
               setEditing(true);
             }}
-            className="shrink-0 rounded px-1 min-w-[20px] text-center text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus:ring-1 focus:ring-teal-600"
+            /*
+              Revealed on hover and on focus, which is what the note at the top of this file
+              has always claimed and what the other cell below already did. Drawn at rest, it
+              was a second mark in every editable cell on every row — a column of pencils
+              beside a column of addresses, none of which anybody reads — and it made a cell
+              that is *already* editable by double-click look like it needed the button.
+
+              `opacity` rather than `hidden`: the button keeps its space, so revealing it does
+              not shift the text beside it, and it keeps its tab stop, so the keyboard reaches
+              editing whether or not a pointer ever hovers the row.
+            */
+            className="shrink-0 rounded px-1 min-w-[20px] text-center text-slate-400 opacity-0 transition group-hover/cell:opacity-100 hover:bg-slate-100 hover:text-slate-600 focus:opacity-100 focus:outline-none focus:ring-1 focus:ring-teal-600"
           >
             ✎
           </button>

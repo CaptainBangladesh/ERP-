@@ -35,13 +35,10 @@ import { ApiFailure, api } from '../../../api/client';
  * set aside and why. A mass email is the one act on this board that cannot be undone by
  * repeating it with a different value, so it gets the pause that Delete gets.
  *
- * **Known loose end.** Cancelling after (2) leaves a materialized draft behind, because there is
- * no endpoint that removes a campaign — `CAMPAIGN_PATHS` has create, read, update, materialize
- * and send-batch, and nothing else. A draft that sent to nobody is harmless and appears on the
- * Campaigns page where it can be finished or ignored, so this is deliberately left rather than
- * papered over by moving `create` after the confirmation: doing that would mean showing the
- * excluded-recipient count *before* anything has worked out who is excluded, which is the one
- * thing this dialog exists to do.
+ * Backing out at that point discards the draft it built — see `leave`. The campaign cannot be
+ * created any later than it is: the excluded-recipient count *is* what materializing works out,
+ * so there is nothing to show before one exists. Cleaning up afterwards is the alternative to
+ * leaving a draft behind every time somebody opens this dialog and thinks better of it.
  */
 export function MassEmailModal({
   leadIds,
@@ -168,11 +165,30 @@ export function MassEmailModal({
     }
   }
 
+  /**
+   * Leaving without sending, which has to take the draft with it.
+   *
+   * Preparing builds a real campaign, because working out who is reachable is something only
+   * `materialize` can do. Backing out after that would otherwise leave a draft on the Campaigns
+   * page for every time somebody opened this dialog and thought better of it.
+   *
+   * The discard is best-effort and never blocks the close: the person asked to leave, and a
+   * failed cleanup is litter rather than a reason to trap them in a dialog. Nothing is discarded
+   * once anything has sent — `sentCount` guards that, and the endpoint refuses a non-draft
+   * anyway, so the rule holds even if this forgets.
+   */
+  function leave() {
+    if (campaign && sentCount === undefined) {
+      void api.delete(CAMPAIGN_PATHS.campaign(campaign.id)).catch(() => undefined);
+    }
+    onClose();
+  }
+
   const nothingToSendWith = connected.length === 0 || templateItems.length === 0;
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={leave}
       title="Mass email"
       icon="✉"
       description={`One email to the ${leadIds.length} ${leadIds.length === 1 ? 'lead' : 'leads'} you ticked.`}
@@ -181,7 +197,7 @@ export function MassEmailModal({
           <Button onClick={onClose}>Done</Button>
         ) : campaign ? (
           <>
-            <Button variant="ghost" onClick={onClose}>
+            <Button variant="ghost" onClick={leave} disabled={isWorking}>
               Cancel
             </Button>
             <Button onClick={() => void send()} disabled={isWorking || sendable.length === 0}>
@@ -190,7 +206,7 @@ export function MassEmailModal({
           </>
         ) : (
           <>
-            <Button variant="ghost" onClick={onClose}>
+            <Button variant="ghost" onClick={leave}>
               Cancel
             </Button>
             <Button

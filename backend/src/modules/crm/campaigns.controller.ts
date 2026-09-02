@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -63,6 +64,18 @@ export class CampaignsController {
     @Body(validated(UpdateCampaignBody)) body: Valid<typeof UpdateCampaignBody>,
   ): Promise<CampaignResponse> {
     return this.campaignsService.updateCampaign(id, body);
+  }
+
+  /**
+   * Discards a draft. `write` rather than a delete permission of its own, because every other
+   * campaign write is guarded by exactly this one and a draft nobody has sent is not a heavier
+   * act than editing it.
+   */
+  @Delete(CAMPAIGN_PATHS.campaign(':id'))
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('crm:leads:write')
+  async discard(@Param('id') id: string): Promise<void> {
+    return this.campaignsService.discardCampaign(id);
   }
 
   @Post(CAMPAIGN_PATHS.materialize(':id'))
