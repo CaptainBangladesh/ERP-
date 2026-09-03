@@ -8,6 +8,7 @@ import {
   PARTY_PATHS,
   WORKFLOW_RULE_PATHS,
   listPath,
+  type ActivityFeedResponse,
   type ActivityListResponse,
   type ActivityResponse,
   type AuthenticatedSession,
@@ -179,6 +180,76 @@ describe('crm', () => {
         .expect(422);
 
       expect(refused.body.fields).toHaveProperty('source');
+    });
+  });
+
+  describe('assigning it to several people', () => {
+    // Two extra colleague ids. Assignment carries no FK — it is a shape-checked reference the
+    // frontend resolves against identity — so a well-formed UUID is all a test needs to stand in
+    // for a teammate. See `Lead.assignedToUserId` in schema.prisma.
+    const bo = '11111111-1111-4111-8111-111111111111';
+    const cai = '22222222-2222-4222-8222-222222222222';
+
+    it('keeps the whole set, and takes the first as the primary owner', async () => {
+      const tenant = await signUp();
+      const ada = tenant.session.user.id;
+
+      const created = await addLead(tenant, { name: 'Shared Lead', assigneeUserIds: [ada, bo] });
+      expect(created.assigneeUserIds).toEqual([ada, bo]);
+      expect(created.assignedToUserId).toBe(ada);
+
+      const listed = await listLeads(tenant, { pageSize: 10 });
+      const found = listed.items.find((item) => item.id === created.id)!;
+      expect(found.assigneeUserIds).toEqual([ada, bo]);
+      expect(found.assignedToUserId).toBe(ada);
+    });
+
+    it('reads a lone legacy assignedToUserId as a one-person set', async () => {
+      const tenant = await signUp();
+      const ada = tenant.session.user.id;
+
+      const created = await addLead(tenant, { name: 'Legacy Assign', assignedToUserId: ada });
+      expect(created.assigneeUserIds).toEqual([ada]);
+      expect(created.assignedToUserId).toBe(ada);
+    });
+
+    it('replaces the set on edit, and can clear it to nobody', async () => {
+      const tenant = await signUp();
+      const ada = tenant.session.user.id;
+      const created = await addLead(tenant, { name: 'Reassigned', assigneeUserIds: [ada, bo] });
+
+      const reassigned = await change(tenant, created.id, { assigneeUserIds: [cai] });
+      expect(reassigned.assigneeUserIds).toEqual([cai]);
+      expect(reassigned.assignedToUserId).toBe(cai);
+
+      const cleared = await change(tenant, created.id, { assigneeUserIds: [] });
+      expect(cleared.assigneeUserIds).toEqual([]);
+      expect(cleared.assignedToUserId).toBeNull();
+    });
+
+    it('finds a lead by any of its assignees, not only the primary', async () => {
+      const tenant = await signUp();
+      const ada = tenant.session.user.id;
+      const shared = await addLead(tenant, { name: 'Team Lead', assigneeUserIds: [ada, bo] });
+      await addLead(tenant, { name: 'Someone Else', assigneeUserIds: [cai] });
+
+      // `bo` is the *second* assignee — a collaborator, not the primary — and must still match.
+      const byCollaborator = await listLeads(tenant, { filters: { assignedToUserId: bo } });
+      expect(byCollaborator.items.map((item) => item.id)).toEqual([shared.id]);
+
+      const byPrimary = await listLeads(tenant, { filters: { assignedToUserId: ada } });
+      expect(byPrimary.items.map((item) => item.id)).toEqual([shared.id]);
+    });
+
+    it('refuses a malformed id in the set, naming the field', async () => {
+      const tenant = await signUp();
+
+      const refused = await tenant
+        .as(app.http.post(LEAD_PATHS.leads))
+        .send({ name: 'Bad Assign', assigneeUserIds: ['not-a-uuid'] })
+        .expect(422);
+
+      expect(refused.body.fields).toHaveProperty('assigneeUserIds');
     });
   });
 
@@ -420,6 +491,49 @@ describe('crm', () => {
         .expect(200);
 
       expect((list.body as ActivityListResponse).items).toHaveLength(1);
+    });
+
+    it('reads the whole company’s activity as one feed, newest first, with each parent named', async () => {
+      const tenant = await signUp();
+      const first = await addLead(tenant, { name: 'Priya Kapoor' });
+      const second = await addLead(tenant, { name: 'Marcus Bell' });
+
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'call', notes: 'First call', leadId: first.id } satisfies CreateActivityRequest)
+        .expect(201);
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'note', notes: 'Second note', leadId: second.id } satisfies CreateActivityRequest)
+        .expect(201);
+
+      const feed = await tenant.as(app.http.get(ACTIVITY_PATHS.activities)).expect(200);
+      const items = (feed.body as ActivityFeedResponse).items;
+
+      // Every lead's activity in one place, and each row says whose it is.
+      expect(items).toHaveLength(2);
+      expect(items.every((item) => item.parentKind === 'lead')).toBe(true);
+      const names = items.map((item) => item.parentName);
+      expect(names).toContain('Priya Kapoor');
+      expect(names).toContain('Marcus Bell');
+
+      // Newest first: the note logged last leads the feed.
+      expect(items[0]!.notes).toBe('Second note');
+      expect((feed.body as ActivityFeedResponse).page.total).toBe(2);
+    });
+
+    it('keeps one company’s feed out of another’s', async () => {
+      const northwind = await signUp();
+      const acme = await signUp({ companyName: 'Acme', email: 'boss@acme.test' });
+
+      const mine = await addLead(northwind, { name: 'Northwind Lead' });
+      await northwind
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'note', notes: 'Ours alone', leadId: mine.id } satisfies CreateActivityRequest)
+        .expect(201);
+
+      const theirs = await acme.as(app.http.get(ACTIVITY_PATHS.activities)).expect(200);
+      expect((theirs.body as ActivityFeedResponse).items).toHaveLength(0);
     });
 
     it('enforces the exactly-one-parent rule', async () => {

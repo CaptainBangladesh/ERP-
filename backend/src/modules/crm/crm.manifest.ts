@@ -37,6 +37,7 @@ export const manifest: ModuleManifest = {
     'LeadAttachment',
     'LeadSubmission',
     'LeadEmailSend',
+    'LeadAssignee',
     'Stage',
     'Deal',
     'Activity',
@@ -94,11 +95,23 @@ export const manifest: ModuleManifest = {
   ],
 
   navigation: [
+    /**
+     * The lead-working surface, reached straight from the nav rather than only by clicking a
+     * lead — the worklist, the activity feed and the next-step rail, opened on the first lead.
+     * It is the *same* screen a lead click opens, not a second one: one workspace, two doors.
+     * Guarded by `leads:read`, because working a lead is what it is for.
+     */
+    { label: 'Workspace', path: '/crm/workspace', order: 47, permission: 'crm:leads:read' },
     { label: 'Deals', path: '/crm/deals', order: 48, permission: 'crm:deals:read' },
     { label: 'Leads', path: '/crm/leads', order: 49, permission: 'crm:leads:read' },
     { label: 'Contacts', path: '/crm/contacts', order: 50, permission: 'crm:contacts:read' },
     { label: 'Accounts', path: '/parties', order: 51, permission: 'crm:leads:read' },
-    { label: 'Activities', path: '/crm/leads', order: 52, permission: 'crm:activities:read' },
+    /**
+     * The whole team's feed, personal and colleague activity in one timeline. Its own screen at
+     * its own path — it pointed at `/crm/leads` for a while, which is why Leads and Activities
+     * opened the same board and neither could tell you it was the wrong one.
+     */
+    { label: 'Activities', path: '/crm/activities', order: 52, permission: 'crm:activities:read' },
     { label: 'Sales Dashboard', path: '/crm/dashboard', order: 53, permission: 'crm:dashboard:read' },
     { label: 'Workflow Rules', path: '/crm/workflow-rules', order: 54, permission: 'crm:workflow-rules:read' },
     /**

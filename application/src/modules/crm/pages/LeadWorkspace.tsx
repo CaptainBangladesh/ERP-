@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useRef, useState } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ACTIVITY_PATHS,
   IDENTITY_PATHS,
@@ -23,6 +23,8 @@ import { ApiFailure, api } from '../../../api/client';
 import { navigate, useLocationPath } from '../../../app/location';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
+import { AnswerValue } from '../components/AnswerValue';
+import { MerchantSnapshot } from '../components/MerchantProfileCard';
 import { LeadActivityFeed } from '../components/LeadActivityFeed';
 import { LeadFilesTab } from '../components/LeadFilesTab';
 import { LeadSurveyTab } from '../components/LeadSurveyTab';
@@ -30,7 +32,8 @@ import { ConvertLeadModal } from '../components/ConvertLeadModal';
 import { MailboxesModal } from '../components/MailboxesModal';
 import { SendEmailModal } from '../components/SendEmailModal';
 import { useLeadFields, useLeadSources, useLeadStatusLabels, type StatusLabel } from '../vocabulary';
-import { avatarColour, initialsOf, topSurveyAnswers } from '../survey-answers';
+import { avatarColour, hrefFor, initialsOf, isUrl, prettyUrl } from '../survey-answers';
+import { buildMerchantProfile } from '../merchant-intel';
 import {
   ActivityIcon,
   BoltIcon,
@@ -90,11 +93,19 @@ export function LeadWorkspace() {
    */
   const [tab, setTab] = useState<WorkspaceTab>('activity');
   const [worklistOpen, setWorklistOpen] = useState(true);
+  // The worklist's chosen filter and search live here, not inside `Worklist`, so they persist as
+  // the user moves lead-to-lead — the detail query re-pends on each click.
+  const [worklistLens, setWorklistLens] = useState<WorklistLens | undefined>();
+  const [worklistSearch, setWorklistSearch] = useState('');
   const [converting, setConverting] = useState(false);
   const [sendEmailOpen, setSendEmailOpen] = useState(false);
   const [mailboxesOpen, setMailboxesOpen] = useState(false);
   const [composerType, setComposerType] = useState<ActivityType>('note');
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
+  // The rail's "All survey answers" switches the centre tab, which happens off-screen when the
+  // reader is down in the rail — so it also brings the workspace column back into view, or the
+  // click reads as doing nothing.
+  const workspaceColumnRef = useRef<HTMLDivElement>(null);
 
   const statusLabels = useLeadStatusLabels();
   const { sources } = useLeadSources();
@@ -104,6 +115,9 @@ export function LeadWorkspace() {
     queryKey: ['crm', 'leads', 'detail', leadId],
     queryFn: () => api.get<LeadResponse>(LEAD_PATHS.lead(leadId)),
     enabled: Boolean(leadId),
+    // Keep the last lead on screen while the next one loads, so moving lead-to-lead down the
+    // worklist doesn't blank the whole page (and unmount the worklist with its chosen filter).
+    placeholderData: keepPreviousData,
   });
 
   const worklist = useQuery({
@@ -160,6 +174,17 @@ export function LeadWorkspace() {
     setComposerFocusSignal((signal) => signal + 1);
   }
 
+  function openSurvey() {
+    setTab('survey');
+    requestAnimationFrame(() => {
+      try {
+        workspaceColumnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch {
+        // jsdom has no layout engine; the tab switch is what matters there.
+      }
+    });
+  }
+
   if (lead.isPending) {
     return (
       <p role="status" className="p-8 text-sm font-semibold text-slate-600">
@@ -187,10 +212,15 @@ export function LeadWorkspace() {
   }
 
   const owner = users.data?.items.find((user) => user.id === detail.assignedToUserId);
+  // Everyone on the lead, primary first, resolved to the people we can name. A lead may now be
+  // shared, so the Owner rail lists the set rather than the single primary.
+  const assignees = (detail.assigneeUserIds ?? (detail.assignedToUserId ? [detail.assignedToUserId] : []))
+    .map((id) => users.data?.items.find((user) => user.id === id))
+    .filter((user): user is UserSummary => Boolean(user));
   const status = statusLabels.of(detail.status);
 
   return (
-    <section aria-label={detail.name} className="flex min-h-[calc(100vh-8rem)] gap-4">
+    <section aria-label={detail.name} className="flex min-w-0 min-h-[calc(100vh-8rem)] gap-4">
       <Worklist
         open={worklistOpen}
         onToggle={() => setWorklistOpen((open) => !open)}
@@ -198,9 +228,13 @@ export function LeadWorkspace() {
         activeId={leadId}
         statusOf={statusLabels.of}
         currentUserId={session?.user.id}
+        lens={worklistLens}
+        onLensChange={setWorklistLens}
+        search={worklistSearch}
+        onSearchChange={setWorklistSearch}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col gap-4">
+      <div ref={workspaceColumnRef} className="flex min-w-0 flex-1 flex-col gap-4">
         <header className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
@@ -275,7 +309,7 @@ export function LeadWorkspace() {
           )}
         </header>
 
-        <div className="min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1">
           {tab === 'activity' && (
             <LeadActivityFeed
               leadId={leadId}
@@ -309,13 +343,14 @@ export function LeadWorkspace() {
         detail={detail}
         sourceLabel={sourceLabelOf(detail, sources)}
         owner={owner}
+        assignees={assignees}
         canWrite={canWrite}
         pending={change.isPending}
         customFields={customFields}
         submissions={submissions.data?.items ?? []}
         onQualify={() => setConverting(true)}
         onReopen={() => change.mutate(() => api.post<LeadResponse>(LEAD_PATHS.reopen(leadId)))}
-        onOpenSurvey={() => setTab('survey')}
+        onOpenSurvey={openSurvey}
       />
 
       {converting && (
@@ -361,6 +396,10 @@ function Worklist({
   activeId,
   statusOf,
   currentUserId,
+  lens,
+  onLensChange,
+  search,
+  onSearchChange,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -368,16 +407,23 @@ function Worklist({
   activeId: string;
   statusOf: (status: LeadSummary['status']) => StatusLabel;
   currentUserId: string | undefined;
+  // Lifted to the parent so the chosen filter and search survive lead-to-lead navigation — the
+  // detail query re-pends on each click and its loading gate briefly unmounts this component.
+  lens: WorklistLens | undefined;
+  onLensChange: (lens: WorklistLens | undefined) => void;
+  search: string;
+  onSearchChange: (search: string) => void;
 }) {
-  const [search, setSearch] = useState('');
-  const [lens, setLens] = useState<WorklistLens | undefined>();
-
   const matchesLens = useMemo(
     () => ({
       new: (lead: LeadSummary) => lead.status === 'new',
       hot: (lead: LeadSummary) => classifyPriority(priorityOf(lead.customValues) ?? '')?.label === 'Hot',
       contacted: (lead: LeadSummary) => lead.status === 'contacted',
-      mine: (lead: LeadSummary) => Boolean(currentUserId) && lead.assignedToUserId === currentUserId,
+      mine: (lead: LeadSummary) => {
+        if (!currentUserId) return false;
+        const ids = lead.assigneeUserIds ?? (lead.assignedToUserId ? [lead.assignedToUserId] : []);
+        return ids.includes(currentUserId);
+      },
     }),
     [currentUserId],
   );
@@ -450,28 +496,28 @@ function Worklist({
           dotClass="bg-sky-500"
           count={leads.filter(matchesLens.new).length}
           active={lens === 'new'}
-          onClick={() => setLens((current) => (current === 'new' ? undefined : 'new'))}
+          onClick={() => onLensChange(lens === 'new' ? undefined : 'new')}
         />
         <StatTile
           label="Hot"
           dotClass="bg-rose-500"
           count={leads.filter(matchesLens.hot).length}
           active={lens === 'hot'}
-          onClick={() => setLens((current) => (current === 'hot' ? undefined : 'hot'))}
+          onClick={() => onLensChange(lens === 'hot' ? undefined : 'hot')}
         />
         <StatTile
           label="Contacted"
           dotClass="bg-violet-500"
           count={leads.filter(matchesLens.contacted).length}
           active={lens === 'contacted'}
-          onClick={() => setLens((current) => (current === 'contacted' ? undefined : 'contacted'))}
+          onClick={() => onLensChange(lens === 'contacted' ? undefined : 'contacted')}
         />
         <StatTile
           label="Assigned to me"
           dotClass="bg-teal-500"
           count={leads.filter(matchesLens.mine).length}
           active={lens === 'mine'}
-          onClick={() => setLens((current) => (current === 'mine' ? undefined : 'mine'))}
+          onClick={() => onLensChange(lens === 'mine' ? undefined : 'mine')}
         />
       </div>
 
@@ -484,7 +530,7 @@ function Worklist({
           aria-label="Search the worklist"
           placeholder="Search leads…"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => onSearchChange(event.target.value)}
           className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none"
         />
       </div>
@@ -624,8 +670,8 @@ function StatusStepper({
   const currentIndex = settable.findIndex((step) => step.status === status);
 
   return (
-    <div role="group" aria-label="Status pipeline" className="flex flex-wrap items-center gap-x-3 gap-y-3">
-      <ol className="flex min-w-0 flex-1 items-center">
+    <div role="group" aria-label="Status pipeline" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-3">
+      <ol className="flex min-w-0 flex-1 items-center overflow-hidden">
         {settable.map((step, index) => {
           const isCurrent = step.status === status;
           // Qualified sits past every settable step, so when a lead reaches it the whole rail
@@ -634,13 +680,16 @@ function StatusStepper({
           const isLast = index === settable.length - 1;
 
           return (
-            <li key={step.status} className={`flex items-center ${isLast ? '' : 'min-w-0 flex-1'}`}>
+            <li key={step.status} className={`flex min-w-0 items-center ${isLast ? '' : 'flex-1'}`}>
+              {/* min-w-0 + a truncating label lets the steps compress on a narrow column instead of
+                  overlapping each other and spilling off the side. */}
               <button
                 type="button"
                 aria-current={isCurrent ? 'step' : undefined}
                 disabled={!canWrite || pending || isCurrent}
                 onClick={() => onSet(step.status)}
-                className="group flex shrink-0 items-center gap-2 rounded-lg py-1 pr-2 text-xs font-bold transition disabled:cursor-default"
+                title={step.label}
+                className="group flex min-w-0 items-center gap-2 rounded-lg py-1 pr-2 text-xs font-bold transition disabled:cursor-default"
               >
                 <span
                   aria-hidden="true"
@@ -651,7 +700,11 @@ function StatusStepper({
                 >
                   {isBehind ? <CheckIcon size={13} /> : null}
                 </span>
-                <span className={isCurrent ? 'text-slate-900' : isBehind ? 'text-slate-600' : 'text-slate-500'}>
+                <span
+                  className={`truncate ${
+                    isCurrent ? 'text-slate-900' : isBehind ? 'text-slate-600' : 'text-slate-500'
+                  }`}
+                >
                   {step.label}
                 </span>
               </button>
@@ -659,7 +712,7 @@ function StatusStepper({
               {!isLast && (
                 <span
                   aria-hidden="true"
-                  className={`mx-1 h-0.5 min-w-4 flex-1 rounded-full ${isBehind ? 'bg-teal-500' : 'bg-slate-200'}`}
+                  className={`mx-1 h-0.5 min-w-2 flex-1 rounded-full ${isBehind ? 'bg-teal-500' : 'bg-slate-200'}`}
                 />
               )}
             </li>
@@ -714,6 +767,7 @@ function NextStepRail({
   detail,
   sourceLabel,
   owner,
+  assignees,
   canWrite,
   pending,
   customFields,
@@ -726,6 +780,8 @@ function NextStepRail({
   detail: LeadResponse;
   sourceLabel: string;
   owner: UserSummary | undefined;
+  /** Everyone assigned to the lead, primary first — the Owner rail lists them all. */
+  assignees: UserSummary[];
   canWrite: boolean;
   pending: boolean;
   customFields: LeadFieldSummary[];
@@ -751,7 +807,7 @@ function NextStepRail({
 
   const items = activities.data?.items ?? [];
   const pendingTask = items.find((activity) => activity.type === 'task' && !activity.completedAt);
-  const answers = topSurveyAnswers(submissions, customFields);
+  const profile = buildMerchantProfile(submissions, customFields);
 
   return (
     <aside aria-label="Next step" className="hidden w-72 shrink-0 flex-col gap-4 lg:flex">
@@ -835,7 +891,7 @@ function NextStepRail({
         )}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
+      <div className="flex min-w-0 flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
         <h2 className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
           <StarIcon size={13} />
           What we know
@@ -855,13 +911,10 @@ function NextStepRail({
           <PriorityBadge value={priorityOf(detail.customValues)} fallback="—" />
         </RailField>
 
-        {/* The answers that actually say what this lead wants, which is the reason the rail is
-            worth a glance at all — source and priority alone are filing, not context. */}
-        {answers.map((answer) => (
-          <RailField key={answer.key} label={answer.label} stacked>
-            <span className="text-xs font-semibold text-slate-800">{answer.value}</span>
-          </RailField>
-        ))}
+        {/* The research read that actually says what this lead is — category, site, app, socials —
+            which is the reason the rail is worth a glance at all. Source and priority alone are
+            filing, not context. The full breakdown, notes and usability grid live on the Survey tab. */}
+        <MerchantSnapshot profile={profile} />
 
         {submissions.length > 0 && (
           <button
@@ -875,8 +928,20 @@ function NextStepRail({
       </div>
 
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs">
-        <h2 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Owner</h2>
-        {detail.assignedToUserId ? (
+        <h2 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          {assignees.length > 1 ? 'Owners' : 'Owner'}
+        </h2>
+        {assignees.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            {assignees.map((person) => (
+              <div key={person.id} className="flex items-center gap-2.5">
+                <Avatar name={person.name} />
+                <span className="min-w-0 truncate text-xs font-bold text-slate-800">{person.name}</span>
+              </div>
+            ))}
+          </div>
+        ) : detail.assignedToUserId ? (
+          // A primary is set but no one on it resolves to a current member.
           <div className="flex items-center gap-2.5">
             <Avatar name={owner?.name ?? 'Unknown'} />
             <span className="min-w-0 truncate text-xs font-bold text-slate-800">
@@ -952,8 +1017,13 @@ function DetailsPanel({
   canReadUsers: boolean;
   customFields: LeadFieldSummary[];
 }) {
+  // The primary's name, with a "+N" when the lead is shared, so the compact summary line admits
+  // the co-owners the Owner rail spells out in full.
+  const extraOwners = Math.max(0, (detail.assigneeUserIds?.length ?? (detail.assignedToUserId ? 1 : 0)) - 1);
   const ownerLabel = detail.assignedToUserId
-    ? owner?.name ?? (canReadUsers ? 'Someone no longer in this company' : 'Assigned')
+    ? `${owner?.name ?? (canReadUsers ? 'Someone no longer in this company' : 'Assigned')}${
+        extraOwners > 0 ? ` +${extraOwners}` : ''
+      }`
     : 'Unassigned';
 
   const customRows = customFields
@@ -961,7 +1031,7 @@ function DetailsPanel({
     .map((field) => ({
       key: field.key,
       label: field.label,
-      value: renderCustomValue(detail.customValues?.[field.key]),
+      raw: detail.customValues?.[field.key],
     }));
 
   return (
@@ -978,18 +1048,30 @@ function DetailsPanel({
         <DetailRow label="Source" value={sourceLabel || '—'} />
         <DetailRow label="Owner" value={ownerLabel} />
         {customRows.map((row) => (
-          <DetailRow key={row.key} label={row.label} value={row.value} />
+          <DetailRow key={row.key} label={row.label}>
+            <div className="text-xs font-semibold text-slate-800">
+              <AnswerValue value={row.raw} />
+            </div>
+          </DetailRow>
         ))}
       </dl>
     </section>
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value?: string;
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</dt>
-      <dd className="text-xs font-semibold text-slate-800 break-words">{value}</dd>
+      <dd className="text-xs font-semibold text-slate-800 break-words">{children ?? value}</dd>
     </div>
   );
 }
@@ -1029,15 +1111,16 @@ function ContactRow({ detail }: { detail: LeadResponse }) {
       )}
       {link && (
         <a
-          href={link}
+          href={hrefFor(link)}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-1.5 transition hover:text-slate-900"
+          title={link}
+          className="flex min-w-0 items-center gap-1.5 transition hover:text-slate-900"
         >
           <span className="text-slate-400">
             <LinkIcon size={13} />
           </span>
-          {link.replace(/^https?:\/\//, '')}
+          <span className="truncate">{prettyUrl(link)}</span>
         </a>
       )}
       {!detail.email && !detail.phone && !link && (
@@ -1049,7 +1132,7 @@ function ContactRow({ detail }: { detail: LeadResponse }) {
 
 function firstUrl(customValues: LeadCustomValues | undefined): string | undefined {
   for (const value of Object.values(customValues ?? {})) {
-    if (typeof value === 'string' && /^https?:\/\/\S+$/i.test(value.trim())) return value.trim();
+    if (typeof value === 'string' && isUrl(value.trim())) return value.trim();
   }
   return undefined;
 }
@@ -1217,11 +1300,4 @@ function sourceLabelOf(detail: LeadResponse, sources: { id: string; name: string
 function isBlank(value: unknown): boolean {
   if (value === undefined || value === null || value === '') return true;
   return Array.isArray(value) && value.length === 0;
-}
-
-function renderCustomValue(value: unknown): string {
-  if (Array.isArray(value)) return value.join(', ');
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (value === null || value === undefined) return '—';
-  return String(value);
 }

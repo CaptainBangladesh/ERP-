@@ -102,12 +102,13 @@ describe('CaptureSourcesPage', () => {
     );
     expect(shown).toBeInTheDocument();
 
-    // And the Apps Script it offers posts to that same URL, keyed by Google's stable item ids.
+    // And the Apps Script it offers posts to that same URL, keyed by each question's title so the
+    // answers read plainly on the Survey tab without a mapping per question.
     const script = screen.getByText((_, element) =>
       element?.tagName === 'PRE' && (element.textContent ?? '').includes('onFormSubmit'),
     );
     expect(script.textContent).toContain(expected);
-    expect(script.textContent).toContain("'entry_' + item.getItem().getId()");
+    expect(script.textContent).toContain('payload[item.getItem().getTitle()] = item.getResponse();');
   });
 
   it('opens modal to create a new capture source', async () => {

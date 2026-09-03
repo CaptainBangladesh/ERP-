@@ -25,9 +25,18 @@ export function answerLabel(
   return definition?.label ?? humanise(mappedTo ?? key);
 }
 
-/** A form's own key, made readable: `entry_104` → `Entry 104`, `fleet_size` → `Fleet Size`. */
+/**
+ * A form's own key, made readable: `entry_104` → `Entry 104`, `fleet_size` → `Fleet Size`.
+ *
+ * A webhook posts each answer under its full question *title*, which a person already spaced and
+ * capitalised — "Does the merchant have a dedicated website?". Title-casing that mangles it
+ * ("UI/UX" → "Ui/Ux"), so a key that already contains a space is left exactly as it reads; only
+ * the machine keys with no spaces get rewritten.
+ */
 export function humanise(key: string): string {
-  return key
+  const trimmed = key.trim();
+  if (/\s/.test(trimmed)) return trimmed;
+  return trimmed
     .replace(/[_-]+/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/\b\w/g, (character) => character.toUpperCase());
@@ -43,43 +52,82 @@ export function fieldKeyFor(answerKey: string): string {
   return humanise(answerKey).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-export function formatAnswer(value: unknown): string {
-  if (value === undefined || value === null || value === '') return '';
-  if (Array.isArray(value)) return value.map(String).join(', ');
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return String(value);
+/**
+ * An answer split into the individual values it holds.
+ *
+ * A multi-select or a Google Form grid arrives as several values in one field, and jamming them
+ * into `"Yes, Yes, No"` is exactly the unreadable blob a researcher complained about — each is
+ * its own thing and reads better on its own line.
+ */
+export function answerParts(value: unknown): string[] {
+  if (value === undefined || value === null || value === '') return [];
+  if (Array.isArray(value)) return value.map(String).filter((part) => part.trim() !== '');
+  if (typeof value === 'boolean') return [value ? 'Yes' : 'No'];
+  const single = String(value);
+  return single.trim() === '' ? [] : [single];
 }
 
 /**
- * The few answers worth showing beside the next action.
+ * Whether an answer is a web address worth making clickable.
  *
- * From the most recent submission, because a lead who answered twice told us the newer thing
- * last. Mapped answers come first — they are the ones somebody thought worth structuring — and
- * the identifying ones are skipped: a rail that spends its three lines repeating the name and
- * email already in the header has told the reader nothing.
+ * Deliberately liberal: a lead pastes `bddream.shop` or `www.facebook.com/…` as often as a full
+ * `https://` URL, and all three should open. The trailing-TLD requirement keeps plain numbers
+ * (`3.5`, `314k`) and prose from being mistaken for links.
  */
-const ALREADY_IN_THE_HEADER = new Set(['name', 'email', 'phone', 'organisationName']);
+export function isUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (/\s/.test(trimmed)) return false;
+  if (/^https?:\/\/\S+$/i.test(trimmed)) return true;
+  if (/^www\.\S+\.\S+$/i.test(trimmed)) return true;
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:\/\S*)?$/i.test(trimmed);
+}
 
-export function topSurveyAnswers(
-  submissions: LeadSubmissionSummary[],
-  definitions: LeadFieldSummary[],
-  limit = 3,
-): { key: string; label: string; value: string }[] {
-  const newest = submissions[0];
-  if (!newest) return [];
+/** Whether an answer is an email address, so it can open the mail client. */
+export function isEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
 
-  return Object.entries(newest.rawPayload)
-    .map(([key, value]) => ({
-      key,
-      label: answerLabel(key, newest, definitions),
-      value: formatAnswer(value),
-      mapped: Boolean(newest.mappedFields[key]),
-    }))
-    .filter((answer) => answer.value !== '')
-    .filter((answer) => !ALREADY_IN_THE_HEADER.has(newest.mappedFields[answer.key] ?? answer.key))
-    .sort((a, b) => Number(b.mapped) - Number(a.mapped))
-    .slice(0, limit)
-    .map(({ key, label, value }) => ({ key, label, value }));
+/**
+ * The first web address inside an answer, pulled out of whatever surrounds it.
+ *
+ * A pasted link often arrives with a trailing newline or a word beside it, which makes the strict
+ * `isUrl` test fail — and a value that fails that test used to be rendered as raw text, which is
+ * how a 300-character TikTok share link ended up running off the side of the page. Grabbing the
+ * URL token means it becomes a real, tidy link instead.
+ */
+export function firstUrlIn(value: string): string | undefined {
+  const httpMatch = value.match(/https?:\/\/[^\s]+/i);
+  if (httpMatch) return httpMatch[0];
+  const trimmed = value.trim();
+  return isUrl(trimmed) ? trimmed : undefined;
+}
+
+/** The href a linkable answer points to, with a protocol (or `mailto:`) filled in. */
+export function hrefFor(value: string): string {
+  const trimmed = value.trim();
+  if (isEmail(trimmed)) return `mailto:${trimmed}`;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed.replace(/^\/+/, '')}`;
+}
+
+/**
+ * A URL trimmed down to what a person reads at a glance: host and path, no protocol, no query.
+ *
+ * The raw share links a form collects (a TikTok URL runs to a few hundred characters of tracking
+ * parameters) blow the layout apart and tell the reader nothing; the destination does.
+ */
+export function prettyUrl(value: string): string {
+  const trimmed = value.trim();
+  if (isEmail(trimmed)) return trimmed;
+  try {
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+    const shown = url.hostname.replace(/^www\./i, '') + path;
+    return shown.length > 48 ? `${shown.slice(0, 47)}…` : shown;
+  } catch {
+    // Even an unparseable value must never be shown at full length — that is the layout-breaker.
+    return trimmed.length > 48 ? `${trimmed.slice(0, 47)}…` : trimmed;
+  }
 }
 
 /** Initials for an avatar tile — two letters at most, from the first and last word. */

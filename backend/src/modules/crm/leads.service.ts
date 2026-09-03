@@ -78,6 +78,7 @@ export class LeadsService {
   async createLead(input: Valid<typeof CreateLeadBody>): Promise<LeadResponse> {
     const customValues = await this.leadFields.validate(input.customValues);
 
+    const assignees = requestedAssignees(input) ?? [];
     const lead = await this.prisma.lead.create({
       data: companyApplied<Prisma.LeadUncheckedCreateInput>({
         name: input.name,
@@ -86,19 +87,32 @@ export class LeadsService {
         phone: input.phone ?? null,
         sourceId: input.sourceId ?? null,
         groupId: input.groupId ?? null,
-        assignedToUserId: input.assignedToUserId ?? null,
+        // The primary owner is the first of the set — the field every single-owner read still
+        // uses. The full set lands in `lead_assignees` just below.
+        assignedToUserId: assignees[0] ?? null,
         customValues: customValues as Prisma.InputJsonValue,
       }),
     });
 
-    return describe(lead);
+    if (assignees.length > 0) {
+      await this.prisma.leadAssignee.createMany({
+        data: assignees.map((userId) =>
+          companyApplied<Prisma.LeadAssigneeUncheckedCreateInput>({ leadId: lead.id, userId }),
+        ),
+      });
+    }
+
+    return describe(await this.requireLead(lead.id));
   }
 
   async listLeads(query: Record<string, unknown>): Promise<LeadListResponse> {
     const slice = listQuery(query, LEAD_LIST);
 
     const [rows, total] = await Promise.all([
-      this.prisma.lead.findMany(slice.findMany<Prisma.LeadFindManyArgs>()),
+      this.prisma.lead.findMany({
+        ...slice.findMany<Prisma.LeadFindManyArgs>(),
+        include: { assignees: true },
+      }),
       this.prisma.lead.count(slice.count<Prisma.LeadCountArgs>()),
     ]);
 
@@ -122,6 +136,13 @@ export class LeadsService {
         ? await this.leadFields.validate(input.customValues, existing.customValues as LeadCustomValues)
         : undefined;
 
+    // The assignee set this request asks for, or `undefined` when it leaves ownership alone.
+    // When present it drives both the `lead_assignees` rows and the cached primary column, so
+    // the two can never disagree.
+    const desiredAssignees = requestedAssignees(input);
+    const primaryUpdate =
+      desiredAssignees !== undefined ? desiredAssignees[0] ?? null : undefined;
+
     const lead = await this.prisma.lead.update({
       where: { id },
       data: {
@@ -132,10 +153,14 @@ export class LeadsService {
         ...defined('sourceId', (input as any).sourceId),
         ...defined('groupId', (input as any).groupId),
         ...defined('status', input.status),
-        ...defined('assignedToUserId', input.assignedToUserId),
+        ...defined('assignedToUserId', primaryUpdate),
         ...defined('customValues', customValues as Prisma.InputJsonValue),
       },
     });
+
+    if (desiredAssignees !== undefined) {
+      await this.syncAssignees(id, desiredAssignees);
+    }
 
     if (input.status !== undefined) {
       if (input.status !== existing.status) {
@@ -158,7 +183,10 @@ export class LeadsService {
       });
     }
 
-    if (input.assignedToUserId !== undefined && input.assignedToUserId !== existing.assignedToUserId) {
+    if (
+      desiredAssignees !== undefined &&
+      !sameSet(desiredAssignees, (existing.assignees ?? []).map((a) => a.userId))
+    ) {
       await this.prisma.activity.create({
         data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
           type: 'note',
@@ -170,7 +198,25 @@ export class LeadsService {
       });
     }
 
-    return describe(lead);
+    return describe(await this.requireLead(lead.id));
+  }
+
+  /**
+   * Makes `lead_assignees` hold exactly `userIds`, in that order of primacy. A full replace
+   * rather than a diff: the sets are a handful of rows, and replacing is the one operation with
+   * no ordering hazards — no row is briefly missing its unique partner, and the caller cannot
+   * leave a stale assignee behind by forgetting to remove it. The primary column is kept in
+   * step by the caller, from the same list, so the two are always written together.
+   */
+  private async syncAssignees(leadId: string, userIds: string[]): Promise<void> {
+    await this.prisma.leadAssignee.deleteMany({ where: { leadId } });
+    if (userIds.length > 0) {
+      await this.prisma.leadAssignee.createMany({
+        data: userIds.map((userId) =>
+          companyApplied<Prisma.LeadAssigneeUncheckedCreateInput>({ leadId, userId }),
+        ),
+      });
+    }
   }
 
   /**
@@ -378,7 +424,10 @@ export class LeadsService {
   }
 
   private async requireLead(id: string) {
-    const lead = await this.prisma.lead.findFirst({ where: { id } });
+    const lead = await this.prisma.lead.findFirst({
+      where: { id },
+      include: { assignees: true },
+    });
     if (!lead) throw leadNotFound();
     return lead;
   }
@@ -432,11 +481,51 @@ function describe(row: any): LeadSummary {
     sourceName: row.sourceRelation?.name || row.sourceName || null,
     status: row.status,
     assignedToUserId: row.assignedToUserId,
+    assigneeUserIds: assigneeIdsOf(row),
     partyId: row.partyId,
     groupId: row.groupId ?? null,
     groupName: row.group?.name || null,
     customValues: (row.customValues as LeadCustomValues) || {},
   };
+}
+
+/**
+ * The assignee ids of a lead row, primary first. `lead_assignees` has no inherent order and the
+ * primary is meaningful (it is what single-owner reads land on), so the cached `assignedToUserId`
+ * is pulled to the front and the rest follow. A row loaded without its `assignees` relation still
+ * reports the primary, so a caller that forgot the `include` degrades to the single owner rather
+ * than to an empty list.
+ */
+function assigneeIdsOf(row: any): string[] {
+  const rows: { userId: string }[] = Array.isArray(row.assignees) ? row.assignees : [];
+  const ids = rows.map((a) => a.userId);
+  const primary: string | null = row.assignedToUserId ?? null;
+  if (!primary) return ids;
+  return [primary, ...ids.filter((id) => id !== primary)];
+}
+
+/**
+ * The assignee set a create/update request is asking for, or `undefined` when it asks for no
+ * change. `assigneeUserIds` is authoritative when present; a request carrying only the legacy
+ * single `assignedToUserId` is read as a one- (or zero-) person set, so the bulk-assign path and
+ * any older caller keep working against the co-ownership model without knowing it changed.
+ */
+function requestedAssignees(input: {
+  assigneeUserIds?: string[];
+  assignedToUserId?: string | null;
+}): string[] | undefined {
+  if (input.assigneeUserIds !== undefined) return input.assigneeUserIds;
+  if (input.assignedToUserId !== undefined) {
+    return input.assignedToUserId ? [input.assignedToUserId] : [];
+  }
+  return undefined;
+}
+
+/** Whether two id sets hold the same members, order aside — the test for "did ownership change". */
+function sameSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const seen = new Set(b);
+  return a.every((id) => seen.has(id));
 }
 
 function describeAttachment(row: {

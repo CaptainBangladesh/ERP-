@@ -7,23 +7,26 @@ import {
   type CaptureSourceSummary,
 } from '@erp/shared';
 import { FormError } from '@erp/shared/ui';
-import { ApiFailure, api } from '../../../api/client';
+import { ApiFailure, api, apiUrl } from '../../../api/client';
 import { CaptureSourceModal } from '../components/CaptureSourceModal';
 
 /**
  * The Apps Script that carries a Google Form's answers to a capture source.
  *
  * Google offers no webhook of its own, so this is the supported path: a trigger on the form
- * posts each response to the token URL. It sends every answer keyed by the question's **item
- * ID** — a stable number Google assigns once — rather than by its title, because a title is
- * free text somebody will eventually reword, and two questions may share one.
+ * posts each response to the token URL. Every answer is keyed by its **question title**, so it
+ * lands on the lead's Survey tab already readable — "Merchant Category", not "entry_1841203" —
+ * with no per-question mapping to set up. Mapping stays optional and does one job: point the
+ * question that holds the lead's name (or email/phone) at the built-in field, so a response
+ * attaches to the lead it belongs to instead of creating a new one. A reworded question simply
+ * shows under its new title; only a mapped one is worth keeping stable.
  */
 function googleFormsScript(submitUrl: string): string {
   return [
     'function onFormSubmit(e) {',
-    "  var payload = {};",
+    '  var payload = {};',
     '  e.response.getItemResponses().forEach(function (item) {',
-    "    payload['entry_' + item.getItem().getId()] = item.getResponse();",
+    '    payload[item.getItem().getTitle()] = item.getResponse();',
     '  });',
     '',
     `  UrlFetchApp.fetch('${submitUrl}', {`,
@@ -31,13 +34,6 @@ function googleFormsScript(submitUrl: string): string {
     "    contentType: 'application/json',",
     '    payload: JSON.stringify(payload),',
     '    muteHttpExceptions: true,',
-    '  });',
-    '}',
-    '',
-    '// Run once to see each question\'s item ID, then map those IDs on the capture source.',
-    'function listItemIds() {',
-    '  FormApp.getActiveForm().getItems().forEach(function (item) {',
-    "    Logger.log('entry_' + item.getId() + '  ' + item.getTitle());",
     '  });',
     '}',
   ].join('\n');
@@ -74,16 +70,19 @@ export function CaptureSourcesPage() {
   });
 
   /**
-   * The URL a source is actually reachable at.
+   * The URL a source is actually reachable at — an absolute URL a stranger's server can POST to.
    *
-   * Taken from the contract rather than written out here, which is the whole point: this page
-   * used to hand out `/api/crm/capture/<token>` for a webhook, and no such endpoint has ever
-   * existed — the public one is `/api/public/capture/<token>`. Every Google Form pointed at the
-   * copied URL posted into a 404, and because the capture endpoint is fire-and-forget by design
-   * nothing on either side ever said so.
+   * Both halves are load-bearing. The path comes from the contract, not hand-written: this page
+   * used to spell out `/api/crm/capture/<token>`, and no such endpoint has ever existed — the
+   * public one is `/api/public/capture/<token>`. The origin comes from `apiUrl` (the configured
+   * `VITE_API_URL`), not `window.location.origin`: the API is deployed on its own host, so a URL
+   * built from wherever the *UI* happens to be open — a Vercel frontend, or plain `localhost`
+   * during development — points a Google Form at a host that does not run the API and that
+   * Google's servers may not even reach. Every such submission failed silently, because the
+   * capture endpoint is fire-and-forget and the Apps Script mutes its own HTTP errors.
    */
   function submitUrlFor(source: CaptureSourceSummary): string {
-    return `${window.location.origin}${CAPTURE_SOURCE_PATHS.publicSubmit(source.token ?? '')}`;
+    return apiUrl(CAPTURE_SOURCE_PATHS.publicSubmit(source.token ?? ''));
   }
 
   function getEmbedSnippet(source: CaptureSourceSummary): string {
@@ -296,8 +295,14 @@ export function CaptureSourcesPage() {
                     <strong className="font-bold text-slate-800">For a Google Form:</strong> open
                     the form, choose <em>Extensions → Apps Script</em>, paste the script below,
                     then add a trigger for <code className="font-mono">onFormSubmit</code> on form
-                    submit. Map each question by its item ID on this source, not by its title —
-                    titles get edited and can repeat.
+                    submit. Every answer then lands on the lead's Survey tab under its question
+                    title — no mapping needed to read them.
+                  </p>
+                  <p>
+                    Add just <strong className="font-bold text-slate-800">one</strong> mapping
+                    below: the question holding the lead's name (or email/phone) → the matching
+                    built-in field, so each response attaches to the right lead instead of
+                    creating a new one. Type the question title exactly as it reads on the form.
                   </p>
                 </>
               )}

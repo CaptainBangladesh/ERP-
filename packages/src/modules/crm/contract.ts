@@ -180,6 +180,12 @@ export interface CreateLeadRequest {
   sourceId?: string;
   groupId?: string;
   assignedToUserId?: string;
+  /**
+   * Everyone this lead is assigned to, since a lead may be worked by several people at once.
+   * Authoritative when present; the first is kept as the primary `assignedToUserId`. Omit it to
+   * assign nobody, or send `[a, b]` to share the lead.
+   */
+  assigneeUserIds?: string[];
   customValues?: LeadCustomValues;
 }
 
@@ -197,6 +203,13 @@ export interface UpdateLeadRequest {
    */
   status?: SettableLeadStatusKey;
   assignedToUserId?: string | null;
+  /**
+   * The complete set of people assigned to this lead. When present it replaces the current set
+   * (send `[]` to take everyone off); the first becomes the primary `assignedToUserId`. Omit it
+   * to leave ownership untouched. Sending the legacy single `assignedToUserId` instead still
+   * works — it is read as a one-person set.
+   */
+  assigneeUserIds?: string[];
   groupId?: string | null;
   customValues?: LeadCustomValues;
 }
@@ -217,7 +230,10 @@ export interface LeadSummary {
   sourceId?: string | null;
   sourceName?: string | null;
   status: LeadStatusKey;
+  /** The primary owner — the first of `assigneeUserIds`, or null when nobody is assigned. */
   assignedToUserId: string | null;
+  /** Everyone assigned to the lead, primary first. `[]` when nobody is. */
+  assigneeUserIds: string[];
   partyId: string | null;
   groupId?: string | null;
   groupName?: string | null;
@@ -450,6 +466,13 @@ export const ACTIVITY_TYPES = ['call', 'email', 'meeting', 'note', 'task'] as co
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 
 export const ACTIVITY_PATHS = {
+  /**
+   * `POST` logs one activity against a single parent. `GET` reads the company-wide feed —
+   * every activity across every lead, deal and party, newest first — which is what the
+   * Activities screen and the Workspace home render. Per-parent history stays on the three
+   * `…Activities` paths below; this is the one that answers "what has the whole team been
+   * doing", without a caller having to fan out over every record to assemble it.
+   */
   activities: `/${CRM_ROUTE}/activities`,
   leadActivities: (id: string) => `/${CRM_ROUTE}/leads/${id}/activities`,
   dealActivities: (id: string) => `/${CRM_ROUTE}/deals/${id}/activities`,
@@ -612,6 +635,32 @@ export type ActivityResponse = ActivitySummary;
 export interface ActivityListResponse {
   items: ActivitySummary[];
 }
+
+/**
+ * An activity as it appears in the **company-wide feed**, carrying the one thing a per-parent
+ * list never needs: which record it hangs off, resolved to a name.
+ *
+ * A lead's own history is drawn beside the lead, so it never has to say whose it is. The
+ * company feed mixes every lead, deal and party together, so each row has to name its parent
+ * to be worth anything — and has to carry the parent's id so the row can link back to where
+ * the work is done. The name is resolved once, server-side, against the parent's own table
+ * rather than the wire being trusted to already hold it; `parentName` is `null` when the
+ * parent has since been removed, which is the honest thing to show rather than a dangling id.
+ *
+ * Personal-versus-team is *not* a field here: it is read off `createdByUserId` against whoever
+ * is asking, so the same feed serves everyone without the server having to know who "me" is.
+ */
+export interface ActivityFeedItem extends ActivitySummary {
+  parentKind: 'lead' | 'deal' | 'party' | null;
+  parentName: string | null;
+}
+
+/**
+ * A page of the company feed. It is a `ListResponse` — the platform's one list envelope, with
+ * its page number, size and total — because the feed grows without bound and a screen reads the
+ * most recent page of it rather than the whole history. Newest first by default (`-occurredAt`).
+ */
+export type ActivityFeedResponse = ListResponse<ActivityFeedItem>;
 
 export const ACTIVITY_ERROR_CODES = {
   activityNotFound: 'activity_not_found',

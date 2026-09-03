@@ -62,6 +62,7 @@ describe('LeadsPage', () => {
       status: 'new',
       source: 'inbound',
       assignedToUserId: null,
+      assigneeUserIds: [],
       partyId: null,
       groupId: 'group-1',
       sourceId: null,
@@ -1076,9 +1077,41 @@ describe('LeadsPage', () => {
 
       await waitFor(() =>
         expect(patched()).toEqual([
-          { id: 'id-priya-kapoor', body: { assignedToUserId: 'user-2' } },
+          { id: 'id-priya-kapoor', body: { assigneeUserIds: ['user-2'] } },
         ]),
       );
+    });
+
+    it('shares a lead across several people with Ctrl-click, without closing the menu', async () => {
+      signedInWith();
+      const { patched } = boardWith([
+        lead('Priya Kapoor', { assignedToUserId: 'user-1', assigneeUserIds: ['user-1'] }),
+      ]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getAllByRole('button', { name: 'Choose columns' })[0]!);
+      await user.click(screen.getByRole('checkbox', { name: /Owner/ }));
+      await user.keyboard('{Escape}');
+      expect(await screen.findByRole('columnheader', { name: 'Owner' })).toBeInTheDocument();
+
+      // The trigger already reads as the primary owner; open the menu from it.
+      await user.click(screen.getByRole('button', { name: /Rose Foster/ }));
+
+      // Ctrl-click adds the second person to the set rather than replacing the first.
+      await user.keyboard('{Control>}');
+      await user.click(screen.getByRole('button', { name: /Imran Hossain/ }));
+      await user.keyboard('{/Control}');
+
+      await waitFor(() =>
+        expect(patched()).toEqual([
+          { id: 'id-priya-kapoor', body: { assigneeUserIds: ['user-1', 'user-2'] } },
+        ]),
+      );
+
+      // The menu stays open through a multiple selection, so more people can be added.
+      expect(screen.getByPlaceholderText('Search names, roles or teams')).toBeInTheDocument();
     });
 
     it('assigns every ticked lead in one act', async () => {
@@ -1103,7 +1136,32 @@ describe('LeadsPage', () => {
       await waitFor(() =>
         expect(patched().map((call) => call.id).sort()).toEqual(['id-priya-kapoor', 'id-sadia-rahman']),
       );
-      expect(patched().every((call) => JSON.stringify(call.body) === '{"assignedToUserId":"user-1"}')).toBe(true);
+      expect(patched().every((call) => JSON.stringify(call.body) === '{"assigneeUserIds":["user-1"]}')).toBe(true);
+    });
+
+    it('assigns a whole selection to several people at once', async () => {
+      signedInWith();
+      const { patched } = boardWith([lead('Priya Kapoor'), lead('Imran Ali'), lead('Sadia Rahman')]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Priya Kapoor');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Priya Kapoor' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select Sadia Rahman' }));
+
+      const toolbar = await screen.findByRole('toolbar', { name: 'Actions for the selected leads' });
+      // Open the Assign-owner menu, tick two people, then apply the set.
+      await user.click(within(toolbar).getByRole('button', { name: /Assign owner/ }));
+      await user.click(await screen.findByRole('button', { name: /Rose Foster/ }));
+      await user.click(screen.getByRole('button', { name: /Imran Hossain/ }));
+      await user.click(screen.getByRole('button', { name: /Assign to 2 people/ }));
+
+      await waitFor(() =>
+        expect(patched().map((call) => call.id).sort()).toEqual(['id-priya-kapoor', 'id-sadia-rahman']),
+      );
+      expect(
+        patched().every((call) => JSON.stringify(call.body) === '{"assigneeUserIds":["user-1","user-2"]}'),
+      ).toBe(true);
     });
 
     /**

@@ -1,4 +1,5 @@
 import {
+  ACTIVITY_FIELDS,
   ACTIVITY_TYPES,
   DEAL_FIELDS,
   Decimal,
@@ -101,6 +102,31 @@ const STATUS_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const ASSIGNEE = identifier({
   missing: 'Choose a colleague to assign this to.',
   invalid: 'That is not a user.',
+});
+
+/**
+ * The set of people a lead is assigned to, since a lead may now be worked by several at once.
+ *
+ * Each entry is validated by `ASSIGNEE`, so a malformed id is refused with the same wording a
+ * single owner gets. Duplicates are dropped rather than refused — assigning the same person
+ * twice is a no-op, matching `LeadAssignee`'s `@@unique([leadId, userId])` — and order is kept,
+ * because the first survives as the primary `assignedToUserId`. An empty array is a real value:
+ * it takes everyone off the lead, which is why the field is `optional` (absent leaves the set
+ * unchanged) rather than required.
+ */
+const ASSIGNEES = rule<string[]>('Choose who to assign this to.', (value) => {
+  if (!Array.isArray(value)) return refused('Assignees must be a list of people.');
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const entry of value) {
+    const read = ASSIGNEE.read(entry);
+    if (!read.ok) return read;
+    if (!seen.has(read.value)) {
+      seen.add(read.value);
+      ids.push(read.value);
+    }
+  }
+  return accepted(ids);
 });
 
 const PARTY_ID = identifier({
@@ -310,6 +336,7 @@ export const CreateLeadBody = validator({
   source: optional(LEAD_SOURCE_TYPE),
   sourceId: optional(SOURCE_ID),
   assignedToUserId: optional(ASSIGNEE),
+  assigneeUserIds: optional(ASSIGNEES),
   groupId: optional(GROUP_ID),
   customValues: optional(CUSTOM_VALUES),
 });
@@ -330,6 +357,7 @@ export const UpdateLeadBody = validator({
   sourceId: clearable(SOURCE_ID),
   status: optional(STATUS),
   assignedToUserId: clearable(ASSIGNEE),
+  assigneeUserIds: optional(ASSIGNEES),
   groupId: clearable(GROUP_ID),
   customValues: optional(CUSTOM_VALUES),
 }).and((values, report) => {
@@ -355,9 +383,32 @@ export const LEAD_LIST: ListSpec = {
     [LEAD_FIELDS.email]: { type: 'text', filterable: true, searchable: true },
     [LEAD_FIELDS.sourceId]: { type: 'text', filterable: true },
     [LEAD_FIELDS.status]: { type: 'text', sortable: true, filterable: true },
-    [LEAD_FIELDS.assignedToUserId]: { type: 'text', filterable: true },
+    // "Owner = X" now means "X is one of the assignees", not "X is the primary". A lead shared
+    // with somebody shows up in their filtered view too, which is the point of sharing it. The
+    // `via` relation turns `?filter.assignedToUserId=X` into `assignees: { some: { userId: X } }`.
+    [LEAD_FIELDS.assignedToUserId]: {
+      type: 'text',
+      filterable: true,
+      via: { relation: 'assignees', field: 'userId' },
+    },
     [LEAD_FIELDS.groupId]: { type: 'text', filterable: true },
     [LEAD_FIELDS.createdAt]: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+/**
+ * The company-wide activity feed's list contract. Default order is newest first — a feed reads
+ * from the top — and the fields offered are the ones a screen might narrow by: kind, and who
+ * logged it. The mine-versus-team split the screens draw is done client-side against the signed
+ * in user, so it needs no server-side filter of its own.
+ */
+export const ACTIVITY_LIST: ListSpec = {
+  defaultSort: `-${ACTIVITY_FIELDS.occurredAt}`,
+  fields: {
+    [ACTIVITY_FIELDS.occurredAt]: { type: 'date', sortable: true, filterable: true },
+    [ACTIVITY_FIELDS.type]: { type: 'text', filterable: true },
+    [ACTIVITY_FIELDS.createdByUserId]: { type: 'text', filterable: true },
+    [ACTIVITY_FIELDS.createdAt]: { type: 'date', sortable: true, filterable: true },
   },
 };
 

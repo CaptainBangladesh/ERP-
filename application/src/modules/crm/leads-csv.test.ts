@@ -16,6 +16,7 @@ describe('leadsToCsv', () => {
       sourceName: null,
       status: 'new',
       assignedToUserId: null,
+      assigneeUserIds: [],
       partyId: null,
       groupId: 'group-1',
       groupName: 'Fashion & Clothing',

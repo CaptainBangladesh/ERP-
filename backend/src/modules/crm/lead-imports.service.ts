@@ -123,7 +123,7 @@ export class LeadImportsService {
         resolvedGroupId = fallbackGroupId;
       }
 
-      await this.prisma.lead.create({
+      const createdLead = await this.prisma.lead.create({
         data: companyApplied<Prisma.LeadUncheckedCreateInput>({
           name: row.name,
           organisationName: row.organisationName || null,
@@ -135,6 +135,17 @@ export class LeadImportsService {
           customValues: row.customValues as Prisma.InputJsonValue,
         }),
       });
+
+      // Mirror the imported owner into `lead_assignees` — the table the board's owner filter
+      // reads — so an imported, assigned lead is filterable by its owner like any other.
+      if (row.assignedToUserId) {
+        await this.prisma.leadAssignee.create({
+          data: companyApplied<Prisma.LeadAssigneeUncheckedCreateInput>({
+            leadId: createdLead.id,
+            userId: row.assignedToUserId,
+          }),
+        });
+      }
     }
 
     // 3. Write LeadImport batch audit row

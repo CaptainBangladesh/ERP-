@@ -819,6 +819,13 @@ model Lead {
   /// while disqualified — stored rather than inferred, so reopening never has to guess.
   priorStatus String? @map("prior_status")
 
+  /// The lead's *primary* owner — a cached convenience, kept equal to the first of `assignees`
+  /// (or null when nobody is on it). The full set a lead may now be shared across lives in
+  /// `LeadAssignee`; this column is retained so every single-owner read written before leads
+  /// could be co-owned — the workspace's "assigned to me", the deals board's reuse of the same
+  /// field name, bulk assign — keeps working unchanged. `LeadsService.syncAssignees` is the one
+  /// path that writes both, so the two never drift.
+  ///
   /// A plain platform `User` reference, no FK. Live and reassignable, unlike an actor-freeze
   /// column: the frontend resolves it by calling identity's `GET /api/identity/users`
   /// directly, because identity's public surface is deliberately empty and no module —
@@ -854,6 +861,7 @@ model Lead {
   attachments LeadAttachment[]
   submissions LeadSubmission[]
   emailSends LeadEmailSend[]
+  assignees LeadAssignee[]
 
   @@index([companyId])
   @@index([companyId, groupId])
@@ -883,6 +891,31 @@ model LeadAttachment {
   @@index([companyId])
   @@index([companyId, leadId])
   @@map("lead_attachments")
+}
+
+/// One person a Lead is assigned to. A Lead may now be worked by several people at once, so
+/// ownership is a set of rows rather than a single column — `Lead.assignedToUserId` is kept as
+/// the primary (the first of these) for the single-owner reads that predate co-ownership.
+///
+/// `userId` is a plain platform `User` reference with no FK, the same policy `Lead.assignedToUserId`
+/// documents: identity owns no relation into this module and is resolved through its public user
+/// list. `@@unique([leadId, userId])` makes assigning the same person twice a no-op rather than a
+/// second row, and the `(company_id, user_id)` index answers "which leads is this person on?" —
+/// the shape the board's owner filter walks through `LEAD_LIST`'s `via: { relation: 'assignees' }`.
+model LeadAssignee {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  leadId    String   @map("lead_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, userId])
+  @@index([companyId])
+  @@index([companyId, leadId])
+  @@index([companyId, userId])
+  @@map("lead_assignees")
 }
 
 /// One capture-form response tied to a Lead.

@@ -191,6 +191,10 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   LeadAttachment: { kind: 'company-owned' },
   LeadSubmission: { kind: 'company-owned' },
   LeadEmailSend: { kind: 'company-owned' },
+  // One row per person a lead is assigned to — the set behind co-ownership. Ordinary
+  // company-owned: an assignment belongs to the company whose lead it is, and reassigning is
+  // an in-place change, so nothing restricted or immutable.
+  LeadAssignee: { kind: 'company-owned' },
   CaptureSource: { kind: 'company-owned' },
   MailboxConnection: { kind: 'company-owned' },
   MailboxAuthState: { kind: 'company-owned' },

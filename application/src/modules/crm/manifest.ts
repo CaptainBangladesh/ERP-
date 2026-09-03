@@ -5,6 +5,8 @@ import { ContactsPage } from './pages/ContactsPage';
 import { DealsPage } from './pages/DealsPage';
 import { LeadsPage } from './pages/LeadsPage';
 import { LeadWorkspace, CRM_LEAD_WORKSPACE_ROUTE } from './pages/LeadWorkspace';
+import { WorkspaceEntry } from './pages/WorkspaceEntry';
+import { ActivitiesPage } from './pages/ActivitiesPage';
 import { WorkflowRulesPage } from './pages/WorkflowRulesPage';
 import { CaptureSourcesPage } from './pages/CaptureSourcesPage';
 import { CampaignsPage } from './pages/CampaignsPage';
@@ -14,6 +16,8 @@ export const manifest: FrontendModuleManifest = {
   name: CRM_MODULE,
   routes: [
     { path: '/crm/dashboard', component: DashboardPage },
+    { path: '/crm/workspace', component: WorkspaceEntry },
+    { path: '/crm/activities', component: ActivitiesPage },
     { path: '/crm/leads', component: LeadsPage },
     { path: CRM_LEAD_WORKSPACE_ROUTE, component: LeadWorkspace },
     { path: '/crm/contacts', component: ContactsPage },

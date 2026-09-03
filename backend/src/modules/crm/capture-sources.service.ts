@@ -347,6 +347,9 @@ export class CaptureSourcesService {
           ? mappedLeadData.assignedToUserId
           : source.defaultAssignedToUserId || undefined;
 
+      const explicitLeadId = typeof rawPayload.__leadId === 'string' ? rawPayload.__leadId : undefined;
+      const explicitFormName = typeof rawPayload.__formName === 'string' ? rawPayload.__formName : undefined;
+
       const builtInKeys = new Set([
         'name',
         'email',
@@ -355,6 +358,8 @@ export class CaptureSourcesService {
         'sourceId',
         'groupId',
         'assignedToUserId',
+        '__leadId',
+        '__formName',
       ]);
       const submittedCustomValues: Record<string, unknown> = {};
 
@@ -372,17 +377,27 @@ export class CaptureSourcesService {
         submittedCustomValues as LeadCustomValues,
       );
 
-      const conditions: Prisma.LeadWhereInput[] = [];
-      if (email?.trim()) conditions.push({ email: { equals: email.trim(), mode: 'insensitive' } });
-      if (phone?.trim()) conditions.push({ phone: { equals: phone.trim() } });
-      if (name?.trim()) conditions.push({ name: { equals: name.trim(), mode: 'insensitive' } });
-
       let existingLead: { id: string } | null = null;
-      if (conditions.length > 0) {
-        existingLead = await this.prisma.lead.findFirst({
-          where: { OR: conditions },
+      if (explicitLeadId) {
+        const found = await this.prisma.lead.findFirst({
+          where: { id: explicitLeadId },
           select: { id: true },
         });
+        if (found) existingLead = found;
+      }
+
+      if (!existingLead) {
+        const conditions: Prisma.LeadWhereInput[] = [];
+        if (email?.trim()) conditions.push({ email: { equals: email.trim(), mode: 'insensitive' } });
+        if (phone?.trim()) conditions.push({ phone: { equals: phone.trim() } });
+        if (name?.trim()) conditions.push({ name: { equals: name.trim(), mode: 'insensitive' } });
+
+        if (conditions.length > 0) {
+          existingLead = await this.prisma.lead.findFirst({
+            where: { OR: conditions },
+            select: { id: true },
+          });
+        }
       }
 
       /**
@@ -419,14 +434,37 @@ export class CaptureSourcesService {
             }),
           });
 
+      // A captured lead with an owner is co-ownership's set-of-one: mirror the primary into
+      // `lead_assignees` so the board's owner filter (which reads that table) finds it, exactly
+      // as a lead assigned by hand would be. `fillEmptyFields` does the same when it fills a
+      // previously-empty owner.
+      if (!existingLead && assignedToUserId) {
+        await this.prisma.leadAssignee.create({
+          data: companyApplied<Prisma.LeadAssigneeUncheckedCreateInput>({
+            leadId: lead.id,
+            userId: assignedToUserId,
+          }),
+        });
+      }
+
+      // Filter out internal control parameters (__leadId, __formName) from stored payload
+      const cleanRawPayload: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rawPayload)) {
+        if (!k.startsWith('__')) {
+          cleanRawPayload[k] = v;
+        }
+      }
+
+      const submissionFormName = explicitFormName || source.name;
+
       // The raw payload in full, mapped or not: an answer no field maps is still something the
       // lead told us, and the Survey tab is where it stays readable until somebody promotes it.
       await this.prisma.leadSubmission.create({
         data: companyApplied<Prisma.LeadSubmissionUncheckedCreateInput>({
           leadId: lead.id,
           captureSourceId: source.id,
-          formName: source.name,
-          rawPayload: rawPayload as Prisma.InputJsonValue,
+          formName: submissionFormName,
+          rawPayload: cleanRawPayload as Prisma.InputJsonValue,
           mappedFields: mappedFields as Prisma.InputJsonValue,
         }),
       });
@@ -434,7 +472,7 @@ export class CaptureSourcesService {
       await this.prisma.activity.create({
         data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
           type: 'note',
-          notes: auditNotes.surveyReceived(source.name),
+          notes: auditNotes.surveyReceived(submissionFormName),
           leadId: lead.id,
           createdByUserId: SYSTEM_ACTOR_ID,
           createdByName: SYSTEM_ACTOR_NAME,
@@ -500,7 +538,20 @@ export class CaptureSourcesService {
 
     if (Object.keys(fills).length === 0) return lead;
 
-    return this.prisma.lead.update({ where: { id: lead.id }, data: fills });
+    const updated = await this.prisma.lead.update({ where: { id: lead.id }, data: fills });
+
+    // If this fill is what first gave the lead an owner, record that owner in `lead_assignees`
+    // too — upsert so a resubmission cannot raise a duplicate against the `(lead, user)` unique.
+    if (typeof fills.assignedToUserId === 'string') {
+      const userId = fills.assignedToUserId;
+      await this.prisma.leadAssignee.upsert({
+        where: { leadId_userId: { leadId: lead.id, userId } },
+        create: companyApplied<Prisma.LeadAssigneeUncheckedCreateInput>({ leadId: lead.id, userId }),
+        update: {},
+      });
+    }
+
+    return updated;
   }
 }
 

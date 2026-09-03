@@ -41,6 +41,7 @@ describe('LeadWorkspace', () => {
       status: 'new',
       source: 'inbound',
       assignedToUserId: null,
+      assigneeUserIds: [],
       partyId: null,
       groupId: 'group-1',
       sourceId: null,
@@ -188,6 +189,38 @@ describe('LeadWorkspace', () => {
       await user.click(within(worklist).getByText('Imran Ali'));
 
       expect(window.location.pathname).toBe('/crm/leads/id-imran-ali');
+    });
+
+    it('keeps the chosen filter when moving to another lead', async () => {
+      const mine1 = lead('Priya Kapoor', { assignedToUserId: 'u1', assigneeUserIds: ['u1'] });
+      const mine2 = lead('Imran Ali', { assignedToUserId: 'u1', assigneeUserIds: ['u1'] });
+      const notMine = lead('Sadia Rahman'); // unassigned — should drop out of "Assigned to me"
+      server.use(
+        http.get(LEAD_PATHS.leads, () => HttpResponse.json(page([mine1, mine2, notMine]))),
+        http.get(LEAD_PATHS.lead('id-imran-ali'), () => HttpResponse.json(mine2)),
+        http.get(ACTIVITY_PATHS.leadActivities('id-imran-ali'), () => HttpResponse.json({ items: [] })),
+        http.get(LEAD_PATHS.files('id-imran-ali'), () => HttpResponse.json(listed([]))),
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-imran-ali'), () => HttpResponse.json(listed([]))),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const worklist = await screen.findByRole('complementary', { name: 'Worklist' });
+      // Filter to "Assigned to me" — the unassigned lead drops out.
+      await user.click(within(worklist).getByRole('button', { name: /show assigned to me/i }));
+      expect(within(worklist).queryByText('Sadia Rahman')).not.toBeInTheDocument();
+
+      // Move to another lead inside the filtered list.
+      await user.click(within(worklist).getByText('Imran Ali'));
+      await waitFor(() => expect(window.location.pathname).toBe('/crm/leads/id-imran-ali'));
+
+      // The filter survives the move: the unassigned lead is still hidden and the tab still on.
+      const worklistAfter = await screen.findByRole('complementary', { name: 'Worklist' });
+      expect(within(worklistAfter).queryByText('Sadia Rahman')).not.toBeInTheDocument();
+      expect(within(worklistAfter).getByRole('button', { name: /show assigned to me/i })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
     });
   });
 
@@ -469,7 +502,7 @@ describe('LeadWorkspace', () => {
       };
     }
 
-    it('lists each response, expanding to the full question and answer', async () => {
+    it('leads with the merchant profile, and still expands the raw response below', async () => {
       server.use(
         http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
           HttpResponse.json(listed([submission()])),
@@ -480,16 +513,19 @@ describe('LeadWorkspace', () => {
       await user.click(await screen.findByRole('button', { name: 'Survey' }));
 
       const survey = within(await screen.findByRole('region', { name: 'Survey' }));
-      expect(await survey.findByText('Site Survey Form')).toBeInTheDocument();
-      // Collapsed until asked for: the tab is for finding a response, not reading them all.
-      expect(survey.queryByText('About 12 years')).not.toBeInTheDocument();
-
-      await user.click(survey.getByRole('button', { expanded: false }));
-
-      expect(survey.getByText('About 12 years')).toBeInTheDocument();
-      expect(survey.getByText('50k')).toBeInTheDocument();
+      // The profile now leads with the answers, arranged — no longer hidden behind a click.
+      expect(await survey.findByText('About 12 years')).toBeInTheDocument();
       // A mapped answer is labelled by the field it fed, not by the form's own key for it.
       expect(survey.getByText('Budget')).toBeInTheDocument();
+
+      // The raw response below stays collapsed until asked for — its mapping controls only appear
+      // once it is opened.
+      expect(survey.getByText('Site Survey Form')).toBeInTheDocument();
+      expect(survey.queryByText('Not mapped')).not.toBeInTheDocument();
+
+      await user.click(survey.getByRole('button', { expanded: false }));
+      expect(survey.getByText('Not mapped')).toBeInTheDocument();
+      expect(survey.getAllByText('50k').length).toBeGreaterThan(0);
     });
 
     it('tells a mapped answer from one no field maps', async () => {
@@ -544,6 +580,89 @@ describe('LeadWorkspace', () => {
           customValues: { priority: 'hot', budget: '50k', entry_999: 'About 12 years' },
         }),
       );
+    });
+
+    it('reads a research form into a merchant profile, and files a note onto the feed', async () => {
+      let postedActivity: any;
+      server.use(
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
+          HttpResponse.json(
+            listed([
+              submission({
+                formName: 'Merchant Research',
+                rawPayload: {
+                  'Merchant Category': 'Fashion and Clothing',
+                  'Does the merchant have a dedicated website?': 'Yes',
+                  'Provide a link to the primary store website': 'bddream.shop',
+                  'Website Usability Assessment — Are products easily searchable?': 'No',
+                  'Provide a link for Facebook page': 'https://facebook.com/bddream',
+                  'Additional Observations or Research Notes':
+                    'The Facebook link on their site does not lead to their official page.',
+                },
+                mappedFields: {},
+              }),
+            ]),
+          ),
+        ),
+        http.post(ACTIVITY_PATHS.activities, async ({ request }) => {
+          postedActivity = await request.json();
+          return HttpResponse.json(activity({ notes: postedActivity.notes }));
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Survey' }));
+
+      const survey = within(await screen.findByRole('region', { name: 'Survey' }));
+      // The profile groups the research: category, the store link, a usability sub-question, and
+      // the Facebook page as a clickable destination rather than a raw URL.
+      expect(await survey.findByText('Fashion and Clothing')).toBeInTheDocument();
+      expect(survey.getByText('Are products easily searchable?')).toBeInTheDocument();
+      expect(survey.getByRole('link', { name: /facebook\.com\/bddream/ })).toBeInTheDocument();
+
+      // A free-text observation lives in its own section, and one click files it onto the feed.
+      await user.click(survey.getByRole('button', { name: 'Add to notes' }));
+      await waitFor(() =>
+        expect(postedActivity).toEqual({
+          type: 'note',
+          notes: 'The Facebook link on their site does not lead to their official page.',
+          leadId: 'id-priya-kapoor',
+        }),
+      );
+      expect(await survey.findByText('Added to notes')).toBeInTheDocument();
+    });
+
+    it('renders a monster share link as a short, clickable destination — never raw', async () => {
+      const rawTikTok =
+        'https://www.tiktok.com/@believersofficial?_r=1&_d=secCgYIASAHKAESPgo8' +
+        'Kw8IEuNCvzZv&share_app_id=1233&share_link_id=A9FDDDCA-BBBB-' +
+        'CCCC&sec_user_id=MS4wLjABAAAA' +
+        'x'.repeat(120);
+      server.use(
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
+          HttpResponse.json(
+            listed([
+              submission({
+                formName: 'Merchant Research',
+                rawPayload: { 'Provide a link for TikTok page': rawTikTok },
+                mappedFields: {},
+              }),
+            ]),
+          ),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Survey' }));
+
+      const survey = within(await screen.findByRole('region', { name: 'Survey' }));
+      // The link's visible text is the short destination — no query string, nothing to overflow.
+      const link = await survey.findByRole('link', { name: /tiktok\.com\/@believersofficial/ });
+      expect(link.textContent!.length).toBeLessThan(40);
+      // …but it still points at the full URL the merchant gave us.
+      expect(link.getAttribute('href')).toBe(rawTikTok);
+      // The raw tracking gibberish appears nowhere as visible text.
+      expect(survey.queryByText(/share_app_id/)).not.toBeInTheDocument();
     });
   });
 

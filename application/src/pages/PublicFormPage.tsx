@@ -37,6 +37,18 @@ export function PublicFormPage({ token }: { token: string }) {
           CAPTURE_SOURCE_PATHS.publicForm(token),
         );
         setConfig(data);
+
+        // Pre-populate input values from URL query parameters (e.g. ?name=...&email=...&phone=...)
+        const initialVals: Record<string, string> = {};
+        const params = currentSearchParams();
+        params.forEach((val, key) => {
+          if (key !== 'token') {
+            initialVals[key] = val;
+          }
+        });
+        if (Object.keys(initialVals).length > 0) {
+          setValues((prev) => ({ ...initialVals, ...prev }));
+        }
       } catch (err) {
         if (err instanceof ApiFailure) {
           setGeneralError(err.message);

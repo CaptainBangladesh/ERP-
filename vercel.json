@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://YOUR_BACKEND_URL_HERE/api/:path*"
+      "destination": "https://erp-c5im.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",

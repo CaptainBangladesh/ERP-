@@ -1,5 +1,10 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
-import { CRM_ROUTE, type ActivityListResponse, type ActivityResponse } from '@erp/shared';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import {
+  CRM_ROUTE,
+  type ActivityFeedResponse,
+  type ActivityListResponse,
+  type ActivityResponse,
+} from '@erp/shared';
 import { CurrentSession, type RequestSession } from '../../platform/auth';
 import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
@@ -20,6 +25,18 @@ export class ActivitiesController {
       { userId: session.user.id, name: session.user.name },
       body,
     );
+  }
+
+  /**
+   * The company-wide feed. Declared before the three per-parent reads so `GET …/activities`
+   * resolves here and is never mistaken for a parent segment.
+   */
+  @Get('activities')
+  @RequirePermission('crm:activities:read')
+  async listCompanyActivities(
+    @Query() query: Record<string, unknown>,
+  ): Promise<ActivityFeedResponse> {
+    return this.activitiesService.listCompanyActivities(query);
   }
 
   @Get('leads/:id/activities')

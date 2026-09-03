@@ -9,7 +9,7 @@ import {
   type FormTemplate,
 } from '@erp/shared';
 import { Field, FormError, Select } from '@erp/shared/ui';
-import { ApiFailure, api } from '../../../api/client';
+import { ApiFailure, api, apiUrl } from '../../../api/client';
 import { useLeadFields, useLeadGroups, useLeadSources } from '../vocabulary';
 
 interface WebFormModalProps {
@@ -225,9 +225,10 @@ export function WebFormModal({ isOpen, onClose, onLeadCreated }: WebFormModalPro
     ? `${window.location.origin}/public/crm/form/${activeFormSource.token}`
     : `${window.location.origin}/public/crm/form/preview`;
 
-  const publicSubmitUrl = activeFormSource
-    ? `${window.location.origin}/api/crm/capture/${activeFormSource.token}`
-    : `${window.location.origin}/api/crm/capture/token_here`;
+  // The absolute URL a Google Form posts to: contract path, and the configured API origin via
+  // `apiUrl` — not `window.location.origin`, which is wherever this UI is open rather than where
+  // the API runs. Same fix, and same reason, as `CaptureSourcesPage.submitUrlFor`.
+  const publicSubmitUrl = apiUrl(CAPTURE_SOURCE_PATHS.publicSubmit(activeFormSource?.token ?? 'token_here'));
 
   const iframeSnippet = `<iframe src="${publicFormUrl}" width="100%" height="650" frameborder="0"></iframe>`;
 

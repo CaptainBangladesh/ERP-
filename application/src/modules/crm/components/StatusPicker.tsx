@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   LEAD_STATUS_LABEL_PATHS,
@@ -43,20 +44,44 @@ export function StatusPicker({
   const current = vocabulary.of(status);
 
   const [isOpen, setIsOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * The menu is drawn into a portal on `document.body`, because the board wraps every group in
+   * an `overflow-hidden` section over an `overflow-x-auto` table — either clips an absolutely
+   * positioned child, so on the lower rows the menu was cut off with nowhere to grow. Flipping
+   * it upward only dodged the *viewport* edge, not the section's clip. Portalled and `fixed`, it
+   * escapes both; the cost is placing it by hand from the trigger's rect.
+   */
+  const [coords, setCoords] = useState<{ left: number; top: number; flip: boolean } | null>(null);
+
+  const positionMenu = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = 288; // w-72
+    const estimatedHeight = menuRef.current?.offsetHeight ?? 320;
+    const gap = 6;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const flip = spaceBelow < estimatedHeight + gap && rect.top > spaceBelow;
+    // Centre the menu on the trigger, as the old `left-1/2 -translate-x-1/2` did, then keep it
+    // on-screen.
+    const centred = rect.left + rect.width / 2 - menuWidth / 2;
+    const left = Math.min(Math.max(8, centred), Math.max(8, window.innerWidth - menuWidth - 8));
+    const top = flip ? rect.top - gap : rect.bottom + gap;
+    setCoords({ left, top, flip });
+  };
 
   useEffect(() => {
     if (!isOpen) return;
 
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < 320);
-    }
-
     function onPointerDown(event: PointerEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) setIsOpen(false);
+      const target = event.target as Node;
+      // The menu is portalled, so "inside" is the trigger or the menu — not `containerRef` alone.
+      if (containerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setIsOpen(false);
     }
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') setIsOpen(false);
@@ -70,9 +95,28 @@ export function StatusPicker({
     };
   }, [isOpen]);
 
+  // Place the menu against the trigger on open, and keep it there as the page scrolls or resizes
+  // — a `fixed` element does not move with the document on its own.
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setCoords(null);
+      return;
+    }
+    positionMenu();
+    const reposition = () => positionMenu();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   return (
     <div ref={containerRef} className="relative inline-block">
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={isOpen}
@@ -90,18 +134,21 @@ export function StatusPicker({
         )}
       </button>
 
-      {isOpen && (
-        <StatusMenu
-          vocabulary={vocabulary}
-          current={current}
-          openUpward={openUpward}
-          onPick={(next) => {
-            setIsOpen(false);
-            if (next !== status) onChange(next);
-          }}
-          onClose={() => setIsOpen(false)}
-        />
-      )}
+      {isOpen &&
+        createPortal(
+          <StatusMenu
+            menuRef={menuRef}
+            coords={coords}
+            vocabulary={vocabulary}
+            current={current}
+            onPick={(next) => {
+              setIsOpen(false);
+              if (next !== status) onChange(next);
+            }}
+            onClose={() => setIsOpen(false)}
+          />,
+          document.body,
+        )}
     </div>
   );
 }
@@ -160,13 +207,15 @@ export function nextColour(index: number): string {
 function StatusMenu({
   vocabulary,
   current,
-  openUpward = false,
+  menuRef,
+  coords,
   onPick,
   onClose,
 }: {
   vocabulary: ReturnType<typeof useLeadStatusLabels>;
   current: StatusLabel;
-  openUpward?: boolean;
+  menuRef: RefObject<HTMLDivElement | null>;
+  coords: { left: number; top: number; flip: boolean } | null;
   onPick: (status: LeadStatusKey) => void;
   onClose: () => void;
 }) {
@@ -180,10 +229,16 @@ function StatusMenu({
 
   return (
     <div
+      ref={menuRef}
       role="menu"
-      className={`absolute left-1/2 z-50 w-72 -translate-x-1/2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg ${
-        openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
-      }`}
+      style={{
+        position: 'fixed',
+        left: coords?.left ?? -9999,
+        top: coords?.top ?? -9999,
+        transform: coords?.flip ? 'translateY(-100%)' : undefined,
+        visibility: coords ? 'visible' : 'hidden',
+      }}
+      className="z-50 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
     >
       <div className="max-h-72 overflow-y-auto py-1">
         {vocabulary.list.map((item) =>

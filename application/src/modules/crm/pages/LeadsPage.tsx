@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -7,6 +8,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   LEAD_FIELDS,
@@ -467,11 +469,11 @@ export function LeadsPage() {
                   'Sequences are not built yet — a sequence is several emails on a schedule, not one send. Mass email will write to this selection once, today.',
                 )
               }
-              onAssign={(userId) =>
+              onAssign={(userIds) =>
                 runBulk({
                   ids: selectedIds,
-                  run: (id) => api.patch<LeadResponse>(LEAD_PATHS.lead(id), { assignedToUserId: userId }),
-                  what: userId ? 'Assigned' : 'Unassigned',
+                  run: (id) => api.patch<LeadResponse>(LEAD_PATHS.lead(id), { assigneeUserIds: userIds }),
+                  what: userIds.length > 0 ? 'Assigned' : 'Unassigned',
                 })
               }
               onMove={(groupId) =>
@@ -815,10 +817,10 @@ export function LeadsPage() {
                                       <OwnerPicker
                                         leadName={lead.name}
                                         users={users}
-                                        value={lead.assignedToUserId}
+                                        values={lead.assigneeUserIds ?? []}
                                         canWrite={canWrite}
-                                        onChange={(assignedToUserId) =>
-                                          updateLead.mutate({ id: lead.id, data: { assignedToUserId } })
+                                        onChange={(assigneeUserIds) =>
+                                          updateLead.mutate({ id: lead.id, data: { assigneeUserIds } })
                                         }
                                       />
                                     </td>
@@ -1056,25 +1058,77 @@ function filterSelectClass(value: string | undefined) {
 function OwnerPicker({
   leadName,
   users,
-  value,
+  values,
   canWrite,
   onChange,
 }: {
   leadName: string;
   users: { id: string; name: string; email?: string }[];
-  value: string | null;
+  /** Everyone assigned to this lead, primary first. Empty means unassigned. */
+  values: string[];
   canWrite: boolean;
-  onChange: (assignedToUserId: string | null) => void;
+  onChange: (assigneeUserIds: string[]) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [showTip, setShowTip] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
-  const selectedUser = useMemo(
-    () => users.find((u) => u.id === value),
-    [users, value],
+  /**
+   * The popover is drawn into a portal on `document.body`, not inline, because every group is
+   * an `overflow-hidden` section wrapping an `overflow-x-auto` table — either of which clips an
+   * absolutely-positioned child. Inline, the menu was cut off on the lower rows of a group (it
+   * had nowhere to grow but into the clip). Portalled and `position: fixed`, it escapes both
+   * clips; the trade is that we place it by hand from the trigger's viewport rect.
+   */
+  const [coords, setCoords] = useState<{ left: number; top: number; flip: boolean } | null>(null);
+
+  const positionPopover = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = 288; // w-72
+    const estimatedHeight = popoverRef.current?.offsetHeight ?? 360;
+    const gap = 6;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    // Drop upward when there isn't room below but there is above — the last rows of a tall group.
+    const flip = spaceBelow < estimatedHeight + gap && rect.top > spaceBelow;
+    const left = Math.min(
+      Math.max(8, rect.left),
+      Math.max(8, window.innerWidth - menuWidth - 8),
+    );
+    const top = flip ? rect.top - gap : rect.bottom + gap;
+    setCoords({ left, top, flip });
+  };
+
+  // The assigned people, in the order the set carries them (primary first), skipping any id that
+  // no longer resolves to a member — someone who has since left shouldn't blank the whole cell.
+  const selectedUsers = useMemo(
+    () =>
+      values
+        .map((id) => users.find((u) => u.id === id))
+        .filter((u): u is { id: string; name: string; email?: string } => Boolean(u)),
+    [users, values],
   );
+  const selectedSet = useMemo(() => new Set(values), [values]);
+
+  // Plain click assigns exactly this person; Ctrl/⌘-click toggles them into or out of the set and
+  // keeps the menu open, so a lead can be shared across several people in one visit — the promise
+  // the tip at the foot of the menu makes.
+  const choose = (userId: string, additive: boolean) => {
+    if (additive) {
+      onChange(
+        selectedSet.has(userId)
+          ? values.filter((id) => id !== userId)
+          : [...values, userId],
+      );
+      return;
+    }
+    onChange([userId]);
+    setIsOpen(false);
+  };
 
   const filteredUsers = useMemo(() => {
     if (!search.trim()) return users;
@@ -1088,9 +1142,15 @@ function OwnerPicker({
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
+      const target = event.target as Node;
+      // The menu lives in a portal, so "inside" is either the trigger or the portalled popover.
+      if (
+        containerRef.current?.contains(target) ||
+        popoverRef.current?.contains(target)
+      ) {
+        return;
       }
+      setIsOpen(false);
     }
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
@@ -1098,6 +1158,25 @@ function OwnerPicker({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
+  }, [isOpen]);
+
+  // Place the popover against the trigger the moment it opens, and keep it there while the
+  // page scrolls or resizes underneath it. A `fixed` menu doesn't move with the document, so
+  // without this it would drift away from its row.
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      setCoords(null);
+      return;
+    }
+    positionPopover();
+    const onScrollOrResize = () => positionPopover();
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const avatarBg = (name: string) => {
@@ -1126,12 +1205,17 @@ function OwnerPicker({
 
   return (
     <div ref={containerRef} className="relative inline-block text-left w-full">
-      {/* Hidden select for accessibility & automated tests */}
+      {/*
+        Hidden single-owner select for accessibility & automated tests. The rich popover is the
+        way a lead gets several owners; this fallback picks the one primary — choosing here
+        replaces the set with that person (or clears it), which is the sensible single-choice
+        reading of a plain <select>.
+      */}
       <select
         aria-label={`Owner of ${leadName}`}
-        value={value ?? ''}
+        value={values[0] ?? ''}
         disabled={!canWrite}
-        onChange={(e) => onChange(e.target.value || null)}
+        onChange={(e) => onChange(e.target.value ? [e.target.value] : [])}
         className="sr-only"
         tabIndex={-1}
       >
@@ -1145,35 +1229,22 @@ function OwnerPicker({
 
       {/* Trigger Button Matching Screenshot-2 */}
       <button
+        ref={triggerRef}
         type="button"
         disabled={!canWrite}
         onClick={() => setIsOpen((prev) => !prev)}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        title={
+          selectedUsers.length > 1 ? selectedUsers.map((u) => u.name).join(', ') : undefined
+        }
         className={`group flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium transition-all focus:outline-none ${
-          selectedUser
+          selectedUsers.length > 0
             ? 'bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 shadow-2xs'
             : 'text-slate-500 hover:bg-slate-100 border border-dashed border-slate-300 hover:border-slate-400'
         }`}
       >
-        {selectedUser ? (
-          <>
-            <span
-              className={`w-5 h-5 rounded-full border flex items-center justify-center font-bold text-[10px] shrink-0 ${avatarBg(
-                selectedUser.name,
-              )}`}
-            >
-              {getInitials(selectedUser.name)}
-            </span>
-            <span className="truncate max-w-[100px]">{selectedUser.name}</span>
-            <svg
-              className="w-3 h-3 text-slate-400 group-hover:text-slate-600 transition-transform"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </>
-        ) : (
+        {selectedUsers.length === 0 ? (
           <>
             <div className="relative flex items-center justify-center w-5 h-5 rounded-full border border-slate-300 bg-slate-50 text-slate-400 group-hover:text-teal-600 group-hover:border-teal-400 transition-colors">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1198,12 +1269,67 @@ function OwnerPicker({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </>
+        ) : selectedUsers.length === 1 ? (
+          <>
+            <span
+              className={`w-5 h-5 rounded-full border flex items-center justify-center font-bold text-[10px] shrink-0 ${avatarBg(
+                selectedUsers[0]!.name,
+              )}`}
+            >
+              {getInitials(selectedUsers[0]!.name)}
+            </span>
+            <span className="truncate max-w-[100px]">{selectedUsers[0]!.name}</span>
+            <svg
+              className="w-3 h-3 text-slate-400 group-hover:text-slate-600 transition-transform"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </>
+        ) : (
+          <>
+            {/* A stack of overlapping avatars — the shared-ownership shorthand — then a count. */}
+            <span className="flex -space-x-1.5">
+              {selectedUsers.slice(0, 3).map((u) => (
+                <span
+                  key={u.id}
+                  className={`w-5 h-5 rounded-full border-2 border-white flex items-center justify-center font-bold text-[9px] shrink-0 ${avatarBg(
+                    u.name,
+                  )}`}
+                >
+                  {getInitials(u.name)}
+                </span>
+              ))}
+            </span>
+            <span className="whitespace-nowrap">{selectedUsers.length} people</span>
+            <svg
+              className="w-3 h-3 text-slate-400 group-hover:text-slate-600 transition-transform"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </>
         )}
       </button>
 
-      {/* Floating Popover Matching Screenshot-3 */}
-      {isOpen && (
-        <div className="absolute left-0 z-50 mt-1.5 w-72 rounded-xl bg-white p-3 text-left shadow-2xl ring-1 ring-black/5 border border-slate-200">
+      {/* Floating Popover Matching Screenshot-3 — portalled so no group's overflow clips it. */}
+      {isOpen &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            style={{
+              position: 'fixed',
+              left: coords?.left ?? -9999,
+              top: coords?.top ?? -9999,
+              transform: coords?.flip ? 'translateY(-100%)' : undefined,
+              visibility: coords ? 'visible' : 'hidden',
+            }}
+            className="z-50 w-72 rounded-xl bg-white p-3 text-left shadow-2xl ring-1 ring-black/5 border border-slate-200"
+          >
           {/* Search Box */}
           <div className="relative mb-2.5">
             <input
@@ -1236,15 +1362,15 @@ function OwnerPicker({
 
           {/* User List */}
           <div className="max-h-52 overflow-y-auto space-y-0.5 pr-0.5">
-            {/* Unassign option */}
+            {/* Unassign option — clears everyone off the lead. */}
             <button
               type="button"
               onClick={() => {
-                onChange(null);
+                onChange([]);
                 setIsOpen(false);
               }}
               className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors ${
-                !value
+                values.length === 0
                   ? 'bg-teal-50 text-teal-900 font-semibold'
                   : 'text-slate-600 hover:bg-slate-100'
               }`}
@@ -1255,7 +1381,7 @@ function OwnerPicker({
                 </span>
                 <span>Unassigned</span>
               </div>
-              {!value && (
+              {values.length === 0 && (
                 <svg className="w-4 h-4 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
@@ -1263,15 +1389,13 @@ function OwnerPicker({
             </button>
 
             {filteredUsers.map((user) => {
-              const isSelected = user.id === value;
+              const isSelected = selectedSet.has(user.id);
               return (
                 <button
                   key={user.id}
                   type="button"
-                  onClick={() => {
-                    onChange(user.id);
-                    setIsOpen(false);
-                  }}
+                  onClick={(e) => choose(user.id, e.ctrlKey || e.metaKey)}
+                  aria-pressed={isSelected}
                   className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors ${
                     isSelected
                       ? 'bg-teal-50 text-teal-900 font-semibold'
@@ -1347,8 +1471,9 @@ function OwnerPicker({
               </button>
             </div>
           )}
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

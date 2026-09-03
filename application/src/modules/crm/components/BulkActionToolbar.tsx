@@ -49,7 +49,8 @@ export function BulkActionToolbar({
   isBusy: boolean;
   onMassEmail: () => void;
   onAddToSequence: () => void;
-  onAssign: (userId: string | null) => void;
+  /** The complete set to assign every selected lead to. `[]` takes them all off. */
+  onAssign: (userIds: string[]) => void;
   onMove: (groupId: string) => void;
   onExport: () => void;
   onArchive: () => void;
@@ -98,16 +99,13 @@ export function BulkActionToolbar({
       <ToolbarButton icon="✉" label="Mass email" onClick={onMassEmail} disabled={isBusy} />
       <ToolbarButton icon="≡" label="Add to sequence" onClick={onAddToSequence} disabled={isBusy} />
 
-      <ToolbarMenu
-        icon="◎"
-        label="Assign owner"
-        selectLabel="Assign selected leads to"
+      <AssignMenu
         isOpen={openMenu === 'assign'}
         onToggle={() => setOpenMenu((open) => (open === 'assign' ? undefined : 'assign'))}
         disabled={isBusy}
-        options={[{ id: UNASSIGN, name: 'Unassigned' }, ...users]}
-        onPick={(id) => {
-          onAssign(id === UNASSIGN ? null : id);
+        users={users}
+        onApply={(userIds) => {
+          onAssign(userIds);
           setOpenMenu(undefined);
         }}
       />
@@ -249,6 +247,132 @@ function ToolbarButton({
       </span>
       {label}
     </button>
+  );
+}
+
+/**
+ * The Assign-owner menu, multi-select — a lead can be worked by several people, and a bulk assign
+ * should be able to say so in one act. Ticking people builds a set without closing the menu;
+ * "Assign to N" applies it to every selected lead (replacing whatever they had). "Unassigned"
+ * clears them all, and applies at once because there is nothing left to add to it.
+ *
+ * Behind it is the same visually-hidden `<select>` the other menu keeps — the tab stop and the
+ * accessible name — but single-choice, because a native multi-select is a poor keyboard control;
+ * choosing one person there assigns exactly that person, which is the sensible one-key default.
+ */
+function AssignMenu({
+  isOpen,
+  onToggle,
+  disabled,
+  users,
+  onApply,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  users: { id: string; name: string }[];
+  onApply: (userIds: string[]) => void;
+}) {
+  const [pending, setPending] = useState<string[]>([]);
+
+  // Start each visit from the current selection's blank slate — a set left over from last time
+  // would silently widen the next assign.
+  useEffect(() => {
+    if (isOpen) setPending([]);
+  }, [isOpen]);
+
+  const toggle = (id: string) =>
+    setPending((set) => (set.includes(id) ? set.filter((x) => x !== id) : [...set, id]));
+
+  return (
+    <div className="relative">
+      <select
+        aria-label="Assign selected leads to"
+        value=""
+        disabled={disabled}
+        onChange={(event) => {
+          if (!event.target.value) return;
+          onApply(event.target.value === UNASSIGN ? [] : [event.target.value]);
+        }}
+        className="sr-only"
+      >
+        <option value="" disabled>
+          Assign owner
+        </option>
+        <option value={UNASSIGN}>Unassigned</option>
+        {users.map((user) => (
+          <option key={user.id} value={user.id}>
+            {user.name}
+          </option>
+        ))}
+      </select>
+
+      {/*
+        Unlike the single-choice menus, this trigger is a real, focusable button (not the
+        aria-hidden "face" pattern): the popover is the *only* way to pick several people, so a
+        keyboard has to be able to open it. The hidden <select> above stays as the one-key path to
+        assign a single owner.
+      */}
+      <ToolbarButton icon="◎" label="Assign owner" onClick={onToggle} disabled={disabled} />
+
+      {isOpen && (
+        <div className="absolute bottom-full left-1/2 mb-2 flex max-h-72 w-56 -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-lg">
+          <div className="max-h-52 overflow-y-auto p-1">
+            <button
+              type="button"
+              onClick={() => onApply([])}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
+            >
+              <span className="flex size-4 shrink-0 items-center justify-center rounded border border-dashed border-slate-300 text-[9px] text-slate-400">
+                ✕
+              </span>
+              Unassigned
+            </button>
+
+            {users.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-slate-500">Nobody to assign yet.</p>
+            ) : (
+              users.map((user) => {
+                const checked = pending.includes(user.id);
+                return (
+                  <button
+                    key={user.id}
+                    type="button"
+                    aria-pressed={checked}
+                    onClick={() => toggle(user.id)}
+                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-semibold transition ${
+                      checked ? 'bg-teal-50 text-teal-900' : 'hover:bg-slate-100'
+                    }`}
+                  >
+                    <span
+                      className={`flex size-4 shrink-0 items-center justify-center rounded border text-[9px] ${
+                        checked ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-300 text-transparent'
+                      }`}
+                    >
+                      ✓
+                    </span>
+                    <span className="truncate">{user.name}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <div className="border-t border-slate-100 p-1.5">
+            <button
+              type="button"
+              disabled={pending.length === 0}
+              onClick={() => onApply(pending)}
+              className="w-full rounded-lg bg-teal-700 px-2 py-1.5 text-xs font-bold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {pending.length === 0
+                ? 'Pick people to assign'
+                : `Assign to ${pending.length} ${pending.length === 1 ? 'person' : 'people'}`}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

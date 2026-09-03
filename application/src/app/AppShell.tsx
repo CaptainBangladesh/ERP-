@@ -9,6 +9,12 @@ function renderSidebarIcon(key: string, isActive: boolean) {
   const colorClass = isActive ? 'stroke-teal-600 font-semibold' : 'stroke-slate-400 group-hover:stroke-slate-600';
 
   switch (key) {
+    case 'workspace':
+      return (
+        <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l9-8 9 8M5 10v9a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1v-9" />
+        </svg>
+      );
     case 'deals':
       return (
         <svg className={`w-4 h-4 shrink-0 fill-none ${colorClass}`} viewBox="0 0 24 24" strokeWidth="1.75">
@@ -185,7 +191,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Sidebar Layout for CRM pages */}
       {isCrmActive && crmEntries.length > 0 ? (
-        <div className="mx-auto flex max-w-7xl min-h-[calc(100vh-57px)]">
+        <div className="mx-auto flex w-full max-w-[1700px] min-h-[calc(100vh-57px)]">
           <aside aria-label="CRM Sidebar" className="w-56 shrink-0 border-r border-slate-200 bg-white p-4">
             <nav className="space-y-1">
               {crmEntries.map((item) => {
@@ -209,7 +215,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             </nav>
           </aside>
 
-          <main className="flex-1 p-6">{children}</main>
+          {/* min-w-0 is essential: without it a flex child keeps its content's intrinsic width,
+              so a wide workspace column would force the whole page past the viewport (horizontal
+              scroll). overflow-x-clip is the backstop so nothing can ever scroll the page sideways. */}
+          <main className="min-w-0 flex-1 overflow-x-clip p-6">{children}</main>
         </div>
       ) : (
         <main className="mx-auto max-w-5xl p-6">{children}</main>

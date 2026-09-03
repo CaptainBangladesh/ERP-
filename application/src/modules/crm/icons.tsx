@@ -209,6 +209,16 @@ export function LinkIcon(props: IconProps) {
   );
 }
 
+export function ExternalLinkIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M14 5h5v5" />
+      <path d="M19 5l-8 8" />
+      <path d="M18 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4.5" />
+    </Svg>
+  );
+}
+
 export function ImageIcon(props: IconProps) {
   return (
     <Svg {...props}>
