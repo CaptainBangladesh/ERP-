@@ -702,22 +702,25 @@ function Worklist({
     <>
       <aside
         aria-label="Worklist"
-        className="sticky top-20 flex w-72 shrink-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs h-[calc(100vh-6.5rem)] max-h-[calc(100vh-6.5rem)] overflow-hidden self-start"
+        className="sticky top-20 flex w-[320px] shrink-0 flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs h-[calc(100vh-6.5rem)] max-h-[calc(100vh-6.5rem)] overflow-hidden self-start"
       >
-        <div className="flex items-center justify-between gap-2 shrink-0">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-            <span className="text-slate-400">
-              <ListIcon size={16} />
-            </span>
-            Worklist
-          </h2>
+        <div className="flex items-center justify-between gap-2 shrink-0 pb-1 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+              <ListIcon size={15} />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 leading-tight">Worklist</h2>
+              <span className="text-[10px] text-slate-400 font-medium">{shown.length} {shown.length === 1 ? 'lead' : 'leads'}</span>
+            </div>
+          </div>
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => setManageTabsOpen(true)}
               aria-label="Customize tabs"
               title="Add or rearrange tabs"
-              className="flex items-center gap-1 rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+              className="flex items-center justify-center h-7 w-7 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
             >
               <SlidersIcon size={14} />
             </button>
@@ -725,7 +728,8 @@ function Worklist({
               type="button"
               onClick={onToggle}
               aria-label="Collapse worklist"
-              className="rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              title="Collapse worklist"
+              className="flex items-center justify-center h-7 w-7 rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             >
               <ChevronLeftIcon size={15} />
             </button>
@@ -752,7 +756,7 @@ function Worklist({
           <button
             type="button"
             onClick={() => setManageTabsOpen(true)}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-200 py-1 text-[11px] font-medium text-slate-500 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 transition"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-200/90 py-1 text-[11px] font-semibold text-slate-500 hover:border-teal-300 hover:bg-teal-50/30 hover:text-teal-700 transition cursor-pointer"
           >
             <PlusIcon size={12} />
             <span>Add / Arrange tabs</span>
@@ -770,8 +774,18 @@ function Worklist({
               placeholder="Search leads…"
               value={search}
               onChange={(event) => onSearchChange(event.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/40 py-1.5 pl-8 pr-7 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-teal-500 focus:ring-2 focus:ring-teal-100 focus:outline-none transition"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition p-0.5"
+              >
+                <XIcon size={12} />
+              </button>
+            )}
           </div>
 
           {availableGroups.length > 0 && (
@@ -779,7 +793,7 @@ function Worklist({
               aria-label="Filter by group"
               value={groupFilter}
               onChange={(event) => onGroupFilterChange(event.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 px-2.5 text-xs font-medium text-slate-700 focus:border-teal-500 focus:outline-none cursor-pointer"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/40 py-1.5 px-2.5 text-xs font-semibold text-slate-700 focus:bg-white focus:border-teal-500 focus:ring-2 focus:ring-teal-100 focus:outline-none cursor-pointer transition"
             >
               <option value="">All Groups ({availableGroups.length})</option>
               {availableGroups.map((group) => (
@@ -791,12 +805,14 @@ function Worklist({
           )}
         </div>
 
-        <div className="flex flex-col gap-4 overflow-y-auto min-h-0 flex-1 pr-1 overscroll-contain">
+        <div className="flex flex-col gap-3.5 overflow-y-auto min-h-0 flex-1 pr-1 overscroll-contain">
           {groups.map(([sourceName, entries]) => (
             <div key={sourceName} className="flex flex-col gap-1.5">
-              <h3 className="px-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                {sourceName} · {entries.length}
-              </h3>
+              <div className="flex items-center justify-between px-1 py-0.5">
+                <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {sourceName} · {entries.length}
+                </h3>
+              </div>
               <ul className="flex flex-col gap-1.5">
                 {entries.map((entry) => (
                   <li key={entry.id}>
@@ -808,9 +824,10 @@ function Worklist({
           ))}
 
           {shown.length === 0 && (
-            <p className="px-1 py-4 text-center text-[11px] text-slate-400">
-              No leads match what you are looking for.
-            </p>
+            <div className="px-2 py-8 text-center">
+              <p className="text-xs font-semibold text-slate-500">No leads found</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Try adjusting your search or tab filter.</p>
+            </div>
           )}
         </div>
       </aside>
@@ -1268,14 +1285,20 @@ function StatTile({
       onClick={onClick}
       aria-pressed={active}
       aria-label={`Show ${label.toLowerCase()}`}
-      className={`flex flex-col gap-0.5 rounded-xl border p-2.5 text-left transition ${
-        active ? 'border-teal-300 bg-teal-50/70' : 'border-slate-200 bg-white hover:border-slate-300'
+      className={`group relative flex flex-col justify-between rounded-xl border p-2 text-left transition-all duration-150 cursor-pointer ${
+        active
+          ? 'border-teal-500 bg-teal-50/80 shadow-2xs ring-1 ring-teal-400/30'
+          : 'border-slate-200/80 bg-slate-50/50 hover:border-slate-300 hover:bg-white'
       }`}
     >
-      <span className="text-xl font-bold leading-none text-slate-900">{count}</span>
-      <span className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500">
-        <span aria-hidden="true" className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
-        <span className="truncate">{label}</span>
+      <div className="flex items-center justify-between w-full">
+        <span className={`text-base font-extrabold tracking-tight leading-none ${active ? 'text-teal-950' : 'text-slate-900'}`}>
+          {count}
+        </span>
+        <span aria-hidden="true" className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass} shadow-2xs`} />
+      </div>
+      <span className={`mt-1 truncate text-[11px] font-semibold leading-tight ${active ? 'text-teal-900' : 'text-slate-500'}`}>
+        {label}
       </span>
     </button>
   );
@@ -1297,43 +1320,55 @@ function WorklistCard({
       type="button"
       aria-current={active ? 'page' : undefined}
       onClick={() => navigate(leadWorkspacePath(lead.id))}
-      className={`flex h-[76px] w-full items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition ${
+      className={`group relative flex w-full items-start gap-2.5 rounded-xl border p-2.5 text-left transition-all duration-150 cursor-pointer ${
         active
-          ? 'border-teal-300 bg-teal-50/60 ring-1 ring-teal-200 shadow-xs'
-          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+          ? 'border-teal-500 bg-teal-50/80 ring-1 ring-teal-400/40 shadow-xs'
+          : 'border-slate-200/80 bg-white hover:border-slate-300 hover:bg-slate-50/70 shadow-2xs'
       }`}
     >
-      <Avatar name={lead.name} />
+      {/* Active left indicator */}
+      {active && (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-teal-600"
+        />
+      )}
+
+      {/* Avatar */}
+      <span
+        aria-hidden="true"
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-bold text-white text-[11px] shadow-2xs transition-transform group-hover:scale-105 ${avatarColour(lead.name)}`}
+      >
+        {initialsOf(lead.name)}
+      </span>
+
+      {/* Lead info */}
       <span className="flex min-w-0 flex-1 flex-col justify-center">
         <span
-          className="truncate text-xs font-bold text-slate-900 leading-tight"
+          className={`truncate text-xs font-bold leading-snug ${active ? 'text-teal-950' : 'text-slate-900'}`}
           title={lead.name}
         >
           {lead.name}
         </span>
-        {lead.organisationName ? (
+        {lead.organisationName && (
           <span
-            className="truncate text-[11px] text-slate-500 leading-tight"
+            className="truncate text-[11px] text-slate-500 font-medium leading-tight mt-0.5"
             title={lead.organisationName}
           >
             {lead.organisationName}
           </span>
-        ) : (
-          <span className="text-[11px] leading-tight select-none opacity-0" aria-hidden="true">
-            &nbsp;
-          </span>
         )}
-        <span className="mt-0.5 flex items-center gap-1.5 min-w-0 overflow-hidden">
+        <span className="mt-1.5 flex items-center gap-1.5 min-w-0 flex-wrap">
           <StatusPill label={label} compact />
-          <PriorityBadge value={priorityOf(lead.customValues)} compact />
           {lead.groupName && (
             <span
-              className="inline-block max-w-[100px] truncate rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 shrink-0"
+              className="inline-flex items-center rounded-md bg-slate-100/90 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 max-w-[125px] truncate shrink-0"
               title={lead.groupName}
             >
               {lead.groupName}
             </span>
           )}
+          <PriorityBadge value={priorityOf(lead.customValues)} compact />
         </span>
       </span>
     </button>
@@ -2056,8 +2091,8 @@ function Avatar({ name, size = 'sm' }: { name: string; size?: 'sm' | 'lg' }) {
 function StatusPill({ label, compact = false }: { label: StatusLabel; compact?: boolean }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full font-bold ${
-        compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2.5 py-0.5 text-[11px]'
+      className={`inline-flex items-center gap-1.5 rounded-full font-bold whitespace-nowrap shrink-0 ${
+        compact ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-0.5 text-[11px]'
       }`}
       style={{ backgroundColor: `${label.color}1a`, color: label.color }}
     >
@@ -2164,7 +2199,7 @@ function PriorityBadge({
 
   const size = compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-[11px]';
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border font-bold ${size} ${priority.classes}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full border font-bold whitespace-nowrap shrink-0 ${size} ${priority.classes}`}>
       <span aria-hidden="true" className={`inline-block h-1.5 w-1.5 rotate-45 ${priority.dotClass}`} />
       {priority.label}
     </span>
