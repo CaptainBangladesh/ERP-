@@ -24,6 +24,7 @@ import { CheckIcon } from '../icons';
 import { FillSurveyModal } from './FillSurveyModal';
 import { ManualSurveyModal } from './ManualSurveyModal';
 import { CaptureSourceModal } from './CaptureSourceModal';
+import { EditMerchantProfileModal } from './EditMerchantProfileModal';
 
 interface LeadSurveyTabProps {
   lead: LeadResponse;
@@ -36,6 +37,7 @@ export function LeadSurveyTab({ lead, customFieldDefinitions, canWrite }: LeadSu
   const [isFillModalOpen, setIsFillModalOpen] = useState(false);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [isCreateSourceModalOpen, setIsCreateSourceModalOpen] = useState(false);
+  const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const submissions = useQuery({
@@ -124,8 +126,31 @@ export function LeadSurveyTab({ lead, customFieldDefinitions, canWrite }: LeadSu
       </div>
 
       {/* Merchant profile — the research read, before the raw submissions */}
-      {profile.hasAnything && (
-        <MerchantProfileCard profile={profile} leadId={lead.id} canWrite={canWrite} />
+      {profile.hasAnything ? (
+        <MerchantProfileCard
+          profile={profile}
+          lead={lead}
+          leadId={lead.id}
+          canWrite={canWrite}
+          submissions={items}
+          customFieldDefinitions={customFieldDefinitions}
+        />
+      ) : (
+        canWrite && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-slate-300 bg-white p-4 shadow-2xs">
+            <div className="flex flex-col">
+              <span className="text-xs font-bold text-slate-800">Merchant Profile</span>
+              <span className="text-xs text-slate-500">Record research facts, socials, and website review for this lead.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsEditProfileModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 cursor-pointer"
+            >
+              + Create Merchant Profile
+            </button>
+          </div>
+        )
       )}
 
       {/* Share Pre-filled Links Card */}
@@ -253,6 +278,18 @@ export function LeadSurveyTab({ lead, customFieldDefinitions, canWrite }: LeadSu
           onSuccess={() => {
             void queryClient.invalidateQueries({ queryKey: ['crm', 'capture-sources'] });
           }}
+        />
+      )}
+
+      {isEditProfileModalOpen && (
+        <EditMerchantProfileModal
+          isOpen={isEditProfileModalOpen}
+          onClose={() => setIsEditProfileModalOpen(false)}
+          onSuccess={handleSurveySubmitted}
+          lead={lead}
+          profile={profile}
+          submissions={items}
+          customFieldDefinitions={customFieldDefinitions}
         />
       )}
     </section>

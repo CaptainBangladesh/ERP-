@@ -120,20 +120,31 @@ export class MailboxesService {
     );
   }
 
-  async listMailboxes(userId: string): Promise<MailboxConnectionSummary[]> {
+  async listMailboxes(
+    actor: { userId: string; isOwner?: boolean } | string,
+  ): Promise<MailboxConnectionSummary[]> {
+    const context = typeof actor === 'string' ? { userId: actor, isOwner: false } : actor;
     const rows = await this.prisma.mailboxConnection.findMany({
-      where: { userId },
+      where: {
+        OR: [
+          { userId: context.userId },
+          { provider: 'smtp' },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r: any) => describeMailbox(r));
+    return rows.map((r: any) => describeMailbox(r, context));
   }
 
-  async requireMailbox(id: string): Promise<MailboxConnectionSummary> {
+  async requireMailbox(
+    id: string,
+    actor?: { userId: string; isOwner?: boolean },
+  ): Promise<MailboxConnectionSummary> {
     const row = await this.prisma.mailboxConnection.findUnique({
       where: { id },
     });
     if (!row) throw mailboxNotFound();
-    return describeMailbox(row);
+    return describeMailbox(row, actor);
   }
 
   /**
@@ -189,10 +200,10 @@ export class MailboxesService {
       smtpPassword: candidate.smtpPassword,
     };
 
-    // Found through the scoped client, which applies the company itself — so re-adding a
-    // company mailbox updates this user's own, and can never reach into another company's.
+    // Found through the scoped client, which applies the company itself.
+    // Re-adding or updating the company SMTP mailbox updates the company's shared mailbox.
     const existing = await this.prisma.mailboxConnection.findFirst({
-      where: { userId: actor.userId, provider: 'smtp' },
+      where: { provider: 'smtp' },
     });
 
     const connection = existing
@@ -204,7 +215,7 @@ export class MailboxesService {
           data: companyApplied({ userId: actor.userId, provider: 'smtp', ...settings }),
         });
 
-    return describeMailbox(connection);
+    return describeMailbox(connection, { userId: actor.userId, isOwner: true });
   }
 
   /**
@@ -231,9 +242,13 @@ export class MailboxesService {
    * would leave a campaign pointing at a mailbox that no longer exists, and the failure would
    * surface later at send time with nothing to explain it.
    */
-  async removeMailbox(id: string): Promise<void> {
+  async removeMailbox(id: string, actor?: { userId: string; isOwner?: boolean }): Promise<void> {
     const row = await this.prisma.mailboxConnection.findUnique({ where: { id } });
     if (!row) throw mailboxNotFound();
+
+    if (actor && !actor.isOwner && row.userId !== actor.userId) {
+      throw mailboxForbidden('Only the company owner or mailbox creator can remove this mailbox.');
+    }
 
     const campaigns = await this.prisma.campaign.count({
       where: { mailboxConnectionId: id },
@@ -243,36 +258,52 @@ export class MailboxesService {
     await this.prisma.mailboxConnection.delete({ where: { id } });
   }
 
-  async disconnectMailbox(id: string): Promise<MailboxConnectionSummary> {
+  async disconnectMailbox(
+    id: string,
+    actor?: { userId: string; isOwner?: boolean },
+  ): Promise<MailboxConnectionSummary> {
     const row = await this.prisma.mailboxConnection.findUnique({
       where: { id },
     });
     if (!row) throw mailboxNotFound();
+
+    if (actor && !actor.isOwner && row.userId !== actor.userId) {
+      throw mailboxForbidden('Only the company owner or mailbox creator can disconnect this mailbox.');
+    }
 
     const updated = await this.prisma.mailboxConnection.update({
       where: { id },
       data: { status: 'revoked' },
     });
 
-    return describeMailbox(updated);
+    return describeMailbox(updated, actor);
   }
 }
 
-export function describeMailbox(row: {
-  id: string;
-  userId: string;
-  provider: string;
-  emailAddress: string;
-  displayName: string;
-  status: string;
-  connectedAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
-  smtpHost?: string | null;
-  smtpPort?: number | null;
-  smtpSecure?: boolean | null;
-  smtpUsername?: string | null;
-}): MailboxConnectionSummary {
+export function describeMailbox(
+  row: {
+    id: string;
+    userId: string;
+    provider: string;
+    emailAddress: string;
+    displayName: string;
+    status: string;
+    connectedAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
+    smtpHost?: string | null;
+    smtpPort?: number | null;
+    smtpSecure?: boolean | null;
+    smtpUsername?: string | null;
+  },
+  actor?: { userId: string; isOwner?: boolean },
+): MailboxConnectionSummary {
+  const isOwner = Boolean(actor?.isOwner);
+  const isCreator = actor?.userId ? row.userId === actor.userId : true;
+  const isSmtp = row.provider === 'smtp';
+  const isShared = isSmtp;
+  const canManage = isCreator || isOwner;
+
   return {
     id: row.id,
     userId: row.userId,
@@ -283,6 +314,8 @@ export function describeMailbox(row: {
     connectedAt: row.connectedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    isShared,
+    canManage,
     // Where it sends through, so the screen can show a company mailbox as more than a name.
     // The password is not here and has no route that returns it.
     ...(row.smtpHost
@@ -345,7 +378,6 @@ function mailboxRedirectUri(): string {
   );
 }
 
-/** A mailbox a campaign still sends from. Disconnect it, or delete the campaign first. */
 export function mailboxInUse(): ApiException {
   return new ApiException(
     MAILBOX_ERROR_CODES.mailboxInUse,
@@ -353,3 +385,12 @@ export function mailboxInUse(): ApiException {
     HttpStatus.CONFLICT,
   );
 }
+
+export function mailboxForbidden(detail?: string): ApiException {
+  return new ApiException(
+    MAILBOX_ERROR_CODES.mailboxForbidden,
+    detail || 'You do not have permission to modify this mailbox.',
+    HttpStatus.FORBIDDEN,
+  );
+}
+

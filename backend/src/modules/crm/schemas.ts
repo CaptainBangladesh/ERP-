@@ -599,6 +599,50 @@ export const CreateActivityBody = validator({
   }
 });
 
+export const UpdateActivityBody = validator({
+  type: optional(ACTIVITY_TYPE),
+  notes: optional(text(ACTIVITY_NOTES)),
+  occurredAt: optional(ACTIVITY_OCCURRED_AT),
+  dueAt: optional(clearable(ACTIVITY_DUE_AT)),
+});
+
+export const UpdateLeadSubmissionBody = validator({
+  formName: optional(text({ missing: 'Enter a form name.', maxLength: 200, tooLong: 'Form name must be 200 characters or fewer.' })),
+  rawPayload: rule('Enter submission answers', (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return refused('Submission answers must be an object.');
+    }
+    return accepted(value as Record<string, unknown>);
+  }),
+  mappedFields: optional(
+    rule('Mapped fields', (value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return refused('Mapped fields must be an object.');
+      }
+      return accepted(value as Record<string, string>);
+    }),
+  ),
+});
+
+export const UpdateMerchantProfileBody = validator({
+  submissionId: optional(identifier({ missing: 'Invalid submission ID', invalid: 'Invalid submission ID' })),
+  formName: optional(text({ missing: 'Enter a form name.', maxLength: 200, tooLong: 'Form name must be 200 characters or fewer.' })),
+  rawPayload: rule('Enter profile data', (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return refused('Profile data must be an object.');
+    }
+    return accepted(value as Record<string, unknown>);
+  }),
+  mappedFields: optional(
+    rule('Mapped fields', (value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return refused('Mapped fields must be an object.');
+      }
+      return accepted(value as Record<string, string>);
+    }),
+  ),
+});
+
 // ─── workflow automation ────────────────────────────────────────────────────────────
 
 const RULE_NAME = {

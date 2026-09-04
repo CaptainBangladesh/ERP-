@@ -141,6 +141,32 @@ describe('CRM Outreach Modals', () => {
       // A failure is not a reason to re-read the list — there is nothing new in it.
       expect((api.get as any).mock.calls.length).toBe(fetchesBefore);
     });
+
+    it('displays shared company mailbox badge and team note for teammates without asking for SMTP input', async () => {
+      (api.get as any).mockResolvedValueOnce({
+        items: [
+          {
+            id: 'mb_shared',
+            userId: 'owner_user_id',
+            provider: 'smtp',
+            emailAddress: 'sales@northwind.test',
+            displayName: 'Northwind Sales',
+            status: 'connected',
+            isShared: true,
+            canManage: false,
+            connectedAt: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+      render(<MailboxesModal isOpen={true} onClose={vi.fn()} />);
+
+      expect(await screen.findByText('Northwind Sales')).toBeInTheDocument();
+      expect(screen.getByText('sales@northwind.test')).toBeInTheDocument();
+      expect(screen.getByText('🏢 Company Mailbox')).toBeInTheDocument();
+      expect(screen.getByText(/Shared with Team/i)).toBeInTheDocument();
+    });
   });
 
   describe('EmailTemplatesModal', () => {
@@ -272,6 +298,45 @@ describe('CRM Outreach Modals', () => {
         expect(handleSuccess).toHaveBeenCalled();
         expect(handleClose).toHaveBeenCalled();
       });
+    });
+
+    it('shows company mailbox option with distinct badge in SendEmailModal', async () => {
+      (api.get as any).mockImplementation((url: string) => {
+        if (url === '/api/crm/mailboxes') {
+          return Promise.resolve({
+            items: [
+              {
+                id: 'mb_company',
+                displayName: 'Company Outreach',
+                emailAddress: 'outreach@company.com',
+                status: 'connected',
+                provider: 'smtp',
+                isShared: true,
+              },
+            ],
+          });
+        }
+        if (url === '/api/crm/email-templates') {
+          return Promise.resolve({ items: [] });
+        }
+        return Promise.resolve({});
+      });
+
+      render(
+        <SendEmailModal
+          isOpen={true}
+          leadId="lead_123"
+          leadName="Bob Vance"
+          leadEmail="bob@vance.test"
+          onClose={vi.fn()}
+          onSuccess={vi.fn()}
+        />,
+      );
+
+      expect(await screen.findByRole('heading', { name: /Email Bob Vance/ })).toBeInTheDocument();
+      expect(
+        screen.getByText(/Company Outreach \(outreach@company.com\) — 🏢 Company Mailbox/),
+      ).toBeInTheDocument();
     });
   });
 });

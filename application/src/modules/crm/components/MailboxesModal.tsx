@@ -6,6 +6,7 @@ import {
   type MailboxProvider,
 } from '@erp/shared';
 import { api } from '../../../api/client';
+import { useOptionalSession } from '../../../session/SessionProvider';
 
 interface MailboxesModalProps {
   isOpen: boolean;
@@ -13,6 +14,8 @@ interface MailboxesModalProps {
 }
 
 export const MailboxesModal: React.FC<MailboxesModalProps> = ({ isOpen, onClose }) => {
+  const session = useOptionalSession()?.session;
+  const isOwner = session?.user ? session.user.isOwner : true;
   const [mailboxes, setMailboxes] = useState<MailboxConnectionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState<MailboxProvider | null>(null);
@@ -90,6 +93,10 @@ export const MailboxesModal: React.FC<MailboxesModalProps> = ({ isOpen, onClose 
   const [showSmtpForm, setShowSmtpForm] = useState(false);
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [smtpForm, setSmtpForm] = useState(emptySmtpForm);
+
+  const companySmtpMailbox = mailboxes.find(
+    (mb) => mb.provider === 'smtp' && mb.status === 'connected',
+  );
 
   /** Stops sending from a mailbox, keeping it on the list so it can be reconnected. */
   const handleDisconnect = async (id: string) => {
@@ -197,12 +204,28 @@ export const MailboxesModal: React.FC<MailboxesModalProps> = ({ isOpen, onClose 
 
         {/* The third way in, and the only one that works for company mail hosting: no
             provider to consent at, just the settings the host gave you. */}
-        {!showSmtpForm ? (
+        {companySmtpMailbox && !isOwner && !showSmtpForm ? (
+          <div className="rounded-lg border border-teal-800/60 bg-teal-950/30 p-3.5 flex items-start gap-3">
+            <span className="text-xl">🏢</span>
+            <div className="text-xs space-y-1">
+              <div className="font-semibold text-teal-300 flex items-center gap-1.5">
+                Company Mailbox Active
+                <span className="bg-teal-900/80 text-teal-200 text-[10px] px-2 py-0.5 rounded-full border border-teal-700/60 font-mono">
+                  Shared
+                </span>
+              </div>
+              <p className="text-slate-400 text-[11px] leading-relaxed">
+                Your company email (<span className="text-slate-200 font-medium">{companySmtpMailbox.emailAddress}</span>) is configured by your company owner. You and your teammates can use this mailbox to send emails directly without entering any SMTP settings.
+              </p>
+            </div>
+          </div>
+        ) : !showSmtpForm ? (
           <button
             onClick={() => setShowSmtpForm(true)}
-            className="w-full px-4 py-2.5 text-sm font-semibold text-slate-200 bg-slate-800/70 hover:bg-slate-800 border border-slate-700 rounded-lg transition"
+            className="w-full px-4 py-2.5 text-sm font-semibold text-slate-200 bg-slate-800/70 hover:bg-slate-800 border border-slate-700 rounded-lg transition flex items-center justify-center gap-2"
           >
-            🏢 Add company mailbox (SMTP)
+            <span>🏢</span>
+            <span>{companySmtpMailbox ? 'Update company mailbox (SMTP)' : 'Add company mailbox (SMTP)'}</span>
           </button>
         ) : (
           <form
@@ -285,7 +308,7 @@ export const MailboxesModal: React.FC<MailboxesModalProps> = ({ isOpen, onClose 
               disabled={savingSmtp}
               className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
             >
-              {savingSmtp ? 'Checking with your mail server…' : 'Add mailbox'}
+              {savingSmtp ? 'Checking with your mail server…' : companySmtpMailbox ? 'Update mailbox' : 'Add mailbox'}
             </button>
           </form>
         )}
@@ -304,42 +327,59 @@ export const MailboxesModal: React.FC<MailboxesModalProps> = ({ isOpen, onClose 
             </div>
           ) : (
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {mailboxes.map((mb) => (
-                <div
-                  key={mb.id}
-                  className="flex items-center justify-between p-3.5 bg-slate-950/60 border border-slate-800 rounded-lg hover:border-slate-700 transition"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-base">
-                      {mb.provider === 'gmail' ? '🔴' : mb.provider === 'smtp' ? '🏢' : '🔷'}
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium text-slate-200 flex items-center gap-2">
-                        {mb.displayName}
-                        <span
-                          className={`px-2 py-0.5 text-[10px] font-semibold rounded-full uppercase tracking-wider ${
-                            mb.status === 'connected'
-                              ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/80'
-                              : 'bg-red-950/80 text-red-400 border border-red-800/80'
-                          }`}
-                        >
-                          {mb.status}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-400">{mb.emailAddress}</div>
-                    </div>
-                  </div>
+              {mailboxes.map((mb) => {
+                const isCompanyMailbox = mb.isShared || mb.provider === 'smtp';
+                const canManageMailbox =
+                  mb.canManage !== false && (!mb.isShared || isOwner || mb.userId === session?.user?.id);
 
-                  <button
-                    onClick={() =>
-                      mb.status === 'connected' ? handleDisconnect(mb.id) : handleRemove(mb.id)
-                    }
-                    className="px-2.5 py-1 text-xs font-medium text-red-400 hover:bg-red-950/40 hover:text-red-300 border border-red-900/60 rounded-md transition"
+                return (
+                  <div
+                    key={mb.id}
+                    className="flex items-center justify-between p-3.5 bg-slate-950/60 border border-slate-800 rounded-lg hover:border-slate-700 transition"
                   >
-                    {mb.status === 'connected' ? 'Disconnect' : 'Remove'}
-                  </button>
-                </div>
-              ))}
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-base">
+                        {mb.provider === 'gmail' ? '🔴' : isCompanyMailbox ? '🏢' : '🔷'}
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-slate-200 flex items-center gap-2 flex-wrap">
+                          {mb.displayName}
+                          {isCompanyMailbox && (
+                            <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full uppercase tracking-wider bg-indigo-950/80 text-indigo-300 border border-indigo-800/80">
+                              🏢 Company Mailbox
+                            </span>
+                          )}
+                          <span
+                            className={`px-2 py-0.5 text-[10px] font-semibold rounded-full uppercase tracking-wider ${
+                              mb.status === 'connected'
+                                ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/80'
+                                : 'bg-red-950/80 text-red-400 border border-red-800/80'
+                            }`}
+                          >
+                            {mb.status}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400">{mb.emailAddress}</div>
+                      </div>
+                    </div>
+
+                    {canManageMailbox ? (
+                      <button
+                        onClick={() =>
+                          mb.status === 'connected' ? handleDisconnect(mb.id) : handleRemove(mb.id)
+                        }
+                        className="px-2.5 py-1 text-xs font-medium text-red-400 hover:bg-red-950/40 hover:text-red-300 border border-red-900/60 rounded-md transition"
+                      >
+                        {mb.status === 'connected' ? 'Disconnect' : 'Remove'}
+                      </button>
+                    ) : (
+                      <span className="px-2.5 py-1 text-xs font-medium text-teal-300/80 bg-teal-950/40 border border-teal-800/50 rounded-md">
+                        Shared with Team
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

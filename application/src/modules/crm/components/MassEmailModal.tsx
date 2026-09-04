@@ -264,7 +264,10 @@ export function MassEmailModal({
             label="Send from"
             value={mailboxId}
             onChange={setMailboxId}
-            options={connected.map((mailbox) => ({ value: mailbox.id, label: mailbox.emailAddress }))}
+            options={connected.map((mailbox) => ({
+              value: mailbox.id,
+              label: `${mailbox.displayName ? `${mailbox.displayName} (${mailbox.emailAddress})` : mailbox.emailAddress}${mailbox.isShared || mailbox.provider === 'smtp' ? ' — 🏢 Company Mailbox' : ''}`,
+            }))}
           />
 
           <Select

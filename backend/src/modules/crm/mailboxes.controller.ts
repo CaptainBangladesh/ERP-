@@ -83,7 +83,10 @@ export class MailboxesController {
   async listMailboxes(
     @CurrentSession() session: RequestSession,
   ): Promise<MailboxConnectionListResponse> {
-    const items = await this.mailboxesService.listMailboxes(session.user.id);
+    const items = await this.mailboxesService.listMailboxes({
+      userId: session.user.id,
+      isOwner: session.user.isOwner,
+    });
     return { items };
   }
 
@@ -112,8 +115,14 @@ export class MailboxesController {
   @Delete('mailboxes/:id')
   @RequirePermission('crm:leads:read')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async removeMailbox(@Param('id') id: string): Promise<void> {
-    await this.mailboxesService.removeMailbox(id);
+  async removeMailbox(
+    @Param('id') id: string,
+    @CurrentSession() session: RequestSession,
+  ): Promise<void> {
+    await this.mailboxesService.removeMailbox(id, {
+      userId: session.user.id,
+      isOwner: session.user.isOwner,
+    });
   }
 
   @Post('mailboxes/:id/revoke')
@@ -121,8 +130,12 @@ export class MailboxesController {
   @HttpCode(HttpStatus.OK)
   async disconnectMailbox(
     @Param('id') id: string,
+    @CurrentSession() session: RequestSession,
   ): Promise<MailboxConnectionSummary> {
-    return this.mailboxesService.disconnectMailbox(id);
+    return this.mailboxesService.disconnectMailbox(id, {
+      userId: session.user.id,
+      isOwner: session.user.isOwner,
+    });
   }
 }
 

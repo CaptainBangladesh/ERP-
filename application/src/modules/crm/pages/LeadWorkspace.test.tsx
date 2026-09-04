@@ -322,6 +322,38 @@ describe('LeadWorkspace', () => {
         expect(sent).toEqual({ type: 'note', notes: 'Left a message with reception', leadId: 'id-priya-kapoor' }),
       );
     });
+
+    it('edits an existing note and saves changes', async () => {
+      let patchedNotes: unknown;
+      server.use(
+        http.get(ACTIVITY_PATHS.leadActivities('id-priya-kapoor'), () =>
+          HttpResponse.json({
+            items: [activity({ id: 'act-1', type: 'note', notes: 'Initial note text' })],
+          }),
+        ),
+        http.patch(ACTIVITY_PATHS.activity('act-1'), async ({ request }) => {
+          patchedNotes = await request.json();
+          return HttpResponse.json(activity({ id: 'act-1', type: 'note', notes: 'Updated note text' }));
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      expect(await screen.findByText('Initial note text')).toBeInTheDocument();
+
+      // Click Edit note button
+      await user.click(screen.getByRole('button', { name: 'Edit note' }));
+
+      // Textarea is populated with existing notes
+      const textarea = screen.getByDisplayValue('Initial note text');
+      expect(textarea).toBeInTheDocument();
+
+      await user.clear(textarea);
+      await user.type(textarea, 'Updated note text');
+      await user.click(within(textarea.closest('form')!).getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(patchedNotes).toEqual({ notes: 'Updated note text' }));
+    });
   });
 
   describe('the Next-step rail', () => {
@@ -360,6 +392,49 @@ describe('LeadWorkspace', () => {
       // The rail's Qualify opens the convert flow rather than writing a status directly.
       await user.click(within(rail).getByRole('button', { name: 'Qualify' }));
       expect(await screen.findByRole('heading', { name: /move .* to contacts/i })).toBeInTheDocument();
+    });
+
+    it('displays assigned teammates and opens manage modal to update team members', async () => {
+      let patchedAssignees: unknown;
+      server.use(
+        http.get(LEAD_PATHS.lead('id-priya-kapoor'), () =>
+          HttpResponse.json(
+            priya(),
+          ),
+        ),
+        http.get(IDENTITY_PATHS.users, () =>
+          HttpResponse.json({
+            items: [
+              { id: 'u1', name: 'Ada Okafor', email: 'ada@northwind.test', roles: [] },
+              { id: 'u2', name: 'John Doe', email: 'john@northwind.test', roles: [] },
+            ],
+            page: { number: 1, size: 200, total: 2, pages: 1 },
+          }),
+        ),
+        http.patch(LEAD_PATHS.lead('id-priya-kapoor'), async ({ request }) => {
+          patchedAssignees = await request.json();
+          return HttpResponse.json({ ...priya(), assigneeUserIds: ['u1', 'u2'] });
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const rail = await screen.findByRole('complementary', { name: 'Next step' });
+      expect(within(rail).getByText('Ada Okafor')).toBeInTheDocument();
+
+      // Click manage team button
+      await user.click(within(rail).getByRole('button', { name: /manage/i }));
+
+      // Manage dialog appears
+      const modal = await screen.findByRole('dialog', { name: 'Manage Assigned Team' });
+      expect(modal).toBeInTheDocument();
+      expect(within(modal).getByText(/John Doe/)).toBeInTheDocument();
+
+      // Select John Doe and save
+      await user.click(within(modal).getByText(/John Doe/));
+      await user.click(within(modal).getByRole('button', { name: 'Save Team' }));
+
+      await waitFor(() => expect(patchedAssignees).toEqual({ assigneeUserIds: ['u1', 'u2'] }));
     });
   });
 
@@ -468,23 +543,33 @@ describe('LeadWorkspace', () => {
       await waitFor(() => expect(downloaded).toBe(true));
     });
 
-    it('thumbnails an image attachment rather than showing it an icon', async () => {
+    it('opens interactive preview modal when clicking preview or thumbnail and closes on close button', async () => {
       server.use(
         http.get(LEAD_PATHS.files('id-priya-kapoor'), () =>
           HttpResponse.json(
-            listed([attachment({ id: 'file-2', filename: 'site.png', mimeType: 'image/png' })]),
+            listed([attachment({ id: 'file-2', filename: 'screenshot.png', mimeType: 'image/png' })]),
           ),
         ),
         http.get(LEAD_PATHS.fileDownload('id-priya-kapoor', 'file-2'), () =>
-          HttpResponse.text('pretend png', { headers: { 'Content-Type': 'image/png' } }),
+          HttpResponse.text('image-bytes', { headers: { 'Content-Type': 'image/png' } }),
         ),
       );
 
       const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
       await user.click(await screen.findByRole('button', { name: 'Files' }));
 
-      const thumbnail = await screen.findByRole('img', { name: 'site.png' });
-      expect(thumbnail).toHaveAttribute('src', expect.stringContaining('blob:'));
+      // Click the preview button
+      await user.click(await screen.findByRole('button', { name: 'Preview screenshot.png' }));
+
+      // Preview modal dialog appears
+      const modal = await screen.findByRole('dialog', { name: 'Preview of screenshot.png' });
+      expect(modal).toBeInTheDocument();
+      expect(within(modal).getByText('screenshot.png')).toBeInTheDocument();
+      expect(within(modal).getByRole('button', { name: 'Zoom in' })).toBeInTheDocument();
+
+      // Close the modal
+      await user.click(within(modal).getByRole('button', { name: 'Close preview' }));
+      expect(screen.queryByRole('dialog', { name: 'Preview of screenshot.png' })).not.toBeInTheDocument();
     });
   });
 
@@ -664,6 +749,60 @@ describe('LeadWorkspace', () => {
       // The raw tracking gibberish appears nowhere as visible text.
       expect(survey.queryByText(/share_app_id/)).not.toBeInTheDocument();
     });
+
+    it('opens Edit profile modal and saves updated merchant profile fields', async () => {
+      let savedProfile: unknown;
+      server.use(
+        http.get(LEAD_SUBMISSION_PATHS.byLead('id-priya-kapoor'), () =>
+          HttpResponse.json(
+            listed([
+              submission({
+                id: 'sub-1',
+                formName: 'Research Form',
+                rawPayload: {
+                  'Merchant Category': 'Footwear',
+                  'Dedicated Website': 'Yes',
+                  'Website URL': 'https://rsleatherbd.com',
+                },
+              }),
+            ]),
+          ),
+        ),
+        http.put(LEAD_SUBMISSION_PATHS.merchantProfile('id-priya-kapoor'), async ({ request }) => {
+          savedProfile = await request.json();
+          return HttpResponse.json({
+            id: 'sub-1',
+            leadId: 'id-priya-kapoor',
+            formName: 'Research Form',
+            rawPayload: (savedProfile as any).rawPayload,
+            mappedFields: {},
+            submittedAt: new Date().toISOString(),
+          });
+        }),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+      await user.click(await screen.findByRole('button', { name: 'Survey' }));
+
+      const survey = within(await screen.findByRole('region', { name: 'Survey' }));
+      expect(await survey.findByText('Merchant profile')).toBeInTheDocument();
+
+      // Click Edit profile button
+      await user.click(survey.getByRole('button', { name: 'Edit profile' }));
+
+      // Edit dialog appears
+      expect(await screen.findByRole('heading', { name: 'Edit Merchant Profile' })).toBeInTheDocument();
+
+      const categoryInput = screen.getByLabelText(/Merchant Category/i);
+      await user.clear(categoryInput);
+      await user.type(categoryInput, 'Leather Goods');
+
+      await user.click(screen.getByRole('button', { name: 'Save Profile Changes' }));
+
+      await waitFor(() =>
+        expect((savedProfile as any)?.rawPayload['Merchant Category']).toBe('Leather Goods'),
+      );
+    });
   });
 
   it('shows an email open as a likelihood, naming the lead and counting the opens', async () => {
@@ -789,7 +928,10 @@ describe('LeadWorkspace', () => {
       server.use(
         http.get(LEAD_PATHS.leads, () =>
           HttpResponse.json(
-            page([priya(), lead('Imran Ali', { customValues: { priority: 'cold' } })]),
+            page([
+              lead('Progress Lead', { status: 'in_progress' }),
+              lead('Imran Ali', { status: 'contacted' }),
+            ]),
           ),
         ),
       );
@@ -797,14 +939,99 @@ describe('LeadWorkspace', () => {
       const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
 
       const worklist = within(await screen.findByRole('complementary', { name: 'Worklist' }));
-      const hot = worklist.getByRole('button', { name: 'Show hot' });
+      const inProgress = worklist.getByRole('button', { name: 'Show in progress' });
 
-      await user.click(hot);
+      await user.click(inProgress);
       expect(worklist.queryByText('Imran Ali')).not.toBeInTheDocument();
-      expect(worklist.getByText('Priya Kapoor')).toBeInTheDocument();
+      expect(worklist.getByText('Progress Lead')).toBeInTheDocument();
 
-      await user.click(hot);
+      await user.click(inProgress);
       expect(worklist.getByText('Imran Ali')).toBeInTheDocument();
+    });
+
+    it('filters the worklist by group when a group is selected', async () => {
+      server.use(
+        http.get(LEAD_PATHS.leads, () =>
+          HttpResponse.json(
+            page([
+              lead('Fashion Lead', { groupName: 'Fashion & Clothing' }),
+              lead('Jewelry Lead', { groupName: 'Jewelry' }),
+            ]),
+          ),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const worklist = within(await screen.findByRole('complementary', { name: 'Worklist' }));
+      const select = worklist.getByRole('combobox', { name: 'Filter by group' });
+
+      await user.selectOptions(select, 'Jewelry');
+      expect(worklist.queryByText('Fashion Lead')).not.toBeInTheDocument();
+      expect(worklist.getByText('Jewelry Lead')).toBeInTheDocument();
+
+      await user.selectOptions(select, '');
+      expect(worklist.getByText('Fashion Lead')).toBeInTheDocument();
+      expect(worklist.getByText('Jewelry Lead')).toBeInTheDocument();
+    });
+
+    it('allows adding, rearranging, and using custom worklist tabs', async () => {
+      server.use(
+        http.get(LEAD_PATHS.leads, () =>
+          HttpResponse.json(
+            page([
+              lead('Imran Ali', { status: 'new' }),
+              lead('Sadia Rahman', { status: 'qualified' }),
+            ]),
+          ),
+        ),
+      );
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const worklist = within(await screen.findByRole('complementary', { name: 'Worklist' }));
+
+      // Open manage tabs modal
+      await user.click(worklist.getByRole('button', { name: 'Customize tabs' }));
+      const modal = screen.getByRole('dialog', { name: 'Manage Worklist Tabs' });
+      expect(modal).toBeInTheDocument();
+
+      // Add "Qualified" preset
+      await user.click(within(modal).getByRole('button', { name: /Qualified/ }));
+
+      // Close modal
+      await user.click(within(modal).getByRole('button', { name: 'Done' }));
+      expect(screen.queryByRole('dialog', { name: 'Manage Worklist Tabs' })).not.toBeInTheDocument();
+
+      // "Qualified" tab is now visible in worklist
+      const qualifiedTab = worklist.getByRole('button', { name: 'Show qualified' });
+      expect(qualifiedTab).toBeInTheDocument();
+
+      // Clicking Qualified tab filters the list
+      await user.click(qualifiedTab);
+      expect(worklist.queryByText('Imran Ali')).not.toBeInTheDocument();
+      expect(worklist.getByText('Sadia Rahman')).toBeInTheDocument();
+    });
+
+    it('allows reordering tabs using Move Up and Move Down buttons', async () => {
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      const worklist = within(await screen.findByRole('complementary', { name: 'Worklist' }));
+
+      await user.click(worklist.getByRole('button', { name: /Add \/ Arrange tabs/i }));
+      expect(screen.getByRole('dialog', { name: 'Manage Worklist Tabs' })).toBeInTheDocument();
+
+      // Move "In progress" up to be the first tab
+      const moveUpBtn = screen.getByRole('button', { name: 'Move In progress up' });
+      await user.click(moveUpBtn);
+
+      // Close modal
+      await user.click(screen.getByRole('button', { name: 'Done' }));
+
+      // Verify the tabs are rendered in the updated order
+      const statButtons = worklist.getAllByRole('button', { name: /^Show / });
+      expect(statButtons[0]).toHaveAccessibleName('Show in progress');
+      expect(statButtons[1]).toHaveAccessibleName('Show new leads');
     });
 
     it('puts the lead’s survey answers in the rail, beside the next action', async () => {

@@ -4,12 +4,16 @@ import {
   ACTIVITY_PATHS,
   type ActivityResponse,
   type CreateActivityRequest,
+  type LeadFieldSummary,
+  type LeadResponse,
+  type LeadSubmissionSummary,
 } from '@erp/shared';
 import { api } from '../../../api/client';
 import { firstUrlIn, hrefFor, prettyUrl } from '../survey-answers';
 import type { MerchantProfile, SocialPresence, UsabilityAnswer } from '../merchant-intel';
 import { AnswerValue } from './AnswerValue';
-import { CheckIcon, ExternalLinkIcon, LinkIcon, NoteIcon } from '../icons';
+import { CheckIcon, ExternalLinkIcon, LinkIcon, NoteIcon, PencilIcon } from '../icons';
+import { EditMerchantProfileModal } from './EditMerchantProfileModal';
 
 // ─── shared bits ────────────────────────────────────────────────────────────────────────
 
@@ -162,13 +166,31 @@ function RailLine({ label, children }: { label: string; children: React.ReactNod
  */
 export function MerchantProfileCard({
   profile,
+  lead,
   leadId,
   canWrite,
+  submissions,
+  customFieldDefinitions,
+  onProfileUpdated,
 }: {
   profile: MerchantProfile;
+  lead?: LeadResponse;
   leadId: string;
   canWrite: boolean;
+  submissions?: LeadSubmissionSummary[];
+  customFieldDefinitions?: LeadFieldSummary[];
+  onProfileUpdated?: () => void;
 }) {
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  function handleProfileUpdated() {
+    void queryClient.invalidateQueries({ queryKey: ['crm', 'leads', 'submissions', leadId] });
+    void queryClient.invalidateQueries({ queryKey: ['crm', 'leads', 'detail', leadId] });
+    void queryClient.invalidateQueries({ queryKey: ['crm', 'leads'] });
+    onProfileUpdated?.();
+  }
+
   const overview: { label: string; node: React.ReactNode }[] = [];
   if (profile.category) {
     overview.push({
@@ -203,9 +225,22 @@ export function MerchantProfileCard({
 
   return (
     <div className="flex min-w-0 flex-col gap-4 overflow-hidden rounded-xl border border-slate-200 bg-white p-5 shadow-2xs">
-      <div className="flex flex-col gap-0.5 border-b border-slate-100 pb-3">
-        <h3 className="text-sm font-bold text-slate-900">Merchant profile</h3>
-        <p className="text-xs text-slate-500">What the research says about this lead, at a glance.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+        <div className="flex flex-col gap-0.5">
+          <h3 className="text-sm font-bold text-slate-900">Merchant profile</h3>
+          <p className="text-xs text-slate-500">What the research says about this lead, at a glance.</p>
+        </div>
+
+        {canWrite && (
+          <button
+            type="button"
+            onClick={() => setIsEditModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+          >
+            <PencilIcon size={13} />
+            Edit profile
+          </button>
+        )}
       </div>
 
       {overview.length > 0 && (
@@ -247,6 +282,18 @@ export function MerchantProfileCard({
             ))}
           </div>
         </Section>
+      )}
+
+      {isEditModalOpen && (
+        <EditMerchantProfileModal
+          isOpen={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          onSuccess={handleProfileUpdated}
+          lead={lead ?? ({ id: leadId, name: 'Lead' } as LeadResponse)}
+          profile={profile}
+          submissions={submissions}
+          customFieldDefinitions={customFieldDefinitions}
+        />
       )}
     </div>
   );

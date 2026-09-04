@@ -256,9 +256,12 @@ export interface LeadAttachmentResponse {
 
 export type LeadAttachmentListResponse = ListResponse<LeadAttachmentResponse>;
 
-/** Where a lead's stored capture-form responses are read from. */
+/** Where a lead's stored capture-form responses are read from and updated. */
 export const LEAD_SUBMISSION_PATHS = {
   byLead: (id: string) => `/${CRM_ROUTE}/leads/${id}/submissions`,
+  submission: (leadId: string, submissionId: string) =>
+    `/${CRM_ROUTE}/leads/${leadId}/submissions/${submissionId}`,
+  merchantProfile: (leadId: string) => `/${CRM_ROUTE}/leads/${leadId}/merchant-profile`,
 } as const;
 
 /**
@@ -287,9 +290,20 @@ export interface LeadSubmissionSummary {
   submittedAt: string;
 }
 
-export type LeadSubmissionResponse = LeadSubmissionSummary;
-
 export type LeadSubmissionListResponse = ListResponse<LeadSubmissionSummary>;
+
+export interface UpdateLeadSubmissionRequest {
+  formName?: string;
+  rawPayload: Record<string, unknown>;
+  mappedFields?: Record<string, string>;
+}
+
+export interface UpdateMerchantProfileRequest {
+  submissionId?: string;
+  formName?: string;
+  rawPayload: Record<string, unknown>;
+  mappedFields?: Record<string, string>;
+}
 
 export const LEAD_ERROR_CODES = {
   leadNotFound: 'lead_not_found',
@@ -474,6 +488,8 @@ export const ACTIVITY_PATHS = {
    * doing", without a caller having to fan out over every record to assemble it.
    */
   activities: `/${CRM_ROUTE}/activities`,
+  activity: (id: string) => `/${CRM_ROUTE}/activities/${id}`,
+  deleteActivity: (id: string) => `/${CRM_ROUTE}/activities/${id}`,
   leadActivities: (id: string) => `/${CRM_ROUTE}/leads/${id}/activities`,
   dealActivities: (id: string) => `/${CRM_ROUTE}/deals/${id}/activities`,
   partyActivities: (id: string) => `/${CRM_ROUTE}/parties/${id}/activities`,
@@ -613,6 +629,13 @@ export interface CreateActivityRequest {
   leadId?: string;
   dealId?: string;
   partyId?: string;
+}
+
+export interface UpdateActivityRequest {
+  type?: ActivityType;
+  notes?: string;
+  occurredAt?: string;
+  dueAt?: string | null;
 }
 
 export interface ActivitySummary {
@@ -1152,6 +1175,7 @@ export const MAILBOX_ERROR_CODES = {
   authStateNotFound: 'auth_state_not_found',
   mailboxNotConnected: 'mailbox_not_connected',
   invalidAuthState: 'invalid_auth_state',
+  mailboxForbidden: 'mailbox_forbidden',
 } as const;
 
 export const EMAIL_TEMPLATE_ERROR_CODES = {
@@ -1272,6 +1296,10 @@ export interface MailboxConnectionSummary {
   updatedAt?: string;
   /** Present only on an SMTP mailbox, so a screen can show where it sends through. */
   smtp?: SmtpSettingsSummary;
+  /** True when this mailbox is configured for the company and shared across teammates. */
+  isShared?: boolean;
+  /** True when the current user can manage (disconnect/remove) this mailbox connection. */
+  canManage?: boolean;
 }
 
 export interface CreateEmailTemplateRequest {

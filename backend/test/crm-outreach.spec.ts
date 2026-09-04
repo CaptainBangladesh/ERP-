@@ -22,9 +22,11 @@ import { DevMailer } from '../src/platform/mail/dev-mailer';
 import { StubMailboxOAuth } from '../src/modules/crm/mailbox-oauth';
 import { RecordingMailboxSender } from '../src/modules/crm/mailbox-sender';
 import { createTestApp, resetDatabase, type TestApp } from './harness/test-app';
+import { createFactories, type Factories } from './harness/factories';
 
 describe('CRM Outreach: Mailboxes, Templates & 1-on-1 Send', () => {
   let app: TestApp;
+  let factories: Factories;
 
   type SupertestRequest = ReturnType<TestApp['http']['get']>;
 
@@ -80,6 +82,7 @@ describe('CRM Outreach: Mailboxes, Templates & 1-on-1 Send', () => {
 
   beforeAll(async () => {
     app = await createTestApp();
+    factories = createFactories(app.prisma);
   });
 
   afterAll(async () => {
@@ -412,6 +415,75 @@ describe('CRM Outreach: Mailboxes, Templates & 1-on-1 Send', () => {
       // the other mailbox this person also holds.
       const carried = sender.sentFrom[sender.sentFrom.length - 1];
       expect(sender.sentFrom.length).toBe(before + 1);
+      expect(carried).toEqual({
+        mailboxId: companyMailboxId,
+        provider: 'smtp',
+        emailAddress: 'sales@northwind.test',
+      });
+    });
+
+    it('shares the owner-configured company SMTP mailbox with teammates and allows sending without re-entering credentials', async () => {
+      const owner = await signUp('OutreachCompany');
+      const smtpRes = await owner
+        .as(app.http.post(MAILBOX_PATHS.connectSmtp))
+        .send(settings)
+        .expect(201);
+      const companyMailboxId = (smtpRes.body as MailboxConnectionSummary).id;
+
+      // Add a teammate / colleague to the company
+      await factories.addColleague({
+        ownerUserId: owner.session.user.id,
+        name: 'Alex Teammate',
+        email: 'alex@northwind.test',
+        permissions: ['crm:leads:read', 'crm:leads:write'],
+      });
+
+      const colleagueSession = await app.http
+        .post(AUTH_PATHS.signIn)
+        .send({ email: 'alex@northwind.test', password: 'Password123!' })
+        .expect(200);
+
+      const colleagueTenant: Tenant = {
+        session: colleagueSession.body as AuthenticatedSession,
+        tokenHeader: `Bearer ${(colleagueSession.body as AuthenticatedSession).token}`,
+        as: (req: SupertestRequest) =>
+          req.set('Authorization', `Bearer ${(colleagueSession.body as AuthenticatedSession).token}`),
+      };
+
+      // Teammate lists mailboxes: sees the company's shared SMTP mailbox without entering any settings!
+      const listRes = await colleagueTenant.as(app.http.get(MAILBOX_PATHS.mailboxes)).expect(200);
+      const mailboxes = listRes.body.items as MailboxConnectionSummary[];
+      expect(mailboxes).toHaveLength(1);
+      expect(mailboxes[0]!.id).toBe(companyMailboxId);
+      expect(mailboxes[0]!.provider).toBe('smtp');
+      expect(mailboxes[0]!.isShared).toBe(true);
+      expect(mailboxes[0]!.canManage).toBe(false);
+
+      // Teammate cannot disconnect or remove the company mailbox
+      await colleagueTenant
+        .as(app.http.delete(MAILBOX_PATHS.remove(companyMailboxId)))
+        .expect(403);
+
+      // Create a lead and send an email as teammate using the company mailbox
+      const leadRes = await colleagueTenant
+        .as(app.http.post(LEAD_PATHS.leads))
+        .send({ name: 'Lead Prospect', email: 'prospect@example.com' } satisfies CreateLeadRequest)
+        .expect(201);
+
+      const sender = app.nest.get(RecordingMailboxSender);
+      const before = sender.sentFrom.length;
+
+      await colleagueTenant
+        .as(app.http.post(LEAD_EMAIL_PATHS.send((leadRes.body as LeadResponse).id)))
+        .send({
+          mailboxConnectionId: companyMailboxId,
+          subject: 'Welcome {{lead.name}}',
+          htmlBody: '<p>Sent by teammate from company mailbox</p>',
+        } satisfies SendLeadEmailRequest)
+        .expect(200);
+
+      expect(sender.sentFrom.length).toBe(before + 1);
+      const carried = sender.sentFrom[sender.sentFrom.length - 1];
       expect(carried).toEqual({
         mailboxId: companyMailboxId,
         provider: 'smtp',

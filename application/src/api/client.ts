@@ -146,6 +146,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, payload?: unknown) => send<T>('POST', path, payload),
+  put: <T>(path: string, payload?: unknown) => send<T>('PUT', path, payload),
   /**
    * A partial change. `PATCH` rather than `PUT` throughout, because a screen editing one
    * field of a record should not have to send back every other field it happens to be

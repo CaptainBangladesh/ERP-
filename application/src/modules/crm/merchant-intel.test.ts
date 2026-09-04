@@ -54,8 +54,12 @@ describe('buildMerchantProfile', () => {
     const tiktok = profile.socials.find((s) => s.platform === 'TikTok');
     expect(tiktok?.url).toContain('tiktok.com');
 
-    // The grid arrived as a bare list (old script) — kept, numbered, rather than dropped.
-    expect(profile.usability).toHaveLength(3);
+    // The grid arrived as a bare list (old script) — kept, mapped to default questions rather than dropped.
+    expect(profile.usability).toEqual([
+      { question: 'Is the website mobile-responsive/phone view optimized?', answer: 'Yes' },
+      { question: 'Is the user experience (UI/UX) intuitive?', answer: 'Yes' },
+      { question: 'Are products easily searchable?', answer: 'Yes' },
+    ]);
 
     expect(profile.notes).toHaveLength(1);
     expect(profile.notes[0]!.text).toContain('official page');

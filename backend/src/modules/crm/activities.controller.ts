@@ -1,4 +1,15 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   CRM_ROUTE,
   type ActivityFeedResponse,
@@ -9,7 +20,7 @@ import { CurrentSession, type RequestSession } from '../../platform/auth';
 import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { ActivitiesService } from './activities.service';
-import { CreateActivityBody, SnoozeTaskBody } from './schemas';
+import { CreateActivityBody, SnoozeTaskBody, UpdateActivityBody } from './schemas';
 
 @Controller(CRM_ROUTE)
 export class ActivitiesController {
@@ -55,6 +66,22 @@ export class ActivitiesController {
   @RequirePermission('crm:activities:read')
   async listPartyActivities(@Param('id') partyId: string): Promise<ActivityListResponse> {
     return this.activitiesService.listPartyActivities(partyId);
+  }
+
+  @Patch('activities/:id')
+  @RequirePermission('crm:activities:write')
+  async updateActivity(
+    @Param('id') id: string,
+    @Body(validated(UpdateActivityBody)) body: Valid<typeof UpdateActivityBody>,
+  ): Promise<ActivityResponse> {
+    return this.activitiesService.updateActivity(id, body);
+  }
+
+  @Delete('activities/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('crm:activities:write')
+  async deleteActivity(@Param('id') id: string): Promise<void> {
+    return this.activitiesService.deleteActivity(id);
   }
 
   @Post('activities/:id/complete')

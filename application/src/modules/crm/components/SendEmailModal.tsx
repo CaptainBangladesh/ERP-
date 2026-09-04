@@ -241,7 +241,7 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
             <div>
               <p className="text-xs font-bold text-amber-900">No mailbox connected</p>
               <p className="mt-0.5 text-[11px] text-amber-800">
-                Connect Gmail or Outlook before sending.
+                Connect Gmail, Outlook, or your company mailbox before sending.
               </p>
             </div>
             {onOpenMailboxesModal && (
@@ -292,6 +292,7 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
                     {mailboxes.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.displayName} ({m.emailAddress})
+                        {m.isShared || m.provider === 'smtp' ? ' — 🏢 Company Mailbox' : ''}
                       </option>
                     ))}
                   </select>

@@ -14,7 +14,7 @@ import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { PartyDirectory } from '../parties';
-import { ACTIVITY_LIST, type CreateActivityBody } from './schemas';
+import { ACTIVITY_LIST, type CreateActivityBody, type UpdateActivityBody } from './schemas';
 
 @Injectable()
 export class ActivitiesService {
@@ -199,6 +199,38 @@ export class ActivitiesService {
     });
 
     return describe(updated);
+  }
+
+  async updateActivity(
+    id: string,
+    input: Valid<typeof UpdateActivityBody>,
+  ): Promise<ActivityResponse> {
+    const activity = await this.prisma.activity.findFirst({ where: { id } });
+    if (!activity) throw activityNotFound();
+
+    const data: Prisma.ActivityUpdateInput = {};
+    if (input.type !== undefined) data.type = input.type;
+    if (input.notes !== undefined) data.notes = input.notes;
+    if (input.occurredAt !== undefined) data.occurredAt = new Date(input.occurredAt);
+    if (input.dueAt !== undefined) {
+      data.dueAt = input.dueAt === null ? null : new Date(input.dueAt);
+    }
+
+    const updated = await this.prisma.activity.update({
+      where: { id },
+      data,
+    });
+
+    return describe(updated);
+  }
+
+  async deleteActivity(id: string): Promise<void> {
+    const activity = await this.prisma.activity.findFirst({ where: { id } });
+    if (!activity) throw activityNotFound();
+
+    await this.prisma.activity.delete({
+      where: { id },
+    });
   }
 }
 

@@ -97,23 +97,23 @@ export function DealsPage() {
 
   const stagesQuery = useQuery({
     queryKey: ['crm', 'stages', 'list'],
-    queryFn: () => api.get<StageListResponse>(listPath(STAGE_PATHS.stages, { pageSize: 200 })),
+    queryFn: () => api.get<StageListResponse>(listPath(STAGE_PATHS.stages, { pageSize: 100 })),
   });
 
   const dealsQuery = useQuery({
     queryKey: ['crm', 'deals', 'list'],
-    queryFn: () => api.get<DealListResponse>(listPath(DEAL_PATHS.deals, { pageSize: 200 })),
+    queryFn: () => api.get<DealListResponse>(listPath(DEAL_PATHS.deals, { pageSize: 100 })),
   });
 
   const partiesQuery = useQuery({
     queryKey: ['parties', 'directory'],
-    queryFn: () => api.get<PartyListResponse>(listPath(PARTY_PATHS.parties, { pageSize: 200 })),
+    queryFn: () => api.get<PartyListResponse>(listPath(PARTY_PATHS.parties, { pageSize: 100 })),
     enabled: canReadParties,
   });
 
   const usersQuery = useQuery({
-    queryKey: ['identity', 'users', 'all'],
-    queryFn: () => api.get<UserListResponse>(listPath(IDENTITY_PATHS.users, { pageSize: 200 })),
+    queryKey: ['identity', 'users', 'list'],
+    queryFn: () => api.get<UserListResponse>(listPath(IDENTITY_PATHS.users, { pageSize: 100 })),
     enabled: canReadUsers,
   });
 

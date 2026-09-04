@@ -38,7 +38,15 @@ export class LocalFilesystemStorage extends StorageProvider {
     try {
       return await readFile(this.pathFor(key));
     } catch {
-      return undefined;
+      try {
+        const altRoot = this.root.endsWith('backend\\.storage') || this.root.endsWith('backend/.storage')
+          ? resolve(this.root, '..', '..', '.storage')
+          : resolve(this.root, '..', 'backend', '.storage');
+        const altPath = resolve(altRoot, key);
+        return await readFile(altPath);
+      } catch {
+        return undefined;
+      }
     }
   }
 

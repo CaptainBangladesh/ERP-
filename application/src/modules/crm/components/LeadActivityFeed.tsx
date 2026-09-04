@@ -23,6 +23,7 @@ import {
   MailIcon,
   NoteIcon,
   PaperclipIcon,
+  PencilIcon,
   PhoneIcon,
   SendIcon,
 } from '../icons';
@@ -271,6 +272,7 @@ export function LeadActivityFeed({
             key={activity.id}
             activity={activity}
             leadName={leadName}
+            leadId={leadId}
             canWrite={canWrite}
             isLast={index === shown.length - 1}
             onToggleComplete={() => complete.mutate({ id: activity.id, completed: Boolean(activity.completedAt) })}
@@ -316,18 +318,26 @@ function presentation(
 function FeedEntry({
   activity,
   leadName,
+  leadId,
   canWrite,
   isLast,
   onToggleComplete,
 }: {
   activity: ActivityResponse;
   leadName: string;
+  leadId: string;
   canWrite: boolean;
   isLast: boolean;
   onToggleComplete: () => void;
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editNotes, setEditNotes] = useState(activity.notes);
+  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
   const audit = describeAudit(activity.notes);
   const sentEmail = !audit && activity.type === 'email' ? describeSentEmail(activity.notes) : undefined;
+  const isEditable = !audit && !sentEmail && canWrite;
   const { icon, ring, tag } = presentation(activity, audit);
 
   const isTask = activity.type === 'task' && !audit;
@@ -336,6 +346,36 @@ function FeedEntry({
     dateStyle: 'medium',
     timeStyle: 'short',
   });
+
+  const updateMutation = useMutation({
+    mutationFn: (notes: string) =>
+      api.patch<ActivityResponse>(ACTIVITY_PATHS.activity(activity.id), { notes }),
+    onSuccess: () => {
+      setIsEditing(false);
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ['crm', 'activities', 'lead', leadId] });
+      void queryClient.invalidateQueries({ queryKey: ['crm', 'activities'] });
+    },
+    onError: (err) => {
+      setError(err instanceof ApiFailure ? err.message : 'Failed to update note.');
+    },
+  });
+
+  function handleSave(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!editNotes.trim() || updateMutation.isPending) return;
+    updateMutation.mutate(editNotes.trim());
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Escape') {
+      setIsEditing(false);
+      setEditNotes(activity.notes);
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      handleSave();
+    }
+  }
 
   return (
     <li className="flex gap-3">
@@ -351,18 +391,71 @@ function FeedEntry({
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{tag}</span>
               <EntryHeadline activity={activity} audit={audit} sentEmail={sentEmail} leadName={leadName} />
             </div>
-            <span className="shrink-0 text-[11px] font-medium text-slate-400">{when}</span>
+
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-[11px] font-medium text-slate-400">{when}</span>
+              {isEditable && !isEditing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditNotes(activity.notes);
+                    setIsEditing(true);
+                  }}
+                  title="Edit note"
+                  aria-label="Edit note"
+                  className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
+                >
+                  <PencilIcon size={12} />
+                </button>
+              )}
+            </div>
           </div>
 
-          <EntryBody activity={activity} audit={audit} sentEmail={sentEmail} />
+          {isEditing ? (
+            <form onSubmit={handleSave} className="flex flex-col gap-2 pt-1">
+              <textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={3}
+                autoFocus
+                className="w-full resize-none rounded-lg border border-teal-500 bg-slate-50/50 p-2.5 text-xs leading-relaxed text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-teal-500"
+              />
+              {error && <p className="text-xs font-semibold text-rose-600">{error}</p>}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-slate-400">Ctrl+Enter to save, Esc to cancel</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditing(false);
+                      setEditNotes(activity.notes);
+                    }}
+                    className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!editNotes.trim() || updateMutation.isPending}
+                    className="rounded-md bg-teal-700 px-3 py-1 text-xs font-bold text-white transition hover:bg-teal-800 disabled:opacity-50 cursor-pointer"
+                  >
+                    {updateMutation.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <EntryBody activity={activity} audit={audit} sentEmail={sentEmail} />
+          )}
 
-          {!audit && (
+          {!audit && !isEditing && (
             <p className="text-[11px] text-slate-400">
               by <span className="font-semibold text-slate-500">{activity.createdByName}</span>
             </p>
           )}
 
-          {isTask && canWrite && (
+          {isTask && canWrite && !isEditing && (
             <label className="flex items-center gap-2 pt-1 text-[11px] font-medium text-slate-700">
               <input
                 type="checkbox"

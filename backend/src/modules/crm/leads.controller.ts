@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   StreamableFile,
   UploadedFile,
@@ -22,6 +23,7 @@ import {
   type LeadListResponse,
   type LeadResponse,
   type LeadSubmissionListResponse,
+  type LeadSubmissionSummary,
   type SendLeadEmailRequest,
 } from '@erp/shared';
 import { CurrentSession, type RequestSession } from '../../platform/auth';
@@ -30,7 +32,14 @@ import type { UploadedFile as PlatformUploadedFile } from '../../platform/upload
 import { validated, type Valid } from '../../platform/validation';
 import { LeadsService } from './leads.service';
 import { LeadOutreachService } from './lead-outreach.service';
-import { CreateLeadBody, QualifyLeadBody, UpdateLeadBody, SendLeadEmailBody } from './schemas';
+import {
+  CreateLeadBody,
+  QualifyLeadBody,
+  UpdateLeadBody,
+  SendLeadEmailBody,
+  UpdateLeadSubmissionBody,
+  UpdateMerchantProfileBody,
+} from './schemas';
 
 @Controller(CRM_ROUTE)
 export class LeadsController {
@@ -188,5 +197,24 @@ export class LeadsController {
   @RequirePermission('crm:leads:read')
   async listSubmissions(@Param('id') id: string): Promise<LeadSubmissionListResponse> {
     return this.leads.listSubmissions(id);
+  }
+
+  @Patch('leads/:id/submissions/:submissionId')
+  @RequirePermission('crm:leads:write')
+  async updateSubmission(
+    @Param('id') leadId: string,
+    @Param('submissionId') submissionId: string,
+    @Body(validated(UpdateLeadSubmissionBody)) body: Valid<typeof UpdateLeadSubmissionBody>,
+  ): Promise<LeadSubmissionSummary> {
+    return this.leads.updateSubmission(leadId, submissionId, body);
+  }
+
+  @Put('leads/:id/merchant-profile')
+  @RequirePermission('crm:leads:write')
+  async saveMerchantProfile(
+    @Param('id') leadId: string,
+    @Body(validated(UpdateMerchantProfileBody)) body: Valid<typeof UpdateMerchantProfileBody>,
+  ): Promise<LeadSubmissionSummary> {
+    return this.leads.saveMerchantProfile(leadId, body);
   }
 }

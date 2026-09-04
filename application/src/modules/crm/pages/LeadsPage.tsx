@@ -43,6 +43,7 @@ import { MailboxesModal } from '../components/MailboxesModal';
 import { SpreadsheetImportModal } from '../components/SpreadsheetImportModal';
 import { StatusLabelsModal } from '../components/StatusLabelsModal';
 import { StatusPicker } from '../components/StatusPicker';
+import { LeadsKanbanBoard } from '../components/LeadsKanbanBoard';
 import { WebFormModal } from '../components/WebFormModal';
 import { leadsToCsv } from '../leads-csv';
 import {
@@ -78,6 +79,7 @@ interface BulkAct {
 export function LeadsPage() {
   const { session } = useSession();
   const canWrite = hasPermission(session, 'crm:leads:write');
+  const [viewMode, setViewMode] = useState<'table' | 'board'>('table');
   const [query, setQuery] = useState<ListQuery>({});
   const [convertLead, setConvertLead] = useState<LeadSummary>();
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -316,6 +318,38 @@ export function LeadsPage() {
           />
         )}
 
+        {/* View Mode Toggle: Table View vs. Board View */}
+        <div className="flex items-center rounded-lg border border-slate-200 bg-slate-100 p-0.5 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setViewMode('table')}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+              viewMode === 'table'
+                ? 'bg-white text-slate-900 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            Table View
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('board')}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition-all ${
+              viewMode === 'board'
+                ? 'bg-white text-slate-900 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+            </svg>
+            Board View
+          </button>
+        </div>
+
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -525,8 +559,30 @@ export function LeadsPage() {
         </div>
       )}
 
-      {/* Board Group Sections with Drag & Drop & Blue Accent Bar (Matching Screenshot-1) */}
-      <div className="flex flex-col gap-6">
+      {/* Board View or Table Group Sections */}
+      {viewMode === 'board' ? (
+        <LeadsKanbanBoard
+          leads={leads}
+          statusLabels={statusLabels}
+          groups={groups}
+          sources={sources}
+          users={users}
+          customFields={customFields}
+          canWrite={canWrite}
+          onUpdateStatus={(leadId, newStatus) => {
+            updateLead.mutate({ id: leadId, data: { status: newStatus } });
+          }}
+          onConvertLead={(lead) => setConvertLead(lead)}
+          onNewLeadInStatus={(status) => {
+            const targetGroup = selectedGroupFilter || groups[0]?.id || 'default';
+            setAddingLeadInGroup(targetGroup);
+            setViewMode('table');
+          }}
+          onOpenColumnsModal={() => setIsColumnsOpen(true)}
+        />
+      ) : (
+        /* Board Group Sections with Drag & Drop & Blue Accent Bar (Matching Screenshot-1) */
+        <div className="flex flex-col gap-6">
         {displayGroups.map((group, displayGroupIndex) => {
           const groupLeadItems = groupedLeads.get(group.id) ?? [];
           const isAddingInThisGroup =
@@ -976,6 +1032,7 @@ export function LeadsPage() {
           );
         })}
       </div>
+      )}
 
       {/* Modals */}
       {convertLead && (

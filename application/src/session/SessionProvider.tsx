@@ -155,6 +155,10 @@ export function useSession(): SessionContextValue {
   return value;
 }
 
+export function useOptionalSession(): SessionContextValue | undefined {
+  return useContext(SessionContext);
+}
+
 /**
  * Takes the session token off the URL, if one came back on it, and removes it from the
  * address bar.

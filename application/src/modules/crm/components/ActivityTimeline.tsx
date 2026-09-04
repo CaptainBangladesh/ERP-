@@ -12,6 +12,7 @@ import { Field, FormError, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
+import { PencilIcon } from '../icons';
 
 export type ParentKind = 'lead' | 'deal' | 'party';
 
@@ -168,6 +169,10 @@ export function ActivityTimeline({
             onToggleComplete={() =>
               completeMutation.mutate({ id: act.id, completed: Boolean(act.completedAt) })
             }
+            onUpdate={async (id, notes) => {
+              await api.patch<ActivityResponse>(ACTIVITY_PATHS.activity(id), { notes });
+              void queryClient.invalidateQueries({ queryKey });
+            }}
           />
         ))}
       </ul>
@@ -297,11 +302,18 @@ function ActivityCard({
   activity,
   canWrite,
   onToggleComplete,
+  onUpdate,
 }: {
   activity: ActivityResponse;
   canWrite: boolean;
   onToggleComplete: () => void;
+  onUpdate?: (id: string, notes: string) => Promise<void>;
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editNotes, setEditNotes] = useState(activity.notes);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const isTask = activity.type === 'task';
   const isCompleted = Boolean(activity.completedAt);
   const isSystemAudit = /^(⚙️|📎|👤|🚀|📥|📝)/.test(activity.notes);
@@ -317,6 +329,23 @@ function ActivityCard({
         timeStyle: 'short',
       })
     : null;
+
+  async function handleSave(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!editNotes.trim() || isSaving) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      if (onUpdate) {
+        await onUpdate(activity.id, editNotes.trim());
+      }
+      setIsEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save note.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   return (
     <li
@@ -353,12 +382,58 @@ function ActivityCard({
           <span>{formattedOccurred}</span>
           <span>·</span>
           <span className="font-semibold text-slate-700">By {activity.createdByName}</span>
+          {!isSystemAudit && canWrite && !isEditing && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditNotes(activity.notes);
+                setIsEditing(true);
+              }}
+              title="Edit note"
+              aria-label="Edit note"
+              className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer ml-1"
+            >
+              <PencilIcon size={12} />
+            </button>
+          )}
         </div>
       </div>
 
-      <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed pt-1">
-        {activity.notes}
-      </p>
+      {isEditing ? (
+        <form onSubmit={handleSave} className="flex flex-col gap-2 pt-1">
+          <textarea
+            value={editNotes}
+            onChange={(e) => setEditNotes(e.target.value)}
+            rows={3}
+            autoFocus
+            className="w-full resize-none rounded-lg border border-teal-500 bg-slate-50/50 p-2.5 text-xs leading-relaxed text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-teal-500"
+          />
+          {error && <p className="text-xs font-semibold text-rose-600">{error}</p>}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsEditing(false);
+                setEditNotes(activity.notes);
+              }}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!editNotes.trim() || isSaving}
+              className="rounded-md bg-teal-700 px-3 py-1 text-xs font-bold text-white transition hover:bg-teal-800 disabled:opacity-50 cursor-pointer"
+            >
+              {isSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <p className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed pt-1">
+          {activity.notes}
+        </p>
+      )}
 
       {isTask && (
         <div className="flex flex-wrap items-center justify-between border-t border-slate-100 pt-2 text-xs">
@@ -368,7 +443,7 @@ function ActivityCard({
             </span>
           )}
 
-          {canWrite && (
+          {canWrite && !isEditing && (
             <label className="flex items-center gap-2 font-medium text-slate-700 cursor-pointer">
               <input
                 type="checkbox"

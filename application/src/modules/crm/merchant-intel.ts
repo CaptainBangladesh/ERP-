@@ -59,6 +59,12 @@ export interface MerchantProfile {
   hasAnything: boolean;
 }
 
+export const DEFAULT_USABILITY_QUESTIONS = [
+  'Is the website mobile-responsive/phone view optimized?',
+  'Is the user experience (UI/UX) intuitive?',
+  'Are products easily searchable?',
+];
+
 const YES_NO = /^(yes|no|n\/?a|not applicable|true|false|maybe|unknown|none)$/i;
 
 /** The platforms we group a social presence under, matched by URL host or by question wording. */
@@ -168,17 +174,30 @@ export function buildMerchantProfile(
 
     // Website usability review — a grid of sub-questions. A better Apps Script sends each row as
     // "Group — Sub-question", which we split so the sub-question is the row; the older script sent
-    // only the grid title with a bare list of answers, which we keep, numbered, rather than lose.
+    // only the grid title with a bare list of answers, which we keep, mapped to the standard questions rather than lose.
     if (/usability|assessment|user experience|ui\/ux|responsive|searchable|intuitive|navigat/.test(labelL)) {
       const dash = label.split(/\s+[—–-]\s+/);
       if (dash.length > 1) {
         profile.usability.push({ question: dash.slice(1).join(' — '), answer: joined });
       } else if (parts.length > 1) {
-        parts.forEach((part, index) =>
-          profile.usability.push({ question: `${label} #${index + 1}`, answer: part }),
-        );
+        parts.forEach((part, index) => {
+          const defaultQ = DEFAULT_USABILITY_QUESTIONS[index];
+          profile.usability.push({
+            question: defaultQ || `${label} #${index + 1}`,
+            answer: part,
+          });
+        });
       } else {
-        profile.usability.push({ question: label, answer: joined });
+        const numMatch = label.match(/#(\d+)/);
+        const qIdx = numMatch?.[1] ? parseInt(numMatch[1], 10) - 1 : -1;
+        if (qIdx >= 0 && DEFAULT_USABILITY_QUESTIONS[qIdx]) {
+          profile.usability.push({
+            question: DEFAULT_USABILITY_QUESTIONS[qIdx]!,
+            answer: joined,
+          });
+        } else {
+          profile.usability.push({ question: label, answer: joined });
+        }
       }
       continue;
     }

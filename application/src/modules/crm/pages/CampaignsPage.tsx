@@ -230,7 +230,7 @@ function CreateCampaignForm({
           error={fields.mailboxConnectionId}
           options={connectedMailboxes.map((m) => ({
             value: m.id,
-            label: `${m.displayName} (${m.emailAddress})`,
+            label: `${m.displayName} (${m.emailAddress})${m.isShared || m.provider === 'smtp' ? ' — 🏢 Company Mailbox' : ''}`,
           }))}
           onChange={setMailboxConnectionId}
         />

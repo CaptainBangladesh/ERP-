@@ -1475,4 +1475,101 @@ describe('LeadsPage', () => {
       expect(dialog).toHaveAttribute('aria-selected', 'true');
     });
   });
+
+  describe('Kanban board view', () => {
+    it('toggles between Table view and Board view', async () => {
+      signedInWith();
+      listing([
+        lead('Darlene Robertson', { email: 'darlene@example.com', phone: '123-456' }),
+      ]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Darlene Robertson');
+
+      // Switch to Kanban Board View
+      const boardButton = screen.getByRole('button', { name: /board view/i });
+      await user.click(boardButton);
+
+      // Verify Kanban column headers and lead card details
+      expect(screen.getByLabelText(/new status column/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Darlene Robertson' })).toBeInTheDocument();
+      expect(screen.getByText('darlene@example.com')).toBeInTheDocument();
+      expect(screen.getByText('123-456')).toBeInTheDocument();
+
+      // Switch back to Table View
+      const tableButton = screen.getByRole('button', { name: /table view/i });
+      await user.click(tableButton);
+
+      expect(screen.queryByLabelText(/new status column/i)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Darlene Robertson' })).toBeInTheDocument();
+    });
+
+    it('displays leads under their respective status columns on the board', async () => {
+      signedInWith();
+      listing([
+        lead('Lead New', { status: 'new' }),
+        lead('Lead Contacted', { status: 'contacted' }),
+      ]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Lead New');
+
+      await user.click(screen.getByRole('button', { name: /board view/i }));
+
+      const newCol = screen.getByLabelText(/new status column/i);
+      const contactedCol = screen.getByLabelText(/contacted status column/i);
+
+      expect(within(newCol).getByText('Lead New')).toBeInTheDocument();
+      expect(within(contactedCol).getByText('Lead Contacted')).toBeInTheDocument();
+    });
+
+    it('allows hiding and restoring a status column from the board', async () => {
+      signedInWith();
+      listing([
+        lead('Lead In Progress', { status: 'in_progress' }),
+      ]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Lead In Progress');
+
+      await user.click(screen.getByRole('button', { name: /board view/i }));
+
+      expect(screen.getByTestId('column-qualified')).toBeInTheDocument();
+
+      // Hide the Qualified column
+      const hideQualifiedBtn = screen.getByRole('button', { name: /hide qualified column/i });
+      await user.click(hideQualifiedBtn);
+
+      expect(screen.queryByTestId('column-qualified')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /\+ show "qualified"/i })).toBeInTheDocument();
+
+      // Restore it
+      await user.click(screen.getByRole('button', { name: /\+ show "qualified"/i }));
+      expect(screen.getByTestId('column-qualified')).toBeInTheDocument();
+    });
+
+    it('renders custom fields and Facebook link on the Kanban cards', async () => {
+      signedInWith();
+      listing([
+        lead('Fashion Store', {
+          customValues: {
+            fb_link: 'https://www.facebook.com/fashionstore',
+            location: 'Dhaka, Bangladesh',
+          },
+        }),
+      ]);
+
+      const { user } = renderPage(<LeadsPage />, { token: 'a-token', path: '/crm/leads' });
+      await screen.findByText('Fashion Store');
+
+      await user.click(screen.getByRole('button', { name: /board view/i }));
+
+      const fbLink = screen.getByRole('link', { name: /facebook\.com\/fashionstore/i });
+      expect(fbLink).toBeInTheDocument();
+      expect(fbLink).toHaveAttribute('href', 'https://www.facebook.com/fashionstore');
+
+      expect(screen.getByText('Dhaka, Bangladesh')).toBeInTheDocument();
+    });
+  });
 });
+
