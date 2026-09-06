@@ -29,6 +29,7 @@ Settled architecture decisions locked during chartering:
   - `/domain-modeling` and `/grilling` for data model refinements.
 
 ## Decisions so far
+- [01 — Marketing module scaffold](issues/01-marketing-module-scaffold.md) — generated via `npm run new:module -- --name marketing --tier core --depends-on crm parties`. Enhanced generator `readRequest` to accept space-delimited flag values. Manifest registered in `backend/src/app.module.ts` (`tier: 'core'`, `dependsOn: ['crm', 'parties']`, `order: 50`). Initial routing (`/marketing`) and navigation tab wired in `application/` and verified with tests. Passed `check:modules`, `check:tenancy`, `check:conformance`, and `typecheck`.
 - [Spec — Marketing Automation](spec.md) — (`Status: ready-for-agent`) consolidates all 10 core feature workflows, architecture decisions, research fact sheets, data models, and HTTP integration test seams into one comprehensive, implementable PRD.
 - [10 — Social API rate limits & permissions](issues/10-social-api-rate-limits-and-permissions.md) — verified post-Jan 2025 Meta scopes (`instagram_business_*`), 50-post/day quota, container polling flow; LinkedIn PDF document URN upload sequence; X API v2 OAuth PKCE and polling fallback for non-enterprise DMs.
 
