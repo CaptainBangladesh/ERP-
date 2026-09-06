@@ -30,3 +30,4 @@ export * from './modules/products/contract.js';
 export * from './modules/warranties/contract.js';
 export * from './modules/inventory/contract.js';
 export * from './modules/crm/contract.js';
+export * from './modules/marketing/contract.js';

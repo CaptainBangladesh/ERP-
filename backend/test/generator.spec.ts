@@ -6,6 +6,7 @@ import {
   applyPatch,
   namesOf,
   planModule,
+  readRequest,
   refusals,
   writeModule,
   type GeneratedModule,
@@ -153,6 +154,29 @@ describe('the module generator', () => {
 
       expect(contract?.text).toContain('crms: `/${CRM_ROUTE}`');
       expect(contract?.text).toContain('crm: (id: string) =>');
+    });
+
+    it('parses dependency flags given as space-separated or comma-separated lists', () => {
+      const spaceSeparated = readRequest([
+        '--name',
+        'marketing',
+        '--tier',
+        'core',
+        '--depends-on',
+        'crm',
+        'parties',
+      ]);
+      expect(spaceSeparated.dependsOn).toEqual(['crm', 'parties']);
+
+      const commaSeparated = readRequest([
+        '--name',
+        'marketing',
+        '--tier',
+        'core',
+        '--depends-on',
+        'crm,parties',
+      ]);
+      expect(commaSeparated.dependsOn).toEqual(['crm', 'parties']);
     });
   });
 

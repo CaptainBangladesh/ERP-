@@ -200,4 +200,30 @@ describe('AppRoutes', () => {
 
     expect(await screen.findByRole('heading', { name: /page not found/i })).toBeInTheDocument();
   });
+
+  it('routes to the marketing page and renders the navigation tab', async () => {
+    server.use(
+      http.get(AUTH_PATHS.session, () => HttpResponse.json(SESSION)),
+      http.get(NAVIGATION_PATH, () =>
+        HttpResponse.json({
+          entries: [
+            { module: 'identity', label: 'Home', path: '/', order: 0 },
+            { module: 'marketing', label: 'Marketing', path: '/marketing', order: 50 },
+          ],
+        }),
+      ),
+      http.get('/api/marketing', () =>
+        HttpResponse.json({
+          items: [],
+          page: { size: 25, total: 0, current: 1 },
+        }),
+      ),
+    );
+
+    renderPage(<AppRoutes />, { token: 'a-token', path: '/marketing' });
+
+    expect(await screen.findByRole('heading', { name: /^marketing$/i })).toBeInTheDocument();
+    const nav = await screen.findByRole('navigation', { name: /main/i });
+    expect(nav).toHaveTextContent('Marketing');
+  });
 });

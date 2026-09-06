@@ -199,6 +199,14 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   MailboxConnection: { kind: 'company-owned' },
   MailboxAuthState: { kind: 'company-owned' },
   EmailTemplate: { kind: 'company-owned' },
+  // Sales-enablement content and the guided-selling pointer. All four are ordinary
+  // company-owned tables — a company's scripts and plays are its own, nothing restricted or
+  // immutable: editing a script or reordering a play's steps is an ordinary edit, and a lead's
+  // playbook position is reassigned in place as the rep advances it.
+  Script: { kind: 'company-owned' },
+  Playbook: { kind: 'company-owned' },
+  PlaybookStep: { kind: 'company-owned' },
+  PlaybookEnrollment: { kind: 'company-owned' },
   Campaign: { kind: 'company-owned' },
   CampaignRecipient: { kind: 'company-owned' },
   Unsubscribe: { kind: 'company-owned' },
@@ -217,6 +225,9 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   WorkflowRule: { kind: 'company-owned' },
 
   Notification: { kind: 'company-owned' },
+
+  // ─── marketing ──
+  Marketing: { kind: 'company-owned' },
 };
 
 /**

@@ -54,13 +54,17 @@ export function readRequest(argv: readonly string[]): ModuleRequest {
     const flag = argv[at] ?? '';
     if (!flag.startsWith('--')) throw new ModuleGenerationError([`Unexpected argument '${flag}'. ${USAGE}`]);
 
-    const value = argv[at + 1];
-    if (value === undefined || value.startsWith('--')) {
+    const values: string[] = [];
+    while (at + 1 < argv.length && !argv[at + 1]?.startsWith('--')) {
+      values.push(argv[at + 1]!);
+      at += 1;
+    }
+
+    if (values.length === 0) {
       throw new ModuleGenerationError([`'${flag}' needs a value. ${USAGE}`]);
     }
 
-    given.set(flag.slice(2), value);
-    at += 1;
+    given.set(flag.slice(2), values.join(','));
   }
 
   const unknown = [...given.keys()].filter((flag) => !FLAGS.includes(flag));

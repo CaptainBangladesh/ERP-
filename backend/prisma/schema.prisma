@@ -862,6 +862,7 @@ model Lead {
   submissions LeadSubmission[]
   emailSends LeadEmailSend[]
   assignees LeadAssignee[]
+  playbookEnrollments PlaybookEnrollment[]
 
   @@index([companyId])
   @@index([companyId, groupId])
@@ -1346,6 +1347,94 @@ model EmailTemplate {
   @@map("email_templates")
 }
 
+/// A call/objection/discovery guidance script — spoken content, distinct from an EmailTemplate
+/// (which is for sending). Carries the same `{{lead.*}}`/`{{custom.*}}` merge-tags, resolved by
+/// `template-tag-resolver`. Keyed to a lead lifecycle `status` so the workspace can surface the
+/// most relevant scripts for where the lead is now; a null status applies regardless.
+model Script {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  title           String
+  body            String
+  /// One of `SCRIPT_CATEGORIES` — the moment it serves (opener/discovery/objection/closing/general).
+  category        String
+  /// The lead lifecycle status this script is most useful in, or null for "any status".
+  leadStatus      String?  @map("lead_status")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  playbookSteps PlaybookStep[]
+
+  @@index([companyId])
+  @@map("scripts")
+}
+
+/// A named play — an ordered sequence of steps guiding a rep through a lead. Content only:
+/// auto-advance / time-gated sequencing is deliberately out (this platform has no scheduler,
+/// ADR 0009); a rep advances by marking a step done.
+model Playbook {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  name            String
+  description     String?
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  steps       PlaybookStep[]
+  enrollments PlaybookEnrollment[]
+
+  @@index([companyId])
+  @@map("playbooks")
+}
+
+/// One step of a Playbook: an instruction, optionally a Script to deliver and an activity type
+/// the "do it" button logs. `order` is the step's position, renumbered contiguously on every save.
+model PlaybookStep {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  playbookId  String   @map("playbook_id") @db.Uuid
+  playbook    Playbook @relation(fields: [playbookId], references: [id], onDelete: Cascade)
+  order       Int
+  title       String
+  instruction String
+  /// Optional Script this step has the rep say. `SetNull` keeps the step when its script is
+  /// deleted — a step without its script is still a step, just without the words.
+  scriptId    String?  @map("script_id") @db.Uuid
+  script      Script?  @relation(fields: [scriptId], references: [id], onDelete: SetNull)
+  /// Optional activity type the one-click "do it" logs — one of `ACTIVITY_TYPES`.
+  activityType String? @map("activity_type")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([playbookId, order])
+  @@map("playbook_steps")
+}
+
+/// A lead's position in a Playbook — the guided-selling pointer. One per lead (`@@unique`), so
+/// "the current step" is never ambiguous. Progression is manual: `completedSteps` is how many
+/// steps the rep has marked done, and the current step is the next one in `order`. `completedAt`
+/// is set once every step is done.
+model PlaybookEnrollment {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  leadId         String    @map("lead_id") @db.Uuid
+  lead           Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  playbookId     String    @map("playbook_id") @db.Uuid
+  playbook       Playbook  @relation(fields: [playbookId], references: [id], onDelete: Cascade)
+  completedSteps Int       @default(0) @map("completed_steps")
+  completedAt    DateTime? @map("completed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([companyId, leadId])
+  @@index([companyId])
+  @@map("playbook_enrollments")
+}
+
 /// An email campaign targeted at a segment of leads.
 model Campaign {
   id                  String   @id @default(uuid()) @db.Uuid
@@ -1412,3 +1501,30 @@ model Unsubscribe {
 
 
 
+
+// ─── marketing ─────────────────────────────────────────────────────────────────────
+// Owned by the marketing module. See backend/src/modules/marketing.
+//
+// As everywhere else, `companyId` is a plain column with no foreign key to `companies`:
+// keys stay inside a module, and scoping is the tenancy extension's rather than the schema's.
+
+/// The module's primary record.
+model Marketing {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  name String
+
+  /// `active` or `inactive`. Deactivating rather than deleting is what keeps whatever names
+  /// this row later intelligible.
+  status String @default("active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  /// The list's default order, within a company — the `(company_id, <default sort>)` shape
+  /// every list endpoint's default sort wants, so that offset paging is an index walk.
+  @@index([companyId, name])
+  @@map("marketing")
+}
