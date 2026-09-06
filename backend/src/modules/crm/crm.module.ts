@@ -33,6 +33,8 @@ import { CaptureSourcesService } from './capture-sources.service';
 import { LeadImportsController } from './lead-imports.controller';
 import { LeadImportsService } from './lead-imports.service';
 import { LeadOutreachService } from './lead-outreach.service';
+import { PlanningController } from './planning.controller';
+import { PlanningService } from './planning.service';
 
 import { PublicCaptureController } from './public-capture.controller';
 import { PublicCampaignsController } from './public-campaigns.controller';
@@ -56,6 +58,7 @@ import { PublicLeadEmailController } from './public-lead-email.controller';
     CampaignsController,
     CaptureSourcesController,
     LeadImportsController,
+    PlanningController,
     PublicCaptureController,
     PublicCampaignsController,
     PublicLeadEmailController,
@@ -98,6 +101,7 @@ import { PublicLeadEmailController } from './public-lead-email.controller';
     CaptureSourcesService,
     LeadImportsService,
     LeadOutreachService,
+    PlanningService,
   ],
 })
 export class CrmModule {}

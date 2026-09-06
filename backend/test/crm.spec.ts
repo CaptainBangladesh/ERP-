@@ -2,11 +2,14 @@ import {
   ACTIVITY_ERROR_CODES,
   ACTIVITY_PATHS,
   AUTH_PATHS,
+  DEAL_PATHS,
   LEAD_ERROR_CODES,
   LEAD_PATHS,
   LEAD_STATUS_LABEL_ERROR_CODES,
   LEAD_STATUS_LABEL_PATHS,
   PARTY_PATHS,
+  PLANNING_PATHS,
+  STAGE_PATHS,
   WORKFLOW_RULE_PATHS,
   listPath,
   type ActivityFeedResponse,
@@ -15,17 +18,24 @@ import {
   type AssignTaskRequest,
   type AuthenticatedSession,
   type CreateActivityRequest,
+  type CreateDealRequest,
   type CreateLeadRequest,
   type CreatePartyRequest,
+  type CreateStageRequest,
   type CreateWorkflowRuleRequest,
+  type DealResponse,
   type LeadListResponse,
   type LeadResponse,
   type LeadStatusLabelListResponse,
   type LeadStatusLabelSummary,
   type NotificationListResponse,
   type PartyResponse,
+  type PlanningCoordinationResponse,
+  type PlanningHeatmapResponse,
+  type PlanningScheduleResponse,
   type QualifyLeadRequest,
   type SignUpRequest,
+  type StageResponse,
   type UpdateLeadRequest,
   type WorkflowRuleListResponse,
   type WorkflowRuleResponse,
@@ -766,6 +776,128 @@ describe('crm', () => {
         .as(app.http.post(ACTIVITY_PATHS.assignTask((note.body as ActivityResponse).id)))
         .send({ assignedToUserId: tenant.session.user.id } satisfies AssignTaskRequest)
         .expect(409);
+    });
+  });
+
+  /**
+   * The Planning workspace — the team-and-time views that read the ticket-01 assignee: a forward
+   * scheduling calendar, a backward activity heatmap, and a who-owns-what coordination view. All
+   * three are gated by `crm:team:read`.
+   */
+  describe('team planning', () => {
+    const dayFromNow = (days: number) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    async function addTask(tenant: Tenant, leadId: string, body: Partial<CreateActivityRequest> = {}) {
+      const res = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'task', notes: 'A scheduled task', leadId, ...body } satisfies CreateActivityRequest)
+        .expect(201);
+      return res.body as ActivityResponse;
+    }
+
+    it('schedules upcoming dated tasks across the team, oldest due first, with each parent named', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant, { name: 'Priya Kapoor' });
+
+      await addTask(tenant, lead.id, { notes: 'Call soon', dueAt: dayFromNow(2) });
+      await addTask(tenant, lead.id, { notes: 'Call sooner', dueAt: dayFromNow(1) });
+      // A task with a due date past the default two-week window is not on the near schedule.
+      await addTask(tenant, lead.id, { notes: 'Far future', dueAt: dayFromNow(60) });
+      // A plain note is not a task, so it never appears on the schedule.
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'note', notes: 'Not scheduled', leadId: lead.id } satisfies CreateActivityRequest)
+        .expect(201);
+
+      const res = await tenant.as(app.http.get(PLANNING_PATHS.schedule)).expect(200);
+      const body = res.body as PlanningScheduleResponse;
+
+      expect(body.items.map((task) => task.notes)).toEqual(['Call sooner', 'Call soon']);
+      expect(body.items[0]!.parentKind).toBe('lead');
+      expect(body.items[0]!.parentName).toBe('Priya Kapoor');
+      expect(body.items[0]!.assignedToUserId).toBe(tenant.session.user.id);
+    });
+
+    it('counts authored activity per rep per day for the heatmap', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'call', notes: 'Call one', leadId: lead.id } satisfies CreateActivityRequest)
+        .expect(201);
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'note', notes: 'Note one', leadId: lead.id } satisfies CreateActivityRequest)
+        .expect(201);
+
+      const res = await tenant.as(app.http.get(PLANNING_PATHS.heatmap)).expect(200);
+      const body = res.body as PlanningHeatmapResponse;
+
+      const today = new Date().toISOString().slice(0, 10);
+      const mine = body.cells.filter(
+        (cell) => cell.userId === tenant.session.user.id && cell.date === today,
+      );
+      expect(mine).toHaveLength(1);
+      // Both authored activities land in today's cell.
+      expect(mine[0]!.count).toBe(2);
+    });
+
+    it('summarises each rep’s workload — leads, open deals, open and overdue tasks', async () => {
+      const owner = await signUp();
+      const me = owner.session.user.id;
+
+      // A lead owned by me.
+      const lead = await addLead(owner, { assigneeUserIds: [me] });
+
+      // An open deal assigned to me (a stage with no won/lost outcome is open).
+      const stage = (await owner
+        .as(app.http.post(STAGE_PATHS.stages))
+        .send({ name: 'Prospecting' } satisfies CreateStageRequest)
+        .expect(201)).body as StageResponse;
+      const party = await addParty(owner);
+      await owner
+        .as(app.http.post(DEAL_PATHS.deals))
+        .send({
+          name: 'Kapoor deal',
+          partyId: party.id,
+          stageId: stage.id,
+          amount: '1000.00',
+          assignedToUserId: me,
+        } satisfies CreateDealRequest)
+        .expect(201);
+
+      // One open task due tomorrow, one overdue.
+      await addTask(owner, lead.id, { notes: 'Due tomorrow', dueAt: dayFromNow(1) });
+      await addTask(owner, lead.id, { notes: 'Overdue', dueAt: dayFromNow(-3) });
+
+      const res = await owner.as(app.http.get(PLANNING_PATHS.coordination)).expect(200);
+      const row = (res.body as PlanningCoordinationResponse).items.find((item) => item.userId === me);
+
+      expect(row).toBeDefined();
+      expect(row!.leadCount).toBe(1);
+      expect(row!.openDealCount).toBe(1);
+      expect(row!.openTaskCount).toBe(2);
+      expect(row!.overdueTaskCount).toBe(1);
+    });
+
+    it('refuses the planning surfaces to a rep without the team permission', async () => {
+      const owner = await signUp();
+      await factories.addColleague({
+        ownerUserId: owner.session.user.id,
+        name: 'Cai Nguyen',
+        email: 'cai@northwind.test',
+        permissions: ['crm:leads:read', 'crm:activities:read'],
+      });
+      const rep = await app.http
+        .post(AUTH_PATHS.signIn)
+        .send({ email: 'cai@northwind.test', password: 'correct-horse-battery' })
+        .expect(200);
+      const token = `Bearer ${(rep.body as AuthenticatedSession).token}`;
+
+      await app.http.get(PLANNING_PATHS.schedule).set('Authorization', token).expect(403);
+      await app.http.get(PLANNING_PATHS.heatmap).set('Authorization', token).expect(403);
+      await app.http.get(PLANNING_PATHS.coordination).set('Authorization', token).expect(403);
     });
   });
 

@@ -114,6 +114,13 @@ export const manifest: ModuleManifest = {
      * It is the *same* screen a lead click opens, not a second one: one workspace, two doors.
      * Guarded by `leads:read`, because working a lead is what it is for.
      */
+    /**
+     * The Sales Enablement & Planning home — the team scheduling calendar, the activity heatmap,
+     * and the who-owns-what coordination view, under one section. Gated by `crm:team:read`, so a
+     * rep without it never sees the nav entry; a manager granted it opens the whole team's slate.
+     * It leads the CRM section because planning is where a manager starts the day.
+     */
+    { label: 'Planning', path: '/crm/planning', order: 46, permission: 'crm:team:read' },
     { label: 'Workspace', path: '/crm/workspace', order: 47, permission: 'crm:leads:read' },
     { label: 'Deals', path: '/crm/deals', order: 48, permission: 'crm:deals:read' },
     { label: 'Leads', path: '/crm/leads', order: 49, permission: 'crm:leads:read' },

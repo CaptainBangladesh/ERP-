@@ -908,6 +908,91 @@ export interface ActivityCountsResponse {
   totalCount: number;
 }
 
+// ─── team planning (Sales Enablement & Planning) ─────────────────────────────────────
+
+/**
+ * The team-and-time surfaces: a forward scheduling calendar, a backward activity heatmap and a
+ * who-owns-what coordination view. All three read the ticket-01 task assignee, all three are gated
+ * by `crm:team:read`, and all three are keyed by plain platform user ids the frontend resolves to
+ * names against identity's user list — the backend never reaches into identity.
+ */
+export const PLANNING_PATHS = {
+  schedule: `/${CRM_ROUTE}/planning/schedule`,
+  heatmap: `/${CRM_ROUTE}/planning/heatmap`,
+  coordination: `/${CRM_ROUTE}/planning/coordination`,
+} as const;
+
+/**
+ * A dated task on the team schedule. `dueAt` is always present — the schedule is the set of tasks
+ * that *have* a due date in the window — and the parent is resolved to a name once, server-side,
+ * the way the company feed does it, so a lane can label a task without a lookup per row.
+ */
+export interface PlanningScheduleTask {
+  id: string;
+  notes: string;
+  dueAt: string;
+  completedAt: string | null;
+  assignedToUserId: string | null;
+  parentKind: 'lead' | 'deal' | 'party' | null;
+  parentId: string | null;
+  parentName: string | null;
+}
+
+/** Upcoming tasks across every rep, within `[from, to]`, oldest due first. */
+export interface PlanningScheduleResponse {
+  /** ISO timestamps bounding the window the tasks were drawn from. */
+  from: string;
+  to: string;
+  items: PlanningScheduleTask[];
+}
+
+/**
+ * One rep's activity volume on one day — a contributions-style cell. Only non-empty cells are
+ * sent: a rep who did nothing on a day is simply absent, which is most of the grid, so the empty
+ * case is the common one and shipping it would be most of the response.
+ */
+export interface HeatmapCell {
+  userId: string;
+  /** `YYYY-MM-DD`, in UTC. */
+  date: string;
+  count: number;
+}
+
+/**
+ * The backward-looking activity heatmap: who has been active, quiet, and when. The metric is
+ * *authored activity* — every call, note, email, meeting and task a person logged, counted by the
+ * day it `occurredAt` and attributed to who created it — because "who's been putting the work in"
+ * is a question about what people did, not what they were handed. System-recorded audit rows are
+ * excluded, so a run of status changes does not read as somebody's busy week.
+ */
+export interface PlanningHeatmapResponse {
+  /** Inclusive `YYYY-MM-DD` bounds of the grid, in UTC. */
+  from: string;
+  to: string;
+  cells: HeatmapCell[];
+}
+
+/**
+ * One rep's current workload — the numbers that show whether load is balanced. Keyed by a plain
+ * user id and nothing else: the frontend joins names from identity's user list and folds in team
+ * members who own nothing (and so appear in no crm row) as honest zeroes.
+ */
+export interface PlanningCoordinationRow {
+  userId: string;
+  /** Leads this person is an assignee of (`LeadAssignee`), shared leads included. */
+  leadCount: number;
+  /** Deals assigned to them that sit in a stage with no won/lost outcome. */
+  openDealCount: number;
+  /** Their tasks that are not yet completed. */
+  openTaskCount: number;
+  /** The subset of open tasks whose due date has passed — the sharpest overload signal. */
+  overdueTaskCount: number;
+}
+
+export interface PlanningCoordinationResponse {
+  items: PlanningCoordinationRow[];
+}
+
 export const CRM_EVENTS = {
   leadQualified: 'crm.lead.qualified',
   leadDisqualified: 'crm.lead.disqualified',

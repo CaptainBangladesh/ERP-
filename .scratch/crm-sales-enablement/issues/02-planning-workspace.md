@@ -1,7 +1,7 @@
 # 02 — Planning workspace: calendar, heatmap & coordination
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 01
 
 ## Question
@@ -32,3 +32,28 @@ Build all three views (grill each as you go; they share assignment data and one 
 Manager-facing views gated by the team permission; a rep sees their own slice. Reminders/
 notifications are out (no-scheduler gap — map fog). Resolution builds the aggregate endpoints and
 the three frontend views under one nav section.
+
+## Answer
+
+Built as one `TeamPlanningPage` (`/crm/planning`) with three tabbed views, under a new **Planning**
+nav entry (order 46) gated by **`crm:team:read`** — the team permission string settled here for the
+rest of the map. Backend `PlanningService`/`PlanningController` (`api/crm/planning/*`), following the
+`DashboardService` precedent (Prisma aggregates + in-memory bucketing, no raw SQL). All three keyed
+by plain user ids the frontend joins to names — and folds in idle teammates — against identity's
+user list; the backend never reaches into identity.
+
+- **Calendar (forward)** — `GET planning/schedule?from&to` returns upcoming dated tasks across reps
+  (default two-week look-ahead), parent resolved to a name server-side. A 7-day week grid, per-rep
+  colour, "only my tasks" lens; complete/reassign inline (reusing ticket-01 `assign` + complete).
+  Read + light interaction, not read-only.
+- **Heatmap (backward)** — `GET planning/heatmap?weeks=12`. **Metric settled: authored activity by
+  `occurredAt`, attributed to `createdByUserId`, system rows excluded** — "who put the work in",
+  not what they were handed. Contributions-style single-hue teal ramp (colour-blind safe by
+  lightness), fixed thresholds, legend, per-rep strip over 84 days.
+- **Coordination** — `GET planning/coordination` returns per-rep `{leadCount, openDealCount,
+  openTaskCount, overdueTaskCount}`. A workload table, busiest first, overdue flagged, idle
+  teammates shown as zeroes. Task reassignment lives on the calendar (reuses ticket-01); lead/deal
+  reassignment stays on their own boards.
+
+Tests: `crm.spec.ts` "team planning" (4, incl. the `crm:team:read` gate) + `TeamPlanningPage.test.tsx`
+(4). Full crm suites green (backend 57, frontend 180).

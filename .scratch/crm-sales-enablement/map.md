@@ -70,7 +70,14 @@ already resolved above.
 
 <!-- one line per closed ticket, appended on resolution -->
 
-(none yet — map just charted)
+- **01 task assignee (resolved).** `Activity.assignedToUserId` — single owner, no FK/cached name,
+  resolved by the frontend like `Lead`/`Deal`; null on non-tasks, defaults to creator. One write
+  path `POST /activities/:id/assign`: self-service open to every rep, colleague-assignment gated by
+  the new `crm:team:manage`; audits `🎯` on the parent. See `issues/01-task-assignee.md`.
+- **02 planning workspace (resolved).** `/crm/planning` (nav order 46, gated `crm:team:read` — the
+  team permission for the whole map), three views over `api/crm/planning/*` aggregates. Heatmap
+  metric = authored activity by `occurredAt`/`createdByUserId`, system rows excluded. Calendar and
+  coordination reuse ticket-01 reassignment. See `issues/02-planning-workspace.md`.
 
 ## Not yet specified
 

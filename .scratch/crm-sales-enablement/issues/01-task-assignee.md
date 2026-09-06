@@ -1,7 +1,7 @@
 # 01 — Task assignee on Activity
 
 Type: grilling
-Status: open
+Status: resolved
 
 ## Question
 
@@ -26,3 +26,23 @@ Decide and build:
 
 Resolution builds the model change, migration, service/controller, and the assignee UI on the
 existing activity surfaces.
+
+## Answer
+
+Built. `Activity.assignedToUserId` (single owner, no FK, no cached name — a live reference the
+frontend resolves against identity's user list, exactly like `Lead`/`Deal.assignedToUserId`). Null
+on every non-task activity; a task defaults to its creator. Migration `20260906000000_activity_assignee`
+backfills existing tasks' assignee = creator and indexes `(company, assignee, dueAt)`.
+
+- **Single assignee**, not multiple: a task is one rep's to do (the default the ticket set).
+- **Gate**: `POST /activities/:id/assign` is the one write path after creation. Self-service (take
+  a task, release your own) is every rep's right on `crm:activities:write`; handing work to a
+  *colleague* — at creation or after — needs `crm:team:manage`, checked in the service against the
+  session's permissions (the endpoint decorator can't express "self OR manage"). The change audits
+  on the parent timeline (`🎯`, a new audit kind).
+- **Permissions**: declared `crm:team:read` (gates ticket 02's team views) and `crm:team:manage`
+  (the assignment gate) — RBAC strings, no new role model.
+- **Frontend**: the lead task composer schedules (due date) and assigns; task entries show the
+  owner with a manager picker, or Take it / Release for a rep.
+
+Tests: `crm.spec.ts` "assigning a task" (4), plus `LeadActivityFeed` fixtures. Full crm suite green.
