@@ -1222,6 +1222,16 @@ model Activity {
   createdByUserId String @map("created_by_user_id") @db.Uuid
   createdByName   String @map("created_by_name")
 
+  /// Who the task is *assigned to*, as opposed to `createdByUserId` — who logged it. A dated
+  /// task is a piece of work with an owner, so a manager can hand it out and every team view
+  /// (calendar, heatmap, coordination, a rep's own planner) can group by rep. A plain platform
+  /// `User` reference, no FK and no cached name, exactly like `Lead.assignedToUserId` and
+  /// `Deal.assignedToUserId`: it is live and reassignable, and the frontend resolves it via
+  /// identity's `GET /api/identity/users` because identity's public surface is deliberately
+  /// empty. Null on every non-task activity (a call or note records what happened, it is not
+  /// work owed), and defaults to the creator when a task is logged without naming someone.
+  assignedToUserId String? @map("assigned_to_user_id") @db.Uuid
+
   leadId  String? @map("lead_id") @db.Uuid
   lead    Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
@@ -1237,6 +1247,9 @@ model Activity {
   @@index([companyId, leadId, occurredAt])
   @@index([companyId, dealId, occurredAt])
   @@index([companyId, partyId, occurredAt])
+  /// "This rep's upcoming tasks", the shape the team calendar and personal planner walk: an
+  /// assignee, ordered by when it is due.
+  @@index([companyId, assignedToUserId, dueAt])
   @@map("activities")
 }
 

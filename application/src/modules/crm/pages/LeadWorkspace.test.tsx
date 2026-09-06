@@ -71,6 +71,7 @@ describe('LeadWorkspace', () => {
       completedAt: null,
       createdByUserId: 'u1',
       createdByName: 'Ada Okafor',
+      assignedToUserId: null,
       leadId: 'id-priya-kapoor',
       dealId: null,
       partyId: null,

@@ -503,6 +503,12 @@ export const ACTIVITY_PATHS = {
    * completes the task and never deletes it.
    */
   snoozeTask: (id: string) => `/${CRM_ROUTE}/activities/${id}/snooze`,
+  /**
+   * Hand a task to a colleague — or take it back. The single write path for `assignedToUserId`
+   * after creation, so the manager-versus-rep gate and the timeline audit live in one place
+   * rather than being re-checked on every field edit. Sending `null` unassigns the task.
+   */
+  assignTask: (id: string) => `/${CRM_ROUTE}/activities/${id}/assign`,
 } as const;
 
 /**
@@ -529,6 +535,14 @@ export const auditNotes = {
 
   leadAssigned: () => '👤 Lead assigned to representative',
 
+  /**
+   * A task changing hands, recorded on the parent's timeline. Carries no name on purpose, the
+   * way `leadAssigned` does not: `Activity.assignedToUserId` is a live reference the frontend
+   * resolves against the identity user list, so a name frozen into the note here would be one
+   * more copy to go stale when the person is renamed.
+   */
+  taskAssigned: () => '🎯 Task assignment updated',
+
   fileAttached: (filename: string) => `📎 Attached file: ${filename}`,
 
   surveyReceived: (formName: string) => `📝 Survey response received: ${formName}`,
@@ -547,7 +561,7 @@ export const auditNotes = {
 } as const;
 
 /** The emoji a system Audit event's notes begin with. Tolerant of a trailing variation selector. */
-export const SYSTEM_AUDIT_PREFIX = /^(⚙️|⚙|📎|👤|🚀|📥|📝|📬)/u;
+export const SYSTEM_AUDIT_PREFIX = /^(⚙️|⚙|📎|👤|🎯|🚀|📥|📝|📬)/u;
 
 export function isSystemAudit(notes: string): boolean {
   return SYSTEM_AUDIT_PREFIX.test(notes);
@@ -556,6 +570,7 @@ export function isSystemAudit(notes: string): boolean {
 export type AuditEvent =
   | { kind: 'status-changed'; from: string; to: string }
   | { kind: 'lead-assigned' }
+  | { kind: 'task-assigned' }
   | { kind: 'file-attached'; filename: string }
   | { kind: 'survey-received'; formName: string }
   | { kind: 'email-opened'; subject: string; openCount: number }
@@ -570,6 +585,8 @@ export function describeAudit(notes: string): AuditEvent | undefined {
   if (status) return { kind: 'status-changed', from: status[1]!, to: status[2]! };
 
   if (/^👤/u.test(notes)) return { kind: 'lead-assigned' };
+
+  if (/^🎯/u.test(notes)) return { kind: 'task-assigned' };
 
   const file = /^📎\s*Attached file:\s*(.+)$/u.exec(notes);
   if (file) return { kind: 'file-attached', filename: file[1]! };
@@ -609,6 +626,12 @@ export const ACTIVITY_FIELDS = {
   completedAt: 'completedAt',
   createdByUserId: 'createdByUserId',
   createdByName: 'createdByName',
+  /**
+   * Who a task is assigned to — filterable so the team calendar, the coordination view and a
+   * rep's own planner can all ask the feed for "this person's tasks" server-side rather than
+   * pulling the company's whole history down and sifting it in the browser.
+   */
+  assignedToUserId: 'assignedToUserId',
   createdAt: 'createdAt',
 } as const;
 
@@ -625,6 +648,13 @@ export interface CreateActivityRequest {
   occurredAt?: string;
   /** ISO date/timestamp. Meaningful only for `type === 'task'`. */
   dueAt?: string;
+  /**
+   * Who owns this task. A plain platform user id, resolved and displayed by the frontend the
+   * same way `Deal.assignedToUserId` is — no FK, no lookup here. Meaningful only for a task;
+   * omit it and a task defaults to the person creating it. Assigning to anyone else needs the
+   * `crm:team:manage` permission.
+   */
+  assignedToUserId?: string;
   /** Exactly one parent ID must be specified. */
   leadId?: string;
   dealId?: string;
@@ -638,6 +668,17 @@ export interface UpdateActivityRequest {
   dueAt?: string | null;
 }
 
+/**
+ * Reassign a task, through the one endpoint that owns `assignedToUserId` after creation.
+ *
+ * `null` unassigns it. Kept off the general update so the manager gate and the timeline audit
+ * are enforced in exactly one place — the same reason qualifying a lead is its own endpoint
+ * rather than a `status` write.
+ */
+export interface AssignTaskRequest {
+  assignedToUserId: string | null;
+}
+
 export interface ActivitySummary {
   id: string;
   type: ActivityType;
@@ -647,6 +688,12 @@ export interface ActivitySummary {
   completedAt: string | null;
   createdByUserId: string;
   createdByName: string;
+  /**
+   * Who the task is assigned to, or `null` when nobody is (and on every non-task activity). A
+   * live platform user id the frontend resolves to a name, never a frozen snapshot — reassigning
+   * is an ordinary edit and a renamed colleague should read correctly everywhere at once.
+   */
+  assignedToUserId: string | null;
   leadId: string | null;
   dealId: string | null;
   partyId: string | null;
@@ -687,12 +734,17 @@ export type ActivityFeedResponse = ListResponse<ActivityFeedItem>;
 
 export const ACTIVITY_ERROR_CODES = {
   activityNotFound: 'activity_not_found',
-  /** Completion or reopening was attempted on an Activity whose `type !== 'task'`. */
+  /** Completion, reopening or assignment was attempted on an Activity whose `type !== 'task'`. */
   activityNotTask: 'activity_not_task',
   /** The request named 0 or >1 parent identifiers. Exactly one is required. */
   invalidActivityParent: 'invalid_activity_parent',
   /** The parent identifier specified could not be resolved within this company. */
   activityParentNotFound: 'activity_parent_not_found',
+  /**
+   * Assigning a task to a colleague without the `crm:team:manage` permission. Assigning a task
+   * to yourself is always allowed; handing your work to someone else is a manager's act.
+   */
+  activityAssignForbidden: 'activity_assign_forbidden',
 } as const;
 
 // ─── workflow automation ────────────────────────────────────────────────────────────

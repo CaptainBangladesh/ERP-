@@ -2,14 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ACTIVITY_PATHS,
+  IDENTITY_PATHS,
   describeAudit,
   describeSentEmail,
   isSystemAudit,
+  listPath,
   type ActivityListResponse,
   type ActivityResponse,
   type ActivityType,
+  type AssignTaskRequest,
   type AuditEvent,
   type CreateActivityRequest,
+  type UserListResponse,
+  type UserSummary,
 } from '@erp/shared';
 import { ApiFailure, api } from '../../../api/client';
 import { useSession } from '../../../session/SessionProvider';
@@ -101,10 +106,17 @@ export function LeadActivityFeed({
   const { session } = useSession();
   const canWrite = hasPermission(session, 'crm:activities:write');
   const canRead = hasPermission(session, 'crm:activities:read');
+  const canReadUsers = hasPermission(session, 'identity:users:read');
+  const canManageTeam = hasPermission(session, 'crm:team:manage');
+  const currentUserId = session?.user.id;
   const queryClient = useQueryClient();
 
   const [filter, setFilter] = useState<FeedFilter>('all');
   const [notes, setNotes] = useState('');
+  // A task can be scheduled and assigned from the composer — the two fields that turn a note
+  // into a piece of work somebody owns and owes by a date, which the team calendar reads.
+  const [dueAt, setDueAt] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
   const notesRef = useRef<HTMLTextAreaElement>(null);
 
   const queryKey = ['crm', 'activities', 'lead', leadId];
@@ -115,10 +127,20 @@ export function LeadActivityFeed({
     enabled: canRead && Boolean(leadId),
   });
 
+  const usersQuery = useQuery({
+    queryKey: ['identity', 'users', 'list'],
+    queryFn: () => api.get<UserListResponse>(listPath(IDENTITY_PATHS.users, { pageSize: 100 })),
+    enabled: canReadUsers,
+  });
+  const users = usersQuery.data?.items ?? [];
+  const userName = new Map(users.map((user) => [user.id, user.name]));
+
   const log = useMutation({
     mutationFn: (body: CreateActivityRequest) => api.post<ActivityResponse>(ACTIVITY_PATHS.activities, body),
     onSuccess: () => {
       setNotes('');
+      setDueAt('');
+      setAssigneeId('');
       void queryClient.invalidateQueries({ queryKey });
     },
   });
@@ -149,7 +171,13 @@ export function LeadActivityFeed({
           onSubmit={(event) => {
             event.preventDefault();
             if (!notes.trim() || log.isPending) return;
-            log.mutate({ type: composerType, notes: notes.trim(), leadId });
+            log.mutate({
+              type: composerType,
+              notes: notes.trim(),
+              leadId,
+              ...(composerType === 'task' && dueAt ? { dueAt } : {}),
+              ...(composerType === 'task' && assigneeId ? { assignedToUserId: assigneeId } : {}),
+            });
           }}
           className="flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xs"
         >
@@ -184,6 +212,45 @@ export function LeadActivityFeed({
             placeholder="Log a note, or record what happened on the call…"
             className="w-full resize-none border-0 bg-transparent p-4 text-xs leading-relaxed text-slate-900 placeholder:text-slate-400 focus:outline-none"
           />
+
+          {/* A task is work owed by a date and owned by a rep, so the composer offers both — the
+              due date the calendar schedules by, and the assignee every team view groups by.
+              Assigning to a colleague needs the team-manage permission; the picker offers only
+              yourself otherwise, so a rep can always self-assign but cannot hand work out. */}
+          {composerType === 'task' && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-2.5">
+              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                Due
+                <input
+                  type="date"
+                  aria-label="Task due date"
+                  value={dueAt}
+                  onChange={(event) => setDueAt(event.target.value)}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 focus:border-teal-400 focus:outline-none"
+                />
+              </label>
+              {canReadUsers && (
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                  Assign to
+                  <select
+                    aria-label="Assign task to"
+                    value={assigneeId}
+                    onChange={(event) => setAssigneeId(event.target.value)}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 focus:border-teal-400 focus:outline-none"
+                  >
+                    <option value="">Me</option>
+                    {users
+                      .filter((user) => canManageTeam || user.id === currentUserId)
+                      .map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
 
           {failure && (
             <p role="alert" className="px-4 pb-2 text-xs font-semibold text-rose-600">
@@ -274,6 +341,10 @@ export function LeadActivityFeed({
             leadName={leadName}
             leadId={leadId}
             canWrite={canWrite}
+            userName={userName}
+            users={users}
+            canManageTeam={canManageTeam}
+            currentUserId={currentUserId}
             isLast={index === shown.length - 1}
             onToggleComplete={() => complete.mutate({ id: activity.id, completed: Boolean(activity.completedAt) })}
           />
@@ -320,6 +391,10 @@ function FeedEntry({
   leadName,
   leadId,
   canWrite,
+  userName,
+  users,
+  canManageTeam,
+  currentUserId,
   isLast,
   onToggleComplete,
 }: {
@@ -327,6 +402,10 @@ function FeedEntry({
   leadName: string;
   leadId: string;
   canWrite: boolean;
+  userName: Map<string, string>;
+  users: UserSummary[];
+  canManageTeam: boolean;
+  currentUserId: string | undefined;
   isLast: boolean;
   onToggleComplete: () => void;
 }) {
@@ -334,6 +413,17 @@ function FeedEntry({
   const [editNotes, setEditNotes] = useState(activity.notes);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
+
+  const reassign = useMutation({
+    mutationFn: (assignedToUserId: string | null) =>
+      api.post<ActivityResponse>(ACTIVITY_PATHS.assignTask(activity.id), {
+        assignedToUserId,
+      } satisfies AssignTaskRequest),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['crm', 'activities', 'lead', leadId] });
+      void queryClient.invalidateQueries({ queryKey: ['crm', 'activities'] });
+    },
+  });
 
   const audit = describeAudit(activity.notes);
   const sentEmail = !audit && activity.type === 'email' ? describeSentEmail(activity.notes) : undefined;
@@ -455,20 +545,112 @@ function FeedEntry({
             </p>
           )}
 
-          {isTask && canWrite && !isEditing && (
-            <label className="flex items-center gap-2 pt-1 text-[11px] font-medium text-slate-700">
-              <input
-                type="checkbox"
-                checked={isCompleted}
-                onChange={onToggleComplete}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+          {isTask && !isEditing && (
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              {canWrite && (
+                <label className="flex items-center gap-2 text-[11px] font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={isCompleted}
+                    onChange={onToggleComplete}
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+                  />
+                  {isCompleted ? 'Completed' : 'Mark done'}
+                </label>
+              )}
+              <TaskAssignee
+                activity={activity}
+                userName={userName}
+                users={users}
+                canWrite={canWrite}
+                canManageTeam={canManageTeam}
+                currentUserId={currentUserId}
+                busy={reassign.isPending}
+                onReassign={(id) => reassign.mutate(id)}
               />
-              {isCompleted ? 'Completed' : 'Mark done'}
-            </label>
+            </div>
           )}
         </div>
       </div>
     </li>
+  );
+}
+
+/**
+ * Who owns a task, and the way to change it — modelled on the backend's own gate. A manager gets
+ * a full picker (anyone, or nobody); a rep gets the two moves that are always theirs: take a task
+ * onto themselves, and release one that is already theirs. A rep is never offered a control that
+ * would hand a colleague's work around, because the endpoint would refuse it.
+ */
+function TaskAssignee({
+  activity,
+  userName,
+  users,
+  canWrite,
+  canManageTeam,
+  currentUserId,
+  busy,
+  onReassign,
+}: {
+  activity: ActivityResponse;
+  userName: Map<string, string>;
+  users: UserSummary[];
+  canWrite: boolean;
+  canManageTeam: boolean;
+  currentUserId: string | undefined;
+  busy: boolean;
+  onReassign: (assignedToUserId: string | null) => void;
+}) {
+  const assignedId = activity.assignedToUserId;
+  const assignedToMe = Boolean(currentUserId) && assignedId === currentUserId;
+  const label = assignedId ? (assignedToMe ? 'You' : userName.get(assignedId) ?? 'A teammate') : 'Unassigned';
+
+  if (canWrite && canManageTeam) {
+    return (
+      <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+        <span className="text-slate-400">Owner</span>
+        <select
+          aria-label="Reassign task"
+          value={assignedId ?? ''}
+          disabled={busy}
+          onChange={(event) => onReassign(event.target.value || null)}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-800 focus:border-teal-400 focus:outline-none disabled:opacity-50"
+        >
+          <option value="">Unassigned</option>
+          {users.map((user) => (
+            <option key={user.id} value={user.id}>
+              {user.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">{label}</span>
+      {canWrite && !assignedToMe && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onReassign(currentUserId ?? null)}
+          className="rounded-md border border-slate-200 px-2 py-0.5 font-bold text-teal-700 hover:bg-teal-50 disabled:opacity-50"
+        >
+          Take it
+        </button>
+      )}
+      {canWrite && assignedToMe && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onReassign(null)}
+          className="rounded-md border border-slate-200 px-2 py-0.5 font-bold text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+        >
+          Release
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -505,6 +687,9 @@ function EntryHeadline({
   }
   if (audit?.kind === 'lead-assigned') {
     return <span className="text-xs font-bold text-slate-900">Lead assigned</span>;
+  }
+  if (audit?.kind === 'task-assigned') {
+    return <span className="text-xs font-bold text-slate-900">Task reassigned</span>;
   }
   if (sentEmail) {
     return <span className="text-xs font-bold text-slate-900">Sent “{sentEmail.subject}”</span>;

@@ -14,7 +14,36 @@ import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { PartyDirectory } from '../parties';
-import { ACTIVITY_LIST, type CreateActivityBody, type UpdateActivityBody } from './schemas';
+import { SYSTEM_ACTOR_ID, SYSTEM_ACTOR_NAME, auditNotes } from './audit-events';
+import {
+  ACTIVITY_LIST,
+  type AssignTaskBody,
+  type CreateActivityBody,
+  type UpdateActivityBody,
+} from './schemas';
+
+/**
+ * Who is acting, with what they are allowed to do. `permissions` is carried so the service can
+ * answer the one question a `@RequirePermission` decorator cannot: assigning a task to *myself*
+ * is every rep's right, but handing it to a colleague is a manager's — a distinction about the
+ * request's data, not the endpoint, so it lives here rather than on the route.
+ */
+export interface ActivityActor {
+  userId: string;
+  name: string;
+  /**
+   * What the caller may do, for the cross-user assignment gate. Optional so the system paths that
+   * log activities — a campaign send, an outreach email, a workflow `create_task` — need not
+   * synthesise a permission set; each of them only ever assigns a task to the actor itself (or
+   * logs a non-task, which has no assignee at all), so absent is read as no manage rights and the
+   * gate stays closed. A real user request always carries the session's permissions.
+   */
+  permissions?: 'all' | readonly string[];
+}
+
+function canManageTeam(actor: ActivityActor): boolean {
+  return actor.permissions === 'all' || (actor.permissions?.includes('crm:team:manage') ?? false);
+}
 
 @Injectable()
 export class ActivitiesService {
@@ -24,7 +53,7 @@ export class ActivitiesService {
   ) {}
 
   async logActivity(
-    actor: { userId: string; name: string },
+    actor: ActivityActor,
     input: Valid<typeof CreateActivityBody>,
   ): Promise<ActivityResponse> {
     if (input.leadId) {
@@ -38,12 +67,23 @@ export class ActivitiesService {
       if (!party) throw activityParentNotFound();
     }
 
+    // Only a task carries an owner; a call or note records what happened rather than work owed.
+    // A task defaults to its creator, so nobody logs a task into the void — and assigning it to
+    // a *colleague* at creation is the same manager's act reassignment is, gated the same way.
+    let assignedToUserId: string | null = null;
+    if (input.type === 'task') {
+      const requested = input.assignedToUserId ?? actor.userId;
+      if (requested !== actor.userId && !canManageTeam(actor)) throw activityAssignForbidden();
+      assignedToUserId = requested;
+    }
+
     const activity = await this.prisma.activity.create({
       data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
         type: input.type,
         notes: input.notes,
         occurredAt: input.occurredAt ? new Date(input.occurredAt) : new Date(),
         dueAt: input.type === 'task' && input.dueAt ? new Date(input.dueAt) : null,
+        assignedToUserId,
         createdByUserId: actor.userId,
         createdByName: actor.name,
         leadId: input.leadId ?? null,
@@ -53,6 +93,59 @@ export class ActivitiesService {
     });
 
     return describe(activity);
+  }
+
+  /**
+   * Reassign a task, or take it back, or set it down. The one write path for `assignedToUserId`
+   * after creation.
+   *
+   * The gate is about *who* the task ends up with, not the endpoint: taking a task onto yourself
+   * (or clearing your own) is every rep's right, but handing your work to a colleague — or moving
+   * a colleague's task at all — is a manager's, so it needs `crm:team:manage`. A change of owner
+   * is recorded on the parent's timeline the same way a lead reassignment is, so the history reads
+   * as intent rather than a silent column edit.
+   */
+  async assignTask(
+    id: string,
+    input: Valid<typeof AssignTaskBody>,
+    actor: ActivityActor,
+  ): Promise<ActivityResponse> {
+    const activity = await this.prisma.activity.findFirst({ where: { id } });
+    if (!activity) throw activityNotFound();
+    if (activity.type !== 'task') throw activityNotTask();
+
+    const next = input.assignedToUserId ?? null;
+
+    // Self-service is: putting it on yourself, or clearing/leaving a task that is already yours
+    // (or nobody's). Anything touching a colleague's ownership is a manager's act.
+    const selfOnly =
+      next === null
+        ? activity.assignedToUserId === actor.userId || activity.assignedToUserId === null
+        : next === actor.userId;
+    if (!selfOnly && !canManageTeam(actor)) throw activityAssignForbidden();
+
+    if (next === activity.assignedToUserId) return describe(activity);
+
+    const updated = await this.prisma.activity.update({
+      where: { id },
+      data: { assignedToUserId: next },
+    });
+
+    // Audit on the same parent the task hangs off, so the reassignment shows in that record's
+    // timeline. A task without a parent (there is always exactly one) has nowhere to note it.
+    await this.prisma.activity.create({
+      data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
+        type: 'note',
+        notes: auditNotes.taskAssigned(),
+        createdByUserId: actor.userId || SYSTEM_ACTOR_ID,
+        createdByName: actor.name || SYSTEM_ACTOR_NAME,
+        leadId: updated.leadId,
+        dealId: updated.dealId,
+        partyId: updated.partyId,
+      }),
+    });
+
+    return describe(updated);
   }
 
   /**
@@ -243,6 +336,7 @@ function describe(row: {
   completedAt: Date | null;
   createdByUserId: string;
   createdByName: string;
+  assignedToUserId: string | null;
   leadId: string | null;
   dealId: string | null;
   partyId: string | null;
@@ -257,6 +351,7 @@ function describe(row: {
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
     createdByUserId: row.createdByUserId,
     createdByName: row.createdByName,
+    assignedToUserId: row.assignedToUserId,
     leadId: row.leadId,
     dealId: row.dealId,
     partyId: row.partyId,
@@ -285,5 +380,13 @@ function activityNotTask(): ApiException {
     ACTIVITY_ERROR_CODES.activityNotTask,
     'This activity is not a task.',
     HttpStatus.CONFLICT,
+  );
+}
+
+function activityAssignForbidden(): ApiException {
+  return new ApiException(
+    ACTIVITY_ERROR_CODES.activityAssignForbidden,
+    'You can assign a task to yourself, but assigning it to a colleague needs the team-manage permission.',
+    HttpStatus.FORBIDDEN,
   );
 }

@@ -28,6 +28,7 @@ describe('ActivityTimeline', () => {
       completedAt: null,
       createdByUserId: 'user-1',
       createdByName: 'Ada Okafor',
+      assignedToUserId: type === 'task' ? 'user-1' : null,
       leadId: 'lead-1',
       dealId: null,
       partyId: null,

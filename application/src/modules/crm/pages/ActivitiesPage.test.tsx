@@ -23,6 +23,7 @@ describe('ActivitiesPage', () => {
       completedAt: null,
       createdByUserId: 'u1',
       createdByName: 'Ada Okafor',
+      assignedToUserId: null,
       leadId: 'lead-1',
       dealId: null,
       partyId: null,

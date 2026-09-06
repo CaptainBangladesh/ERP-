@@ -204,6 +204,9 @@ export class WorkflowRulesService {
         notes,
         occurredAt: undefined,
         dueAt: dueAtDate as any,
+        // Left to default to the actor — the automation assigns work to whoever tripped the rule,
+        // not to a colleague, so the cross-user gate never applies here.
+        assignedToUserId: undefined,
         leadId: event.leadId ?? undefined,
         dealId: event.dealId ?? undefined,
         partyId: undefined,

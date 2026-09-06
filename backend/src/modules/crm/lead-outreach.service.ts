@@ -100,6 +100,7 @@ export class LeadOutreachService {
       notes: `Email sent: ${resolvedSubject}\n\n${resolvedText.substring(0, 200)}`,
       occurredAt: new Date(),
       dueAt: undefined,
+      assignedToUserId: undefined,
     });
 
     await this.prisma.leadEmailSend.create({

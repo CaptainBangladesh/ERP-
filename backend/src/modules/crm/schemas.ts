@@ -406,8 +406,12 @@ export const ACTIVITY_LIST: ListSpec = {
   defaultSort: `-${ACTIVITY_FIELDS.occurredAt}`,
   fields: {
     [ACTIVITY_FIELDS.occurredAt]: { type: 'date', sortable: true, filterable: true },
+    [ACTIVITY_FIELDS.dueAt]: { type: 'date', sortable: true, filterable: true },
     [ACTIVITY_FIELDS.type]: { type: 'text', filterable: true },
     [ACTIVITY_FIELDS.createdByUserId]: { type: 'text', filterable: true },
+    // So a team calendar or a rep's planner can ask for "this person's tasks" server-side
+    // instead of pulling the company's whole feed and filtering it in the browser.
+    [ACTIVITY_FIELDS.assignedToUserId]: { type: 'text', filterable: true },
     [ACTIVITY_FIELDS.createdAt]: { type: 'date', sortable: true, filterable: true },
   },
 };
@@ -589,6 +593,7 @@ export const CreateActivityBody = validator({
   notes: text(ACTIVITY_NOTES),
   occurredAt: optional(ACTIVITY_OCCURRED_AT),
   dueAt: optional(ACTIVITY_DUE_AT),
+  assignedToUserId: optional(ASSIGNEE),
   leadId: optional(identifier({ missing: 'Choose a lead.', invalid: 'That is not a lead.' })),
   dealId: optional(identifier({ missing: 'Choose a deal.', invalid: 'That is not a deal.' })),
   partyId: optional(PARTY_ID),
@@ -604,6 +609,16 @@ export const UpdateActivityBody = validator({
   notes: optional(text(ACTIVITY_NOTES)),
   occurredAt: optional(ACTIVITY_OCCURRED_AT),
   dueAt: optional(clearable(ACTIVITY_DUE_AT)),
+});
+
+/**
+ * Reassign a task. `assignedToUserId` is `clearable`, not `optional`: sending `null` is a real
+ * request — it takes the task off whoever holds it — so absent (leave it alone) and null (unassign)
+ * have to be told apart, which `clearable` is exactly for. The manager-versus-rep gate is not here;
+ * it needs the caller's identity, so `ActivitiesService.assignTask` applies it.
+ */
+export const AssignTaskBody = validator({
+  assignedToUserId: clearable(ASSIGNEE),
 });
 
 export const UpdateLeadSubmissionBody = validator({

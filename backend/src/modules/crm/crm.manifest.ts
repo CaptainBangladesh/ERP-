@@ -25,6 +25,7 @@ export const manifest: ModuleManifest = {
     '20260901000000_lead_workspace_artifacts',
     '20260901001000_lead_email_open_activity',
     '20260901002000_lead_submission_mapped_fields',
+    '20260906000000_activity_assignee',
   ],
 
   models: [
@@ -72,6 +73,18 @@ export const manifest: ModuleManifest = {
     'crm:deals:write',
     'crm:activities:read',
     'crm:activities:write',
+    /**
+     * The manager-versus-rep split for Sales Enablement & Planning, expressed as RBAC strings
+     * rather than a new role model — the platform already has Role/RolePermission/UserRole.
+     *
+     * `crm:team:read` gates the team-facing planning surfaces (the scheduling calendar, the
+     * activity heatmap and the who-owns-what coordination view) and their aggregate endpoints:
+     * a rep sees their own slice, a manager granted this sees the whole team. `crm:team:manage`
+     * is the write half — assigning a task to a *colleague* (self-assignment is always allowed),
+     * and reassigning leads and deals across reps to balance load.
+     */
+    'crm:team:read',
+    'crm:team:manage',
     'crm:workflow-rules:read',
     'crm:workflow-rules:write',
     'crm:lead-fields:read',

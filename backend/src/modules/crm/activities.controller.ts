@@ -20,7 +20,7 @@ import { CurrentSession, type RequestSession } from '../../platform/auth';
 import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { ActivitiesService } from './activities.service';
-import { CreateActivityBody, SnoozeTaskBody, UpdateActivityBody } from './schemas';
+import { AssignTaskBody, CreateActivityBody, SnoozeTaskBody, UpdateActivityBody } from './schemas';
 
 @Controller(CRM_ROUTE)
 export class ActivitiesController {
@@ -33,7 +33,7 @@ export class ActivitiesController {
     @Body(validated(CreateActivityBody)) body: Valid<typeof CreateActivityBody>,
   ): Promise<ActivityResponse> {
     return this.activitiesService.logActivity(
-      { userId: session.user.id, name: session.user.name },
+      { userId: session.user.id, name: session.user.name, permissions: session.permissions },
       body,
     );
   }
@@ -106,5 +106,25 @@ export class ActivitiesController {
   @RequirePermission('crm:activities:write')
   async reopenTask(@Param('id') id: string): Promise<ActivityResponse> {
     return this.activitiesService.reopenTask(id);
+  }
+
+  /**
+   * Reassign a task. Guarded by `crm:activities:write` — the same write anyone who logs a task
+   * holds — because self-assignment must stay open to every rep; the further check that assigning
+   * to a *colleague* needs `crm:team:manage` is about the request's data and lives in the service.
+   */
+  @Post('activities/:id/assign')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('crm:activities:write')
+  async assignTask(
+    @CurrentSession() session: RequestSession,
+    @Param('id') id: string,
+    @Body(validated(AssignTaskBody)) body: Valid<typeof AssignTaskBody>,
+  ): Promise<ActivityResponse> {
+    return this.activitiesService.assignTask(id, body, {
+      userId: session.user.id,
+      name: session.user.name,
+      permissions: session.permissions,
+    });
   }
 }

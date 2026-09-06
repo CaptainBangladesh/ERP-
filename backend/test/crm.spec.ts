@@ -1,4 +1,5 @@
 import {
+  ACTIVITY_ERROR_CODES,
   ACTIVITY_PATHS,
   AUTH_PATHS,
   LEAD_ERROR_CODES,
@@ -11,6 +12,7 @@ import {
   type ActivityFeedResponse,
   type ActivityListResponse,
   type ActivityResponse,
+  type AssignTaskRequest,
   type AuthenticatedSession,
   type CreateActivityRequest,
   type CreateLeadRequest,
@@ -28,6 +30,7 @@ import {
   type WorkflowRuleListResponse,
   type WorkflowRuleResponse,
 } from '@erp/shared';
+import { createFactories, type Factories } from './harness/factories';
 import { createTestApp, resetDatabase, type TestApp } from './harness/test-app';
 
 /**
@@ -41,6 +44,7 @@ import { createTestApp, resetDatabase, type TestApp } from './harness/test-app';
  */
 describe('crm', () => {
   let app: TestApp;
+  let factories: Factories;
 
   type SupertestRequest = ReturnType<TestApp['http']['get']>;
 
@@ -51,6 +55,7 @@ describe('crm', () => {
 
   beforeAll(async () => {
     app = await createTestApp();
+    factories = createFactories(app.prisma);
   });
 
   afterAll(async () => {
@@ -644,6 +649,122 @@ describe('crm', () => {
       await tenant
         .as(app.http.post(ACTIVITY_PATHS.snoozeTask((note.body as ActivityResponse).id)))
         .send({ days: 1 })
+        .expect(409);
+    });
+  });
+
+  /**
+   * Task assignment — the keystone the whole Sales Enablement & Planning layer rests on. A dated
+   * task gains an owner distinct from its creator, so a manager can hand work out and every team
+   * view can group by rep. Self-assignment is every rep's right; handing work to a colleague is a
+   * manager's, gated by `crm:team:manage`.
+   */
+  describe('assigning a task', () => {
+    async function addTask(tenant: Tenant, leadId: string, body: Partial<CreateActivityRequest> = {}) {
+      const res = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'task', notes: 'Prepare the quote', leadId, ...body } satisfies CreateActivityRequest)
+        .expect(201);
+      return res.body as ActivityResponse;
+    }
+
+    it('defaults a task to its creator, and leaves a plain note unassigned', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+
+      const task = await addTask(tenant, lead.id);
+      expect(task.assignedToUserId).toBe(tenant.session.user.id);
+
+      const note = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'note', notes: 'No owner here', leadId: lead.id } satisfies CreateActivityRequest)
+        .expect(201);
+      expect((note.body as ActivityResponse).assignedToUserId).toBeNull();
+    });
+
+    it('lets a manager assign to a colleague, unassign, and audits the change on the timeline', async () => {
+      const tenant = await signUp();
+      const colleague = await factories.addColleague({
+        ownerUserId: tenant.session.user.id,
+        name: 'Bo Rivera',
+        email: 'bo@northwind.test',
+      });
+      const lead = await addLead(tenant);
+      const task = await addTask(tenant, lead.id);
+
+      // The owner holds every permission, so may hand the task to Bo.
+      const reassigned = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.assignTask(task.id)))
+        .send({ assignedToUserId: colleague.id } satisfies AssignTaskRequest)
+        .expect(200);
+      expect((reassigned.body as ActivityResponse).assignedToUserId).toBe(colleague.id);
+
+      // The reassignment is recorded as an audit note on the lead's own timeline.
+      const feed = await tenant.as(app.http.get(ACTIVITY_PATHS.leadActivities(lead.id))).expect(200);
+      const notes = (feed.body as ActivityListResponse).items.map((item) => item.notes);
+      expect(notes.some((n) => n.startsWith('🎯'))).toBe(true);
+
+      // Sending null takes it off everyone.
+      const cleared = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.assignTask(task.id)))
+        .send({ assignedToUserId: null } satisfies AssignTaskRequest)
+        .expect(200);
+      expect((cleared.body as ActivityResponse).assignedToUserId).toBeNull();
+    });
+
+    it('lets a rep take a task onto themselves but not hand it to a colleague', async () => {
+      const owner = await signUp();
+      // The rep who signs in — can work activities but is not a team manager.
+      await factories.addColleague({
+        ownerUserId: owner.session.user.id,
+        name: 'Cai Nguyen',
+        email: 'cai@northwind.test',
+        permissions: ['crm:leads:read', 'crm:leads:write', 'crm:activities:read', 'crm:activities:write'],
+      });
+      // A *third* person, the one the rep is not allowed to hand work to.
+      const teammate = await factories.addColleague({
+        ownerUserId: owner.session.user.id,
+        name: 'Dee Osei',
+        email: 'dee@northwind.test',
+      });
+      const rep: Tenant = await (async () => {
+        const res = await app.http
+          .post(AUTH_PATHS.signIn)
+          .send({ email: 'cai@northwind.test', password: 'correct-horse-battery' })
+          .expect(200);
+        const session = res.body as AuthenticatedSession;
+        return { session, as: (request) => request.set('Authorization', `Bearer ${session.token}`) };
+      })();
+
+      const lead = await addLead(owner);
+      const task = await addTask(owner, lead.id);
+
+      // The rep may take a task owned by someone else onto themselves.
+      const taken = await rep
+        .as(app.http.post(ACTIVITY_PATHS.assignTask(task.id)))
+        .send({ assignedToUserId: rep.session.user.id } satisfies AssignTaskRequest)
+        .expect(200);
+      expect((taken.body as ActivityResponse).assignedToUserId).toBe(rep.session.user.id);
+
+      // But may not hand it to a colleague without the team-manage permission.
+      const refused = await rep
+        .as(app.http.post(ACTIVITY_PATHS.assignTask(task.id)))
+        .send({ assignedToUserId: teammate.id } satisfies AssignTaskRequest)
+        .expect(403);
+      expect(refused.body.code).toBe(ACTIVITY_ERROR_CODES.activityAssignForbidden);
+    });
+
+    it('refuses to assign something that is not a task', async () => {
+      const tenant = await signUp();
+      const lead = await addLead(tenant);
+      const note = await tenant
+        .as(app.http.post(ACTIVITY_PATHS.activities))
+        .send({ type: 'note', notes: 'Not a task', leadId: lead.id } satisfies CreateActivityRequest)
+        .expect(201);
+
+      await tenant
+        .as(app.http.post(ACTIVITY_PATHS.assignTask((note.body as ActivityResponse).id)))
+        .send({ assignedToUserId: tenant.session.user.id } satisfies AssignTaskRequest)
         .expect(409);
     });
   });
