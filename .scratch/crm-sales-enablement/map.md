@@ -1,0 +1,97 @@
+# Map — CRM: Sales Enablement & Planning
+
+Label: wayfinder:map
+
+## Destination
+
+A working **Sales Enablement & Planning** layer inside the existing `crm` module — built,
+not merely decided (execution-included). It sits *beside* the sales-cycle mechanics that
+already exist (leads, deals, activity timeline, workflow automation, dashboards) and helps
+the team decide and prepare *how* to sell, rather than recording what happened. Reaching the
+end of this map means a salesperson and a sales manager can, in the running app:
+
+- see a **team scheduling calendar** of upcoming work across reps (built on `Activity.dueAt`),
+- read a **backward-looking activity heatmap** (who's been active, quiet, peak times),
+- use a **who-owns-what coordination view** to balance and reassign load across reps,
+- plan approach in **planner/notes surfaces** — per-lead approach plan, a rep's personal
+  planner, and a shared team plan,
+- pull up **company scripts & playbooks** (call/objection scripts, step sequences) surfaced
+  **in-context on the lead**, with lead data merged in, and
+- get **guided next-best-action** — the right step/script proposed for a lead's current state.
+
+## Notes
+
+**This map carries execution, not just decisions** — overriding wayfinder's plan-only default,
+the same override the `crm-sales`, `reporting-analytics`, and `expenses-accounting` maps use.
+Each ticket ends in working code, not only a documented decision.
+
+Modular monolith ERP — see `README.md`, `docs/modules.md`, `docs/tenancy.md`. This work extends
+the **existing** `crm` module (Core tier, `dependsOn: ['parties']`); it does **not** create a new
+module. Build on what's there: `Activity` (`type`, `dueAt`, `completedAt`, `createdByUserId`),
+`LeadAssignee` (lead ownership, join table + cached primary — see `[[lead-multiple-assignees]]`),
+email templates with merge-tags (`template-tag-resolver.ts`) as the precedent for
+lead-data-merged content, and `DashboardService` aggregate Prisma queries as the precedent for
+the heatmap's rollups.
+
+**Settled during charting (do not re-ticket):**
+
+- **Tasks get an assignee.** A dated `Activity` gains an owner (keep the creator too), so a
+  manager can assign work and every team view can group by rep. This is the keystone — ticket
+  01 — that the calendar, heatmap, and coordination views all rest on.
+- **Manager vs rep = RBAC permission strings, not a new role model.** The platform already has
+  `Role`/`RolePermission`/`UserRole` and permission-gated nav (`identity.manifest.ts`,
+  `docs/modules.md`). Team-facing views (heatmap, coordination) declare new `crm:*` permission
+  strings and gate their nav/endpoints the existing way. No role system to build.
+
+**Prior art to check before assuming greenfield:** the `crm-sales` map's live-communication-sync
+research found **this platform has no real background scheduler** (Expenses ticket 06 reached the
+same conclusion and used a lazy/on-request pattern instead). Any playbook step-timing or task
+**reminder/notification** that wants time-based firing hits that gap — check
+`.scratch/crm-sales/map.md` (Decisions-so-far, "Live communication sync") and
+`.scratch/expenses-accounting/issues/06-recurring-scheduler.md` before designing it, and flag
+against ADR 0009 rather than quietly building a scheduler.
+
+Tailwind/shared-UI gotcha: new shared components need the `@source` line — see
+`[[erp-shared-ui-tailwind]]`. Prisma money/decimal: `toFixed()`, never `toString()` — see
+`[[erp-prisma-decimal-tofixed]]` (relevant only if any planning surface shows deal value).
+
+**Four tickets, two parallel tracks** (deliberately coarser than session-sized — the driver
+prefers fewer, larger units and breaks sub-steps out at build time): 01 task assignee (shared
+foundation), 02 planning workspace (calendar + heatmap + coordination + nav section), 03 scripts +
+playbooks + guided selling, 04 planner & notes. Frontier: **01 and 03** (03 is independent, runs in
+parallel with the 01→02→04 track).
+
+Use `/grilling` and `/domain-modeling` throughout; `/prototype` when a UI shape needs a concrete
+artifact to react to (esp. the planning-workspace nav and the planner surfaces); the `dataviz`
+skill for the heatmap palette. No research tickets — the one external unknown (email/scheduler) is
+already resolved above.
+
+## Decisions so far
+
+<!-- one line per closed ticket, appended on resolution -->
+
+(none yet — map just charted)
+
+## Not yet specified
+
+- **Exact `crm:*` permission strings for team views** — which strings gate the calendar, heatmap,
+  and coordination views, and how they map to a "manager" role. Settled *inside* the Planning
+  workspace ticket (it establishes the nav section and the team permission); listed here so the
+  rest of the map aligns to whatever string it picks.
+- **Playbook step-sequencing & timing depth** — auto-advancing a rep through playbook steps, or
+  time-gated steps ("day 3: send follow-up"). Hits the no-scheduler gap (see Notes). Ticket 02
+  builds playbooks as *content* (ordered steps + scripts); proactive/timed sequencing is deferred
+  until real usage shows it's needed and the scheduler question is faced.
+- **Task/assignment reminders & notifications** — telling a rep "you've been assigned a task" or
+  "this is due today". Needs a check of what in-app notification surface (if any) exists in the
+  app today, then a decision constrained by the no-scheduler finding. Not sharp enough to ticket.
+
+## Out of scope
+
+- **Qualification framework / lead scoring** (BANT/MEDDIC checklists, fit/interest score) — raised
+  while scoping methodology and deliberately set aside; the "how we sell" here lives in playbooks
+  + guided next-best-action, not a scoring model. Already tracked as fog on `crm-sales`' map
+  ("Lead scoring"); stays there, not built by this effort.
+- **Standalone searchable scripts library page** — considered for the scripts piece and *not*
+  chosen; the emphasis is in-context-on-the-lead + playbooks. Authoring/organization of scripts
+  is covered by ticket 02, but a big browsable library UI is not a goal of this map.
