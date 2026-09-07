@@ -1,7 +1,7 @@
 # 03 — Scripts, playbooks & guided selling
 
 Type: grilling
-Status: open
+Status: resolved
 
 ## Question
 

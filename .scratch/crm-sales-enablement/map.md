@@ -78,6 +78,18 @@ already resolved above.
   team permission for the whole map), three views over `api/crm/planning/*` aggregates. Heatmap
   metric = authored activity by `occurredAt`/`createdByUserId`, system rows excluded. Calendar and
   coordination reuse ticket-01 reassignment. See `issues/02-planning-workspace.md`.
+- **03 scripts, playbooks & guided selling (resolved).** Four models — `Script` (spoken content,
+  `category` + optional `leadStatus` key, merge-tags via the shared `template-tag-resolver`, no
+  second mechanism), `Playbook` + `PlaybookStep` (ordered content), and `PlaybookEnrollment` (a
+  lead's manual pointer, `@@unique([companyId, leadId])`). Authoring gated by the new
+  `crm:playbooks:write` (manager); reads + guided-selling ride on `crm:leads:read`/`:write` so every
+  rep gets scripts on their leads. `GET /leads/:id/guidance` returns relevant scripts (resolved),
+  playbook position, and one next-best-action (current step, else a status+recency suggestion);
+  `POST /leads/:id/playbook{,/advance}` + `DELETE` are the manual progression (no scheduler,
+  ADR 0009). The one-click "do it" reuses activity creation, assigning the task to the current rep
+  (ticket 01). Surfaces: a **Guidance** tab on the lead workspace, and a lean `/crm/playbooks`
+  authoring page (nav order 57). Deal-stage/tag keying deferred — the shipped surface is the lead
+  workspace, whose relevance dimension is `status`. See `issues/03-scripts-playbooks-guided-selling.md`.
 
 ## Not yet specified
 
