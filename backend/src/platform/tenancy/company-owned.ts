@@ -234,6 +234,16 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
 
   // ─── marketing ──
   Marketing: { kind: 'company-owned' },
+  MarketingBrand: { kind: 'company-owned' },
+  BrandMember: { kind: 'company-owned' },
+  SocialAccount: { kind: 'company-owned' },
+  MarketingJob: { kind: 'company-owned' },
+  ScheduledPost: { kind: 'company-owned' },
+  Autolist: { kind: 'company-owned' },
+  AutolistItem: { kind: 'company-owned' },
+  MarketingCampaign: { kind: 'company-owned' },
+  SmartLink: { kind: 'company-owned' },
+  AdAccountSync: { kind: 'company-owned' },
 };
 
 /**

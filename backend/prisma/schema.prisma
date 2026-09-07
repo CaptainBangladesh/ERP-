@@ -1586,3 +1586,263 @@ model Marketing {
   @@index([companyId, name])
   @@map("marketing")
 }
+
+/// A client workspace or distinct business identity within a company.
+model MarketingBrand {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  name           String
+  slug           String
+  logoUrl        String?  @map("logo_url")
+  brandColors    Json?    @map("brand_colors")
+  timezone       String   @default("UTC")
+  customDomain   String?  @map("custom_domain")
+  storageQuotaMb Int      @default(1000) @map("storage_quota_mb")
+  settings       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  members        BrandMember[]
+  socialAccounts SocialAccount[]
+  scheduledPosts ScheduledPost[]
+  autolists      Autolist[]
+  campaigns      MarketingCampaign[]
+  smartLinks     SmartLink[]
+  adAccountSyncs AdAccountSync[]
+
+  @@unique([companyId, slug])
+  @@index([companyId])
+  @@index([companyId, name])
+  @@map("marketing_brands")
+}
+
+/// Team member assigned to a marketing brand.
+model BrandMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  brandId   String   @map("brand_id") @db.Uuid
+  brand     MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id") @db.Uuid
+  role      String   @default("editor")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([brandId, userId])
+  @@index([companyId])
+  @@index([brandId])
+  @@index([userId])
+  @@map("brand_members")
+}
+
+/// Connected third-party social channel with tokens encrypted at rest via AES-256-GCM.
+model SocialAccount {
+  id                    String    @id @default(uuid()) @db.Uuid
+  companyId             String    @map("company_id") @db.Uuid
+  brandId               String    @map("brand_id") @db.Uuid
+  brand                 MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  platform              String
+  accountName           String    @map("account_name")
+  platformAccountId     String    @map("platform_account_id")
+  encryptedAccessToken  String    @map("encrypted_access_token")
+  encryptedRefreshToken String?   @map("encrypted_refresh_token")
+  tokenExpiresAt        DateTime? @map("token_expires_at")
+  status                String    @default("active")
+  metadata              Json?
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  scheduledPosts        ScheduledPost[]
+
+  @@unique([brandId, platform, platformAccountId])
+  @@index([companyId])
+  @@index([brandId])
+  @@map("social_accounts")
+}
+
+/// Background marketing task queue for scheduling and async execution.
+model MarketingJob {
+  id          String    @id @default(uuid()) @db.Uuid
+  companyId   String    @map("company_id") @db.Uuid
+  type        String
+  payload     Json
+  scheduledAt DateTime  @map("scheduled_at")
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  lastError   String?   @map("last_error")
+  lockedAt    DateTime? @map("locked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([status, scheduledAt])
+  @@map("marketing_jobs")
+}
+
+/// Scheduled or published social media post for one or more connected channels.
+model ScheduledPost {
+  id              String         @id @default(uuid()) @db.Uuid
+  companyId       String         @map("company_id") @db.Uuid
+  brandId         String         @map("brand_id") @db.Uuid
+  brand           MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  socialAccountId String         @map("social_account_id") @db.Uuid
+  socialAccount   SocialAccount  @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  campaignId      String?        @map("campaign_id") @db.Uuid
+  campaign        MarketingCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  autolistItemId  String?        @map("autolist_item_id") @db.Uuid
+  autolistItem    AutolistItem?  @relation(fields: [autolistItemId], references: [id], onDelete: SetNull)
+  content         String
+  mediaUrls       Json?          @map("media_urls")
+  platformConfig  Json?          @map("platform_config")
+  scheduledAt     DateTime       @map("scheduled_at")
+  publishedAt     DateTime?      @map("published_at")
+  status          String         @default("SCHEDULED")
+  failureReason   String?        @map("failure_reason")
+  externalPostId  String?        @map("external_post_id")
+  metrics         Json?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([brandId])
+  @@index([socialAccountId])
+  @@index([status, scheduledAt])
+  @@map("scheduled_posts")
+}
+
+/// Evergreen content bucket that recycles posts on recurring time slot schedules.
+model Autolist {
+  id                     String         @id @default(uuid()) @db.Uuid
+  companyId              String         @map("company_id") @db.Uuid
+  brandId                String         @map("brand_id") @db.Uuid
+  brand                  MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name                   String
+  description            String?
+  repeatMode             String         @default("RECYCLE") @map("repeat_mode")
+  traversalMode          String         @default("FIFO") @map("traversal_mode")
+  activeSlots            Json           @map("active_slots")
+  status                 String         @default("ACTIVE")
+  collisionWindowMinutes Int            @default(90) @map("collision_window_minutes")
+  createdAt              DateTime       @default(now()) @map("created_at")
+  updatedAt              DateTime       @updatedAt @map("updated_at")
+
+  items                  AutolistItem[]
+
+  @@index([companyId])
+  @@index([brandId])
+  @@map("autolists")
+}
+
+/// An individual content template inside an evergreen Autolist.
+model AutolistItem {
+  id              String          @id @default(uuid()) @db.Uuid
+  companyId       String          @map("company_id") @db.Uuid
+  autolistId      String          @map("autolist_id") @db.Uuid
+  autolist        Autolist        @relation(fields: [autolistId], references: [id], onDelete: Cascade)
+  content         String
+  mediaUrls       Json?           @map("media_urls")
+  platformConfig  Json?           @map("platform_config")
+  orderIndex      Int             @default(0) @map("order_index")
+  publishCount    Int             @default(0) @map("publish_count")
+  lastPublishedAt DateTime?       @map("last_published_at")
+  status          String          @default("ACTIVE")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  scheduledPosts  ScheduledPost[]
+
+  @@index([companyId])
+  @@index([autolistId])
+  @@map("autolist_items")
+}
+
+/// A marketing campaign grouping social posts, UTM links, smart links, and ad metrics.
+model MarketingCampaign {
+  id          String    @id @default(uuid()) @db.Uuid
+  companyId   String    @map("company_id") @db.Uuid
+  brandId     String    @map("brand_id") @db.Uuid
+  brand       MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  budget      Float     @default(0)
+  spent       Float     @default(0)
+  startDate   DateTime? @map("start_date")
+  endDate     DateTime? @map("end_date")
+  status      String    @default("ACTIVE")
+  utmSource   String?   @map("utm_source")
+  utmMedium   String?   @map("utm_medium")
+  utmCampaign String?   @map("utm_campaign")
+  utmTerm     String?   @map("utm_term")
+  utmContent  String?   @map("utm_content")
+  metadata    Json?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  scheduledPosts ScheduledPost[]
+  smartLinks     SmartLink[]
+  adSyncs        AdAccountSync[]
+
+  @@index([companyId])
+  @@index([brandId])
+  @@index([status])
+  @@map("marketing_campaigns")
+}
+
+/// A Link-in-Bio mobile-friendly landing page with button links and shoppable grid.
+model SmartLink {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  brandId       String    @map("brand_id") @db.Uuid
+  brand         MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  campaignId    String?   @map("campaign_id") @db.Uuid
+  campaign      MarketingCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  slug          String    @unique
+  title         String
+  bio           String?
+  avatarUrl     String?   @map("avatar_url")
+  theme         Json?
+  buttonLinks   Json      @default("[]") @map("button_links")
+  shoppableGrid Json      @default("[]") @map("shoppable_grid")
+  socialLinks   Json      @default("[]") @map("social_links")
+  viewCount     Int       @default(0) @map("view_count")
+  clickCount    Int       @default(0) @map("click_count")
+  clicks        Json      @default("[]")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([brandId])
+  @@index([slug])
+  @@map("smart_links")
+}
+
+/// Cross-network paid ad performance synchronization (Meta, Google, TikTok).
+model AdAccountSync {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  brandId       String    @map("brand_id") @db.Uuid
+  brand         MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  campaignId    String?   @map("campaign_id") @db.Uuid
+  campaign      MarketingCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  platform      String
+  adAccountId   String?   @map("ad_account_id")
+  adAccountName String?   @map("ad_account_name")
+  spend         Float     @default(0)
+  impressions   Int       @default(0)
+  clicks        Int       @default(0)
+  cpc           Float     @default(0)
+  roas          Float     @default(0)
+  currency      String    @default("USD")
+  syncedAt      DateTime  @default(now()) @map("synced_at")
+  metrics       Json?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([brandId])
+  @@index([platform])
+  @@map("ad_account_syncs")
+}
+
+

@@ -25,11 +25,48 @@ export const manifest: ModuleManifest = {
 
   routes: [MARKETING_ROUTE],
 
-  migrations: ['20260906121344_marketing'],
+  migrations: [
+    '20260906121344_marketing',
+    '20260906130000_marketing_brands_social_accounts',
+    '20260906140000_marketing_jobs_queue',
+    '20260906150000_social_publishing_engine',
+    '20260906160000_campaigns_and_attribution_engine',
+  ],
 
-  models: ['Marketing'],
+  models: [
+    'Marketing',
+    'MarketingBrand',
+    'BrandMember',
+    'SocialAccount',
+    'MarketingJob',
+    'ScheduledPost',
+    'Autolist',
+    'AutolistItem',
+    'MarketingCampaign',
+    'SmartLink',
+    'AdAccountSync',
+  ],
 
-  permissions: ['marketing:marketing:read', 'marketing:marketing:write'],
+  permissions: [
+    'marketing:marketing:read',
+    'marketing:marketing:write',
+    'marketing:brands:read',
+    'marketing:brands:write',
+    'marketing:social-accounts:read',
+    'marketing:social-accounts:write',
+    'marketing:jobs:read',
+    'marketing:jobs:write',
+    'marketing:posts:read',
+    'marketing:posts:write',
+    'marketing:autolists:read',
+    'marketing:autolists:write',
+    'marketing:campaigns:read',
+    'marketing:campaigns:write',
+    'marketing:smart-links:read',
+    'marketing:smart-links:write',
+    'marketing:ad-sync:read',
+    'marketing:ad-sync:write',
+  ],
 
   navigation: [
     {

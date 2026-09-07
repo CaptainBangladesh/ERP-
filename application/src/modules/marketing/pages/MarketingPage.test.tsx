@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { MARKETING_PATHS, type MarketingListResponse, type MarketingSummary } from '@erp/shared';
@@ -37,6 +37,14 @@ describe('MarketingPage', () => {
 
     return { asked };
   }
+
+  beforeEach(() => {
+    server.use(
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({ items: [], page: { number: 1, size: 25, total: 0, pages: 0 } }),
+      ),
+    );
+  });
 
   it('shows what is there', async () => {
     listing(() => page([row('First'), row('Second', { status: 'inactive' })]));
@@ -115,4 +123,400 @@ describe('MarketingPage', () => {
     expect(name).toHaveAttribute('aria-invalid', 'true');
     expect(name).toHaveAccessibleDescription(/enter a name/i);
   });
+
+  it('renders Brand & OAuth Vault tab and shows active brand and social channels', async () => {
+    const mockBrand = {
+      id: 'brand-1',
+      name: 'Nike Global',
+      slug: 'nike-global',
+      logoUrl: null,
+      brandColors: { primary: '#ef4444' },
+      timezone: 'UTC',
+      customDomain: null,
+      storageQuotaMb: 1000,
+      socialAccountsCount: 2,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const mockAccounts = [
+      {
+        id: 'acc-1',
+        brandId: 'brand-1',
+        platform: 'instagram' as const,
+        accountName: '@nikerunning',
+        platformAccountId: 'ig_123',
+        maskedAccessToken: '••••••••1234',
+        hasRefreshToken: true,
+        tokenExpiresAt: new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString(), // 3 days (expiring soon)
+        isTokenExpired: false,
+        daysUntilExpiration: 3,
+        status: 'expiring' as const,
+        metadata: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    server.use(
+      http.get(MARKETING_PATHS.marketings, () => HttpResponse.json(page([]))),
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [mockBrand],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.brandSocialAccounts('brand-1'), () =>
+        HttpResponse.json({
+          items: mockAccounts,
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.expiringAccounts('brand-1'), () =>
+        HttpResponse.json({
+          thresholdDays: 7,
+          accounts: mockAccounts,
+        }),
+      ),
+    );
+
+    renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Header and Brand Switcher
+    expect(await screen.findByText('Multi-Network Suite')).toBeInTheDocument();
+    expect((await screen.findAllByText('Nike Global')).length).toBeGreaterThanOrEqual(1);
+
+    // 7-day expiration alert banner
+    expect(await screen.findByText(/1 Connected Account Expiring Soon/i)).toBeInTheDocument();
+
+    // Vault cards
+    expect(await screen.findByText('Encrypted OAuth Credential Vault')).toBeInTheDocument();
+    expect(screen.getByText('@nikerunning')).toBeInTheDocument();
+    expect(screen.getByText('••••••••1234')).toBeInTheDocument();
+    expect(screen.getByText(/3 days remaining/i)).toBeInTheDocument();
+  });
+
+  it('renders the Job Queue & Tasks tab and displays scheduled jobs', async () => {
+    const mockJobs = [
+      {
+        id: 'job-12345678-abcd',
+        companyId: 'company-1',
+        type: 'publish_social_post',
+        payload: { text: 'Launching Spring Campaign!' },
+        scheduledAt: new Date(Date.now() + 3600000).toISOString(),
+        status: 'PENDING' as const,
+        attempts: 0,
+        maxAttempts: 3,
+        lastError: null,
+        lockedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'job-87654321-efgh',
+        companyId: 'company-1',
+        type: 'sync_ad_metrics',
+        payload: { platform: 'meta' },
+        scheduledAt: new Date().toISOString(),
+        status: 'COMPLETED' as const,
+        attempts: 1,
+        maxAttempts: 3,
+        lastError: null,
+        lockedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    server.use(
+      http.get(MARKETING_PATHS.marketings, () => HttpResponse.json(page([]))),
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [],
+          page: { number: 1, size: 25, total: 0, pages: 0 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.jobs, () =>
+        HttpResponse.json({
+          items: mockJobs,
+          page: { number: 1, size: 25, total: 2, pages: 1 },
+        }),
+      ),
+    );
+
+    const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Click Queue & Tasks tab
+    const queueTab = await screen.findByRole('button', { name: /Queue & Tasks/i });
+    await user.click(queueTab);
+
+    // Queue Monitor view appears
+    expect(await screen.findByText(/Postgres Background Task Queue/i)).toBeInTheDocument();
+    expect(await screen.findByText('Publish Social Post')).toBeInTheDocument();
+    expect(screen.getByText('Sync Ad Metrics')).toBeInTheDocument();
+
+    // Metric counts
+    expect(screen.getByText('Total Tasks')).toBeInTheDocument();
+    expect(screen.getAllByText('Pending').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Completed').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders Publishing & Autolists tab and displays scheduled posts and autolist actions', async () => {
+    const mockBrand = {
+      id: 'brand-1',
+      name: 'Acme Corp',
+      slug: 'acme-corp',
+      logoUrl: null,
+      brandColors: null,
+      timezone: 'UTC',
+      customDomain: null,
+      storageQuotaMb: 1000,
+      socialAccountsCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const mockPosts = [
+      {
+        id: 'post-1',
+        brandId: 'brand-1',
+        socialAccountId: 'acc-1',
+        socialAccount: {
+          id: 'acc-1',
+          platform: 'instagram' as const,
+          accountName: '@acme',
+        },
+        campaignId: null,
+        autolistItemId: null,
+        content: 'Our latest seasonal drop is now live! #drop #summer',
+        mediaUrls: [],
+        platformConfig: null,
+        scheduledAt: new Date(Date.now() + 7200000).toISOString(),
+        publishedAt: null,
+        status: 'SCHEDULED' as const,
+        failureReason: null,
+        externalPostId: null,
+        metrics: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    server.use(
+      http.get(MARKETING_PATHS.marketings, () => HttpResponse.json(page([]))),
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [mockBrand],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.brandSocialAccounts('brand-1'), () =>
+        HttpResponse.json({
+          items: [{ id: 'acc-1', brandId: 'brand-1', platform: 'instagram', accountName: '@acme' }],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.posts, () =>
+        HttpResponse.json({
+          items: mockPosts,
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.autolists, () =>
+        HttpResponse.json({
+          items: [],
+          page: { number: 1, size: 25, total: 0, pages: 0 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.expiringAccounts('brand-1'), () =>
+        HttpResponse.json({ thresholdDays: 7, accounts: [] }),
+      ),
+    );
+
+    const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Click Publishing & Autolists tab
+    const publishingTab = await screen.findByRole('button', { name: /Publishing & Autolists/i });
+    await user.click(publishingTab);
+
+    // Shows scheduled posts
+    expect(await screen.findByText(/Our latest seasonal drop is now live!/i)).toBeInTheDocument();
+    expect(screen.getByText('Schedule Post')).toBeInTheDocument();
+    expect(screen.getByText('Publish Now')).toBeInTheDocument();
+
+    // Toggle to Autolists subtab
+    const autolistsSubTab = screen.getByRole('button', { name: /Evergreen Autolists/i });
+    await user.click(autolistsSubTab);
+
+    expect(await screen.findByText('Create Autolist')).toBeInTheDocument();
+    expect(screen.getByText(/No autolists created yet/i)).toBeInTheDocument();
+  });
+
+  it('renders Calendar & Planner tab with visual calendar and scheduling controls', async () => {
+    const mockBrand = {
+      id: 'brand-1',
+      name: 'Acme Corp',
+      slug: 'acme-corp',
+      logoUrl: null,
+      brandColors: null,
+      timezone: 'UTC',
+      customDomain: null,
+      storageQuotaMb: 1000,
+      socialAccountsCount: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    server.use(
+      http.get(MARKETING_PATHS.marketings, () => HttpResponse.json(page([]))),
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [mockBrand],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.brandSocialAccounts('brand-1'), () =>
+        HttpResponse.json({
+          items: [{ id: 'acc-1', brandId: 'brand-1', platform: 'instagram', accountName: '@acme' }],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.posts, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'post-cal-1',
+              brandId: 'brand-1',
+              socialAccountId: 'acc-1',
+              socialAccount: {
+                id: 'acc-1',
+                platform: 'instagram' as const,
+                accountName: '@acme',
+              },
+              campaignId: null,
+              autolistItemId: null,
+              content: 'Global Brand Announcement #summit',
+              mediaUrls: [],
+              platformConfig: null,
+              scheduledAt: new Date().toISOString(),
+              publishedAt: null,
+              status: 'SCHEDULED' as const,
+              failureReason: null,
+              externalPostId: null,
+              metrics: null,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.expiringAccounts('brand-1'), () =>
+        HttpResponse.json({ thresholdDays: 7, accounts: [] }),
+      ),
+    );
+
+    const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Click Calendar & Planner tab
+    const calendarTab = await screen.findByRole('button', { name: /Calendar & Planner/i });
+    await user.click(calendarTab);
+
+    // Shows Calendar controls
+    expect(await screen.findByText('Today')).toBeInTheDocument();
+    expect(screen.getByText('Instagram Grid')).toBeInTheDocument();
+    expect(screen.getByText('Engagement Heatmap Active:')).toBeInTheDocument();
+    expect(screen.getByText(/Global Brand Announcement/i)).toBeInTheDocument();
+  });
+
+  it('switches to Campaigns & Attribution tab and displays UTM and SmartLink sub-sections', async () => {
+    server.use(
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'brand-1',
+              name: 'Apex Athletics',
+              slug: 'apex-athletics',
+              timezone: 'UTC',
+              storageQuotaMb: 1000,
+              socialAccountsCount: 2,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.campaigns, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'camp-1',
+              brandId: 'brand-1',
+              name: 'Spring Marathon 2026',
+              description: 'Primary Spring push',
+              budget: 4000,
+              spent: 0,
+              startDate: null,
+              endDate: null,
+              status: 'ACTIVE',
+              utmSource: null,
+              utmMedium: null,
+              utmCampaign: null,
+              utmTerm: null,
+              utmContent: null,
+              postsCount: 5,
+              smartLinksCount: 1,
+              adSpend: 1200,
+              adImpressions: 45000,
+              adClicks: 1800,
+              roas: 3.8,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.smartLinks, () =>
+        HttpResponse.json({
+          items: [],
+          page: { number: 1, size: 25, total: 0, pages: 0 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.adSyncs, () =>
+        HttpResponse.json({
+          items: [],
+          page: { number: 1, size: 25, total: 0, pages: 0 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.brandSocialAccounts('brand-1'), () =>
+        HttpResponse.json({
+          items: [],
+          page: { number: 1, size: 25, total: 0, pages: 0 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.expiringAccounts('brand-1'), () =>
+        HttpResponse.json({ thresholdDays: 7, accounts: [] }),
+      ),
+      http.get(MARKETING_PATHS.marketings, () =>
+        HttpResponse.json({ items: [], page: { number: 1, size: 25, total: 0, pages: 0 } }),
+      ),
+    );
+
+    const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Click Campaigns & Attribution tab
+    const campaignsTab = await screen.findByRole('button', { name: /Campaigns & Attribution/i });
+    await user.click(campaignsTab);
+
+    // Verify campaign displays
+    expect(await screen.findByText('Spring Marathon 2026')).toBeInTheDocument();
+    expect(screen.getByText(/Primary Spring push/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /UTM Link Builder/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /SmartLinks/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Paid Ad Sync/i })).toBeInTheDocument();
+  });
 });
+
