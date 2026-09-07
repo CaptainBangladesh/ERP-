@@ -1,15 +1,16 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ApiException } from '../../http/api-exception';
 import { Prisma } from '@prisma/client';
-import type {
-  ConvertConversationToLeadResponse,
-  SocialConversationListResponse,
-  SocialConversationSummary,
-  SocialMessageDirection,
-  SocialMessageListResponse,
-  SocialMessageResponse,
-  SocialMessageStatus,
-  SocialMessageSummary,
+import {
+  MARKETING_ERROR_CODES,
+  type ConvertConversationToLeadResponse,
+  type SocialConversationListResponse,
+  type SocialConversationSummary,
+  type SocialMessageDirection,
+  type SocialMessageListResponse,
+  type SocialMessageResponse,
+  type SocialMessageStatus,
+  type SocialMessageSummary,
 } from '@erp/shared';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
@@ -265,6 +266,62 @@ export class InboxService {
   async sendOutboundReply(
     input: Valid<typeof SendReplyMessageBody>,
   ): Promise<SocialMessageResponse> {
+    // Determine platform from socialAccountId or previous messages in conversation
+    let platform: string | null = null;
+    if (input.socialAccountId && typeof this.prisma.socialAccount?.findUnique === 'function') {
+      const account = await this.prisma.socialAccount.findUnique({
+        where: { id: input.socialAccountId },
+      });
+      if (account) platform = account.platform;
+    }
+
+    const latestInbound =
+      typeof this.prisma.socialMessage?.findFirst === 'function'
+        ? await this.prisma.socialMessage.findFirst({
+            where: {
+              brandId: input.brandId,
+              conversationId: input.conversationId,
+              direction: 'inbound',
+            },
+            orderBy: { createdAt: 'desc' },
+            include: { socialAccount: true },
+          })
+        : null;
+
+    if (!platform && latestInbound?.socialAccount) {
+      platform = latestInbound.socialAccount.platform;
+    }
+
+    const metadata: Record<string, unknown> = {
+      manualReply: true,
+    };
+
+    if (platform === 'instagram' || platform === 'facebook') {
+      if (latestInbound) {
+        const elapsedHours =
+          (Date.now() - latestInbound.createdAt.getTime()) / (1000 * 60 * 60);
+        if (elapsedHours > 24) {
+          if (input.humanAgentTag) {
+            if (elapsedHours > 24 * 7) {
+              throw new ApiException(
+                MARKETING_ERROR_CODES.messagingWindowExpired,
+                'Outbound DM messaging window expired: Meta 7-day human agent window has passed.',
+                HttpStatus.UNPROCESSABLE_ENTITY,
+              );
+            }
+            metadata.humanAgentTag = true;
+            metadata.tag = 'HUMAN_AGENT';
+          } else {
+            throw new ApiException(
+              MARKETING_ERROR_CODES.messagingWindowExpired,
+              'Outbound DM messaging window expired: Meta requires user interaction within 24 hours. Use the HUMAN_AGENT tag for inquiries up to 7 days.',
+              HttpStatus.UNPROCESSABLE_ENTITY,
+            );
+          }
+        }
+      }
+    }
+
     const created = await this.prisma.socialMessage.create({
       data: companyApplied<Prisma.SocialMessageUncheckedCreateInput>({
         brandId: input.brandId,
@@ -276,9 +333,7 @@ export class InboxService {
         content: input.content,
         direction: 'outbound',
         status: 'pending',
-        metadata: {
-          manualReply: true,
-        } as Prisma.InputJsonValue,
+        metadata: metadata as Prisma.InputJsonValue,
       }),
     });
 

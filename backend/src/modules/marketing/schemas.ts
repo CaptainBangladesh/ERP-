@@ -685,6 +685,7 @@ export const SendReplyMessageBody = validator({
   socialAccountId: optional(identifier({ missing: 'Select social account.', invalid: 'Invalid social account ID.' })),
   recipientId: optional(text({ missing: 'Enter recipient ID.', maxLength: 100, tooLong: 'Recipient ID too long.' })),
   senderName: optional(text({ missing: 'Enter sender name.', maxLength: 150, tooLong: 'Sender name too long.' })),
+  humanAgentTag: optional(rule<boolean>('Invalid humanAgentTag.', (v) => typeof v === 'boolean' ? accepted(v) : refused('Must be boolean.'))),
 });
 
 export const UpdateSocialMessageStatusBody = validator({

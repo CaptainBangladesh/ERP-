@@ -17,6 +17,13 @@ Resolved via Research subagent. Fact sheet findings:
   - Uses OAuth 2.0 with PKCE (`tweet.write`, `dm.read`, `dm.write`, `offline.access`).
   - Webhooks (Account Activity API) require Enterprise tier; non-enterprise self-serve/pay-per-use requires polling `GET /2/dm_events`. Write limit: ~100 posts / 15-min window.
 
+## Build Pass Implementation
+- Implemented modern post-Jan 2025 Meta scopes (`instagram_business_content_publish`, `instagram_business_manage_messages`, `pages_messaging`), LinkedIn org/member scopes, and X PKCE scopes in `LiveSocialOAuth`.
+- Implemented publishing rate limit enforcement in `SocialPublisherService` (50 posts / 24h for Meta accounts, 100 posts / 15m for X accounts) throwing HTTP 429 `rate_limit_exceeded`.
+- Implemented Meta DM window enforcement in `InboxService` (24-hour customer window, 7-day extended `HUMAN_AGENT` tag window) throwing HTTP 422 `messaging_window_expired`.
+- Implemented `GET /api/marketing/social-accounts/:id/rate-limits` endpoint providing active quota usage and messaging window metadata in `SocialAccountsController` & `SocialAccountsService`.
+- Added comprehensive unit tests in `backend/test/social-rate-limits.spec.ts` (11/11 passing).
+
 ## Question
 
 What are the exact OAuth 2.0 scopes, app review requirements, webhook expiration rules, and rate limits for Meta (Instagram/Facebook Graph API), LinkedIn REST API, and X API v2 needed for third-party multi-tenant publishing and DM automation?

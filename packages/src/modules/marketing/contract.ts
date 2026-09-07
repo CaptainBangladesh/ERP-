@@ -563,6 +563,8 @@ export const MARKETING_ERROR_CODES = {
   adSyncNotFound: 'ad_sync_not_found',
   invalidUtmUrl: 'invalid_utm_url',
   trackingSiteNotFound: 'tracking_site_not_found',
+  rateLimitExceeded: 'rate_limit_exceeded',
+  messagingWindowExpired: 'messaging_window_expired',
 } as const;
 
 // ─── Campaigns & UTM Tracking ──────────────────────────────────────────────────────
@@ -1015,7 +1017,25 @@ export interface SendSocialMessageRequest {
   socialAccountId?: string;
   recipientId?: string;
   senderName?: string;
+  humanAgentTag?: boolean;
 }
+
+export interface SocialRateLimitStatus {
+  platform: string;
+  publishing: {
+    limit: number;
+    windowSeconds: number;
+    used: number;
+    remaining: number;
+    resetAt: string;
+  };
+  messaging: {
+    maxInboundWindowHours: number;
+    extendedHumanAgentWindowDays: number;
+  };
+}
+
+export type SocialRateLimitStatusResponse = SocialRateLimitStatus;
 
 export interface UpdateSocialMessageStatusRequest {
   status: SocialMessageStatus;
