@@ -36,6 +36,11 @@ import { PublicFormsController } from './public-forms.controller';
 import { NurtureSequencesService } from './nurture-sequences.service';
 import { NurtureSequencesController } from './nurture-sequences.controller';
 import { AdWebhooksController } from './ad-webhooks.controller';
+import { InboxService } from './inbox.service';
+import { DmFlowsService } from './dm-flows.service';
+import { InboxController } from './inbox.controller';
+import { DmFlowsController } from './dm-flows.controller';
+import { SocialInboxWebhooksController } from './social-inbox-webhooks.controller';
 
 /**
  * Marketing.
@@ -60,6 +65,9 @@ import { AdWebhooksController } from './ad-webhooks.controller';
     PublicFormsController,
     NurtureSequencesController,
     AdWebhooksController,
+    InboxController,
+    DmFlowsController,
+    SocialInboxWebhooksController,
   ],
   providers: [
     MarketingService,
@@ -95,6 +103,8 @@ import { AdWebhooksController } from './ad-webhooks.controller';
     CrmBridgeService,
     FormsService,
     NurtureSequencesService,
+    InboxService,
+    DmFlowsService,
   ],
   exports: [
     CryptoService,
@@ -112,6 +122,8 @@ import { AdWebhooksController } from './ad-webhooks.controller';
     CrmBridgeService,
     FormsService,
     NurtureSequencesService,
+    InboxService,
+    DmFlowsService,
   ],
 })
 export class MarketingModule {}

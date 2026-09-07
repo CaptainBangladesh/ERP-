@@ -69,6 +69,16 @@ export const MARKETING_PATHS = {
   nurtureSequences: `/${MARKETING_ROUTE}/nurture-sequences`,
   nurtureSequence: (id: string) => `/${MARKETING_ROUTE}/nurture-sequences/${id}`,
   adWebhooks: (platform: string) => `/${MARKETING_ROUTE}/webhooks/ads/${platform}`,
+  // Unified Social Inbox & DM Automation
+  inboxMessages: `/${MARKETING_ROUTE}/inbox/messages`,
+  inboxConversations: `/${MARKETING_ROUTE}/inbox/conversations`,
+  inboxReply: `/${MARKETING_ROUTE}/inbox/reply`,
+  inboxMessageStatus: (id: string) => `/${MARKETING_ROUTE}/inbox/messages/${id}/status`,
+  inboxConversationStatus: (conversationId: string) => `/${MARKETING_ROUTE}/inbox/conversations/${conversationId}/status`,
+  inboxConvertToLead: `/${MARKETING_ROUTE}/inbox/convert-to-lead`,
+  dmFlows: `/${MARKETING_ROUTE}/dm-flows`,
+  dmFlow: (id: string) => `/${MARKETING_ROUTE}/dm-flows/${id}`,
+  socialInboxWebhooks: (platform: string) => `/${MARKETING_ROUTE}/webhooks/social-inbox/${platform}`,
 } as const;
 
 /**
@@ -941,5 +951,129 @@ export interface AdWebhookResponse {
   isNewLead: boolean;
 }
 
+// ─── Unified Social Inbox & DM Flows (Ticket 08) ──────────────────────────────────
 
+export const SOCIAL_MESSAGE_STATUSES = ['unread', 'pending', 'resolved'] as const;
+export type SocialMessageStatus = (typeof SOCIAL_MESSAGE_STATUSES)[number];
 
+export const SOCIAL_MESSAGE_DIRECTIONS = ['inbound', 'outbound'] as const;
+export type SocialMessageDirection = (typeof SOCIAL_MESSAGE_DIRECTIONS)[number];
+
+export const DM_MATCH_TYPES = ['EXACT', 'CONTAINS'] as const;
+export type DmMatchType = (typeof DM_MATCH_TYPES)[number];
+
+export interface SocialMessageSummary {
+  id: string;
+  brandId: string;
+  socialAccountId: string | null;
+  conversationId: string;
+  senderId: string;
+  senderName: string | null;
+  senderAvatar: string | null;
+  recipientId: string | null;
+  content: string;
+  direction: SocialMessageDirection;
+  status: SocialMessageStatus;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SocialMessageResponse = SocialMessageSummary;
+export type SocialMessageListResponse = ListResponse<SocialMessageSummary>;
+
+export interface SocialConversationSummary {
+  conversationId: string;
+  brandId: string;
+  socialAccountId: string | null;
+  senderId: string;
+  senderName: string | null;
+  senderAvatar: string | null;
+  platform: string;
+  latestMessageContent: string;
+  latestMessageAt: string;
+  unreadCount: number;
+  totalMessages: number;
+  status: SocialMessageStatus;
+  leadId?: string | null;
+}
+
+export type SocialConversationListResponse = ListResponse<SocialConversationSummary>;
+
+export interface SendSocialMessageRequest {
+  brandId: string;
+  conversationId: string;
+  content: string;
+  socialAccountId?: string;
+  recipientId?: string;
+  senderName?: string;
+}
+
+export interface UpdateSocialMessageStatusRequest {
+  status: SocialMessageStatus;
+}
+
+export interface ConvertConversationToLeadRequest {
+  brandId: string;
+  conversationId: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  organisationName?: string;
+}
+
+export interface ConvertConversationToLeadResponse {
+  success: boolean;
+  leadId: string;
+  isNewLead: boolean;
+  conversationId: string;
+  messageCount: number;
+  leadName: string;
+}
+
+export interface DmAutomationFlowSummary {
+  id: string;
+  brandId: string;
+  socialAccountId: string | null;
+  name: string;
+  triggerKeyword: string;
+  matchType: DmMatchType;
+  responseTemplate: string;
+  leadMagnetUrl: string | null;
+  isActive: boolean;
+  triggerCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DmAutomationFlowResponse = DmAutomationFlowSummary;
+export type DmAutomationFlowListResponse = ListResponse<DmAutomationFlowSummary>;
+
+export interface CreateDmAutomationFlowRequest {
+  brandId: string;
+  name: string;
+  triggerKeyword: string;
+  matchType?: DmMatchType;
+  responseTemplate: string;
+  leadMagnetUrl?: string;
+  socialAccountId?: string;
+  isActive?: boolean;
+}
+
+export interface UpdateDmAutomationFlowRequest {
+  name?: string;
+  triggerKeyword?: string;
+  matchType?: DmMatchType;
+  responseTemplate?: string;
+  leadMagnetUrl?: string;
+  socialAccountId?: string;
+  isActive?: boolean;
+}
+
+export interface SocialInboxWebhookResponse {
+  received: boolean;
+  platform: string;
+  messageId?: string;
+  autoReplied?: boolean;
+  flowId?: string;
+}

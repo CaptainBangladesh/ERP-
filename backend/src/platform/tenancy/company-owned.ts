@@ -247,6 +247,8 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   LeadCaptureForm: { kind: 'company-owned' },
   LeadCaptureSubmission: { kind: 'company-owned' },
   NurtureSequence: { kind: 'company-owned' },
+  SocialMessage: { kind: 'company-owned' },
+  DmAutomationFlow: { kind: 'company-owned' },
 };
 
 /**

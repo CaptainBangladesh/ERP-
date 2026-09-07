@@ -605,6 +605,94 @@ describe('MarketingPage', () => {
     expect(screen.getByRole('button', { name: /Ad Webhooks/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Nurture Sequences/i })).toBeInTheDocument();
   });
+
+  it('renders the Social Inbox & DMs tab with conversations and flows', async () => {
+    server.use(
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'brand-1',
+              name: 'Apex Brand',
+              slug: 'apex-brand',
+              timezone: 'UTC',
+              storageQuotaMb: 1000,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.inboxConversations, () =>
+        HttpResponse.json({
+          items: [
+            {
+              conversationId: 'conv-123',
+              brandId: 'brand-1',
+              socialAccountId: null,
+              senderId: 'user-789',
+              senderName: 'Marcus Vance',
+              senderAvatar: null,
+              platform: 'instagram',
+              latestMessageContent: 'Can you send the guide?',
+              latestMessageAt: new Date().toISOString(),
+              unreadCount: 1,
+              totalMessages: 2,
+              status: 'unread',
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.inboxMessages, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'msg-1',
+              brandId: 'brand-1',
+              socialAccountId: null,
+              conversationId: 'conv-123',
+              senderId: 'user-789',
+              senderName: 'Marcus Vance',
+              senderAvatar: null,
+              recipientId: null,
+              content: 'Can you send the guide?',
+              direction: 'inbound',
+              status: 'unread',
+              metadata: null,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.dmFlows, () =>
+        HttpResponse.json({
+          items: [],
+          page: { number: 1, size: 25, total: 0, pages: 0 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.marketings, () =>
+        HttpResponse.json({ items: [], page: { number: 1, size: 25, total: 0, pages: 0 } }),
+      ),
+    );
+
+    const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Click Social Inbox & DMs tab
+    const inboxTab = await screen.findByRole('button', { name: /Social Inbox & DMs/i });
+    await user.click(inboxTab);
+
+    // Verify inbox view rendered
+    expect(await screen.findByText('Unified Social Inbox & DM Automation')).toBeInTheDocument();
+    expect((await screen.findAllByText(/Marcus Vance/i))[0]).toBeInTheDocument();
+    expect(screen.getAllByText('Can you send the guide?')[0]).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Convert to CRM Lead/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Send Reply/i })).toBeInTheDocument();
+  });
 });
+
 
 

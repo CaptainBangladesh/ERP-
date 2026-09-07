@@ -28,6 +28,7 @@ import {
   identifier,
   oneOf,
   optional,
+  passthroughValidator,
   refused,
   rule,
   text,
@@ -623,7 +624,6 @@ export const UpdateNurtureSequenceBody = validator({
 export const AdWebhookBody = validator({
   platform: optional(text({ missing: 'Enter platform.', maxLength: 50, tooLong: 'Platform too long.' })),
   brandId: optional(identifier({ missing: 'Select brand.', invalid: 'Invalid brand ID.' })),
-  companyId: optional(identifier({ missing: 'Select company.', invalid: 'Invalid company ID.' })),
   leadData: optional(jsonObject('lead data')),
   field_data: optional(jsonArray('field data')),
   formId: optional(text({ missing: 'Enter form ID.', maxLength: 100, tooLong: 'Form ID too long.' })),
@@ -663,5 +663,95 @@ export const NURTURE_SEQUENCE_LIST: ListSpec = {
   },
 };
 
+// ─── Unified Social Inbox & DM Flows (Ticket 08) ──────────────────────────────────
 
+export const CreateSocialMessageBody = validator({
+  brandId: identifier({ missing: 'Select a brand.', invalid: 'Invalid brand ID.' }),
+  conversationId: text({ missing: 'Enter conversation ID.', maxLength: 100, tooLong: 'Conversation ID too long.' }),
+  senderId: text({ missing: 'Enter sender ID.', maxLength: 100, tooLong: 'Sender ID too long.' }),
+  senderName: optional(text({ missing: 'Enter sender name.', maxLength: 150, tooLong: 'Sender name too long.' })),
+  senderAvatar: optional(text({ missing: 'Enter avatar URL.', maxLength: 500, tooLong: 'Avatar URL too long.' })),
+  socialAccountId: optional(identifier({ missing: 'Select social account.', invalid: 'Invalid social account ID.' })),
+  content: text({ missing: 'Enter message content.', maxLength: 2000, tooLong: 'Content too long.' }),
+  direction: optional(text({ missing: 'Enter direction.', maxLength: 20, tooLong: 'Direction too long.' })),
+  status: optional(text({ missing: 'Enter status.', maxLength: 20, tooLong: 'Status too long.' })),
+  metadata: optional(jsonObject('metadata')),
+});
 
+export const SendReplyMessageBody = validator({
+  brandId: identifier({ missing: 'Select a brand.', invalid: 'Invalid brand ID.' }),
+  conversationId: text({ missing: 'Enter conversation ID.', maxLength: 100, tooLong: 'Conversation ID too long.' }),
+  content: text({ missing: 'Enter reply content.', maxLength: 2000, tooLong: 'Content too long.' }),
+  socialAccountId: optional(identifier({ missing: 'Select social account.', invalid: 'Invalid social account ID.' })),
+  recipientId: optional(text({ missing: 'Enter recipient ID.', maxLength: 100, tooLong: 'Recipient ID too long.' })),
+  senderName: optional(text({ missing: 'Enter sender name.', maxLength: 150, tooLong: 'Sender name too long.' })),
+});
+
+export const UpdateSocialMessageStatusBody = validator({
+  status: text({ missing: 'Enter status.', maxLength: 20, tooLong: 'Status too long.' }),
+});
+
+export const ConvertConversationToLeadBody = validator({
+  brandId: identifier({ missing: 'Select a brand.', invalid: 'Invalid brand ID.' }),
+  conversationId: text({ missing: 'Enter conversation ID.', maxLength: 100, tooLong: 'Conversation ID too long.' }),
+  name: optional(text({ missing: 'Enter name.', maxLength: 150, tooLong: 'Name too long.' })),
+  email: optional(text({ missing: 'Enter email.', maxLength: 200, tooLong: 'Email too long.' })),
+  phone: optional(text({ missing: 'Enter phone.', maxLength: 50, tooLong: 'Phone too long.' })),
+  organisationName: optional(text({ missing: 'Enter organisation name.', maxLength: 150, tooLong: 'Organisation too long.' })),
+});
+
+export const CreateDmAutomationFlowBody = validator({
+  brandId: identifier({ missing: 'Select a brand.', invalid: 'Invalid brand ID.' }),
+  name: text({ missing: 'Enter flow name.', maxLength: 150, tooLong: 'Flow name too long.' }),
+  triggerKeyword: text({ missing: 'Enter trigger keyword.', maxLength: 100, tooLong: 'Trigger keyword too long.' }),
+  matchType: optional(text({ missing: 'Enter match type.', maxLength: 20, tooLong: 'Match type too long.' })),
+  responseTemplate: text({ missing: 'Enter response template.', maxLength: 2000, tooLong: 'Template too long.' }),
+  leadMagnetUrl: optional(text({ missing: 'Enter lead magnet URL.', maxLength: 500, tooLong: 'URL too long.' })),
+  socialAccountId: optional(identifier({ missing: 'Select social account.', invalid: 'Invalid social account ID.' })),
+  isActive: optional(rule<boolean>('Invalid active status.', (v) => typeof v === 'boolean' ? accepted(v) : refused('Must be boolean.'))),
+});
+
+export const UpdateDmAutomationFlowBody = validator({
+  name: optional(text({ missing: 'Enter flow name.', maxLength: 150, tooLong: 'Flow name too long.' })),
+  triggerKeyword: optional(text({ missing: 'Enter trigger keyword.', maxLength: 100, tooLong: 'Trigger keyword too long.' })),
+  matchType: optional(text({ missing: 'Enter match type.', maxLength: 20, tooLong: 'Match type too long.' })),
+  responseTemplate: optional(text({ missing: 'Enter response template.', maxLength: 2000, tooLong: 'Template too long.' })),
+  leadMagnetUrl: optional(text({ missing: 'Enter lead magnet URL.', maxLength: 500, tooLong: 'URL too long.' })),
+  socialAccountId: optional(identifier({ missing: 'Select social account.', invalid: 'Invalid social account ID.' })),
+  isActive: optional(rule<boolean>('Invalid active status.', (v) => typeof v === 'boolean' ? accepted(v) : refused('Must be boolean.'))),
+});
+
+export const SOCIAL_MESSAGE_LIST: ListSpec = {
+  defaultSort: 'createdAt',
+  fields: {
+    conversationId: { type: 'text', sortable: false, filterable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    socialAccountId: { type: 'text', sortable: false, filterable: true },
+    direction: { type: 'text', sortable: false, filterable: true },
+    status: { type: 'text', sortable: true, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const DM_FLOW_LIST: ListSpec = {
+  defaultSort: 'name',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    triggerKeyword: { type: 'text', sortable: true, filterable: true, searchable: true },
+    isActive: { type: 'boolean', sortable: true, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const SocialInboxWebhookBody = passthroughValidator({
+  senderId: optional(text({ missing: 'Enter sender ID.', maxLength: 200, tooLong: 'Sender ID too long.' })),
+  senderName: optional(text({ missing: 'Enter sender name.', maxLength: 200, tooLong: 'Sender name too long.' })),
+  senderAvatar: optional(text({ missing: 'Enter sender avatar.', maxLength: 500, tooLong: 'Sender avatar too long.' })),
+  recipientId: optional(text({ missing: 'Enter recipient ID.', maxLength: 200, tooLong: 'Recipient ID too long.' })),
+  content: optional(text({ missing: 'Enter content.', maxLength: 5000, tooLong: 'Content too long.' })),
+  text: optional(text({ missing: 'Enter text.', maxLength: 5000, tooLong: 'Text too long.' })),
+  message: optional(text({ missing: 'Enter message.', maxLength: 5000, tooLong: 'Message too long.' })),
+  conversationId: optional(text({ missing: 'Enter conversation ID.', maxLength: 200, tooLong: 'Conversation ID too long.' })),
+  brandId: optional(identifier({ missing: 'Select brand.', invalid: 'Invalid brand ID.' })),
+});

@@ -1611,6 +1611,8 @@ model MarketingBrand {
   adAccountSyncs AdAccountSync[]
   leadForms      LeadCaptureForm[]
   nurtureSequences NurtureSequence[]
+  socialMessages   SocialMessage[]
+  dmAutomationFlows DmAutomationFlow[]
 
   @@unique([companyId, slug])
   @@index([companyId])
@@ -1654,6 +1656,7 @@ model SocialAccount {
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
   scheduledPosts        ScheduledPost[]
+  socialMessages        SocialMessage[]
 
   @@unique([brandId, platform, platformAccountId])
   @@index([companyId])
@@ -1909,4 +1912,53 @@ model NurtureSequence {
   @@map("nurture_sequences")
 }
 
+/// Multi-network inbound and outbound direct message or comment thread item.
+model SocialMessage {
+  id              String         @id @default(uuid()) @db.Uuid
+  companyId       String         @map("company_id") @db.Uuid
+  brandId         String         @map("brand_id") @db.Uuid
+  brand           MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  socialAccountId String?        @map("social_account_id") @db.Uuid
+  socialAccount   SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  conversationId  String         @map("conversation_id")
+  senderId        String         @map("sender_id")
+  senderName      String?        @map("sender_name")
+  senderAvatar    String?        @map("sender_avatar")
+  recipientId     String?        @map("recipient_id")
+  content         String
+  direction       String         @default("inbound")
+  status          String         @default("unread")
+  metadata        Json?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
+  @@index([companyId])
+  @@index([brandId])
+  @@index([conversationId])
+  @@index([socialAccountId])
+  @@index([status])
+  @@map("social_messages")
+}
+
+/// Keyword-triggered DM automation rule (ManyChat-style) that sends automated responses and lead magnet URLs.
+model DmAutomationFlow {
+  id               String         @id @default(uuid()) @db.Uuid
+  companyId        String         @map("company_id") @db.Uuid
+  brandId          String         @map("brand_id") @db.Uuid
+  brand            MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  socialAccountId  String?        @map("social_account_id") @db.Uuid
+  name             String
+  triggerKeyword   String         @map("trigger_keyword")
+  matchType        String         @default("EXACT") @map("match_type")
+  responseTemplate String         @map("response_template")
+  leadMagnetUrl    String?        @map("lead_magnet_url")
+  isActive         Boolean        @default(true) @map("is_active")
+  triggerCount     Int            @default(0) @map("trigger_count")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([brandId])
+  @@index([triggerKeyword])
+  @@map("dm_automation_flows")
+}

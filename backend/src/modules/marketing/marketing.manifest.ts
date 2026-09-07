@@ -32,6 +32,7 @@ export const manifest: ModuleManifest = {
     '20260906150000_social_publishing_engine',
     '20260906160000_campaigns_and_attribution_engine',
     '20260906170000_inbound_lead_gen_and_crm_handoff',
+    '20260906180000_unified_social_inbox_and_dm_flows',
   ],
 
   models: [
@@ -49,6 +50,8 @@ export const manifest: ModuleManifest = {
     'LeadCaptureForm',
     'LeadCaptureSubmission',
     'NurtureSequence',
+    'SocialMessage',
+    'DmAutomationFlow',
   ],
 
   permissions: [
@@ -74,6 +77,10 @@ export const manifest: ModuleManifest = {
     'marketing:forms:write',
     'marketing:nurture:read',
     'marketing:nurture:write',
+    'marketing:inbox:read',
+    'marketing:inbox:write',
+    'marketing:dm-flows:read',
+    'marketing:dm-flows:write',
   ],
 
   navigation: [
