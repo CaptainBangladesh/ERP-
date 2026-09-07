@@ -18,6 +18,7 @@ import { ApiException } from '../../http/api-exception';
 import { companyApplied, InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import type { CollectEventBody, CreateTrackingSiteBody } from './schemas';
+import { MARKETING_SECRET_VARS, marketingSecret } from './vault-secrets';
 
 const BOT_REGEX =
   /bot|crawler|spider|slurp|googlebot|bingbot|yandex|baiduspider|duckduckbot|facebot|facebookexternalhit|ia_archiver|lighthouse|headlesschrome/i;
@@ -447,9 +448,28 @@ export class TrackingService {
     };
   }
 
+  /**
+   * The pseudonymous visitor hash.
+   *
+   * The date is a *rotation input*, not the secret. Rotating daily was the right instinct and
+   * the original implementation stopped one step short: the salt **was** the date, so it was
+   * public. IPv4 is 2^32 addresses; a database dump plus a known salt de-anonymises every
+   * visitor in seconds on a laptop — on the one column this module sells as a cookieless,
+   * GDPR-safe hash. The pepper is what makes the hash actually one-way to somebody holding
+   * only the rows.
+   *
+   * The pepper is deliberately **not** rotated on a schedule, and that is a trade rather than
+   * an oversight: rotating it makes the same visitor look like two, so unique-visitor counts
+   * break across the boundary. It is never logged and never appears in a DTO. No raw IP is
+   * persisted anywhere, including inside `rawPayload` blobs.
+   */
   private hashIp(ip: string): string {
-    const salt = new Date().toISOString().split('T')[0];
-    return createHash('sha256').update(`${ip}-${salt}`).digest('hex').substring(0, 16);
+    const day = new Date().toISOString().split('T')[0];
+    const pepper = marketingSecret(MARKETING_SECRET_VARS.analyticsPepper);
+    return createHash('sha256')
+      .update(`${ip}:${day}:${pepper}`)
+      .digest('hex')
+      .substring(0, 16);
   }
 
   private toSummary(site: any, pageViewCount?: number): TrackingSiteSummary {

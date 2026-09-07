@@ -35,6 +35,7 @@ export const manifest: ModuleManifest = {
     '20260906180000_unified_social_inbox_and_dm_flows',
     '20260906190000_tracking_pixel_and_visitor_analytics',
     '20260907120000_publishing_quota_network_attempt',
+    '20260907130000_marketing_reliability_and_vault',
   ],
 
   models: [
@@ -48,6 +49,7 @@ export const manifest: ModuleManifest = {
     'AutolistItem',
     'MarketingCampaign',
     'SmartLink',
+    'SmartLinkClick',
     'AdAccountSync',
     'LeadCaptureForm',
     'LeadCaptureSubmission',

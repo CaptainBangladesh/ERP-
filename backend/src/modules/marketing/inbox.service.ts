@@ -15,6 +15,7 @@ import {
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import { Valid } from '../../platform/validation';
+import { CrmLeadIntake } from '../crm';
 import {
   ConvertConversationToLeadBody,
   CreateSocialMessageBody,
@@ -69,6 +70,7 @@ export class InboxService {
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly dmFlows: DmFlowsService,
     private readonly crmBridge: CrmBridgeService,
+    private readonly crm: CrmLeadIntake,
   ) {}
 
   async listMessages(query: Record<string, unknown>): Promise<SocialMessageListResponse> {
@@ -457,19 +459,21 @@ export class InboxService {
       },
     });
 
-    // 2. Attach full conversation transcript to CRM Activity timeline
+    // 2. Attach the full conversation transcript to the lead's CRM timeline.
+    //
+    // Through the same surface the form and ad-webhook paths use. There was a second path here
+    // — a direct `activity.create` on the CRM's table — and a boundary with two doors is a
+    // boundary that will grow a third.
     try {
-      await this.prisma.activity.create({
-        data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
-          type: 'note',
+      await this.crm.appendInboundActivity(
+        {
           leadId: handoffResult.leadId,
           notes: `Social DM Conversation History (Thread: ${input.conversationId}):\n\n${transcript}`,
-          createdByUserId: INBOX_SYSTEM_USER_ID,
-          createdByName: INBOX_SYSTEM_USER_NAME,
-        }),
-      });
+        },
+        { userId: INBOX_SYSTEM_USER_ID, name: INBOX_SYSTEM_USER_NAME },
+      );
     } catch (err) {
-      this.logger.warn(`Could not attach transcript to Activity: ${(err as Error).message}`);
+      this.logger.warn(`Could not attach transcript to the CRM timeline: ${(err as Error).message}`);
     }
 
     // 3. Mark conversation messages as resolved

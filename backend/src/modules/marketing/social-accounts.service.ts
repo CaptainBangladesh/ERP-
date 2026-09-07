@@ -25,6 +25,7 @@ import {
   SOCIAL_ACCOUNT_LIST,
 } from './schemas';
 import { SocialOAuth } from './social-oauth';
+import { MARKETING_SECRET_VARS, marketingSecret } from './vault-secrets';
 
 export interface DecryptedAccountCredentials {
   id: string;
@@ -437,10 +438,18 @@ export class SocialAccountsService {
     }
   }
 
+  /**
+   * Signs the OAuth `state` parameter.
+   *
+   * The secret used to fall back to `SESSION_SECRET` and then to a constant in this file, so a
+   * deployment missing the variable signed state with a value anybody reading this repository
+   * knows — which is the same as not signing it. `marketingSecret` refuses to boot production
+   * without it and never returns a constant anywhere else. See `vault-secrets.ts`.
+   */
   private signState(payload: string): string {
-    const secret =
-      process.env.SESSION_SECRET || 'erp-marketing-oauth-state-hmac-secret-default-key';
-    return createHmac('sha256', secret).update(payload).digest('base64url');
+    return createHmac('sha256', marketingSecret(MARKETING_SECRET_VARS.oauthState))
+      .update(payload)
+      .digest('base64url');
   }
 
   private verifyState(state: string): { brandId: string; platform: SocialPlatform } {

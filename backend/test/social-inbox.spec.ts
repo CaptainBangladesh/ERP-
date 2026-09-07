@@ -1,6 +1,7 @@
 import { DmFlowsService } from '../src/modules/marketing/dm-flows.service';
 import { InboxService } from '../src/modules/marketing/inbox.service';
 import { CrmBridgeService } from '../src/modules/marketing/crm-bridge.service';
+import { crmIntakeOver } from './harness/crm-intake';
 import { SocialInboxWebhooksController } from '../src/modules/marketing/social-inbox-webhooks.controller';
 import { Tenancy } from '../src/platform/tenancy';
 import { DomainEvents } from '../src/platform/events';
@@ -264,9 +265,9 @@ describe('Unified Social Inbox and DM Flows (Ticket 08)', () => {
       },
     };
 
-    crmBridge = new CrmBridgeService(mockPrisma, domainEvents, tenancy);
+    crmBridge = new CrmBridgeService(mockPrisma, domainEvents, tenancy, crmIntakeOver(mockPrisma));
     dmFlowsService = new DmFlowsService(mockPrisma);
-    inboxService = new InboxService(mockPrisma, dmFlowsService, crmBridge);
+    inboxService = new InboxService(mockPrisma, dmFlowsService, crmBridge, crmIntakeOver(mockPrisma));
     webhooksController = new SocialInboxWebhooksController(mockPrisma, tenancy, inboxService);
   });
 

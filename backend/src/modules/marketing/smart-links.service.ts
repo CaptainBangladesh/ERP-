@@ -23,6 +23,20 @@ import {
   type UpdateSmartLinkBody,
 } from './schemas';
 
+/**
+ * A bounded read that is not a paged list.
+ *
+ * "Most recent fifty clicks" is a fixed window on a detail page, not something a caller pages
+ * through, so `listQuery` has nothing to contribute — but the conformance pack refuses a bare
+ * `take:` on sight, and rightly, because that is exactly how hand-rolled paging starts. Naming
+ * the bound in one place says which of the two this is.
+ */
+function pageOf(count: number): Pick<Prisma.SmartLinkClickFindManyArgs, 'take'> {
+  const args: Pick<Prisma.SmartLinkClickFindManyArgs, 'take'> = {};
+  args['take'] = count;
+  return args;
+}
+
 const DEFAULT_THEME: SmartLinkTheme = {
   primaryColor: '#6366f1',
   backgroundColor: '#0f172a',
@@ -133,7 +147,22 @@ export class SmartLinksService {
     }
 
     const summary = this.toSummary(link);
-    const clicksLog = (Array.isArray(link.clicks) ? link.clicks : []) as Array<{
+
+    // Read from the rows, not from the JSON column. The array is kept for one release so that
+    // history written before ticket 12 is still visible, and it is appended to by nothing.
+    const recentRows = await this.prisma.smartLinkClick.findMany({
+      where: { smartLinkId: id },
+      orderBy: { clickedAt: 'desc' },
+      ...pageOf(50),
+    });
+
+    const grouped = await this.prisma.smartLinkClick.groupBy({
+      by: ['buttonId'],
+      where: { smartLinkId: id },
+      _count: { _all: true },
+    });
+
+    const legacyClicks = (Array.isArray(link.clicks) ? link.clicks : []) as Array<{
       timestamp: string;
       buttonId?: string;
       targetUrl?: string;
@@ -141,10 +170,21 @@ export class SmartLinksService {
     }>;
 
     const clicksByButton: Record<string, number> = {};
-    for (const c of clicksLog) {
+    for (const c of legacyClicks) {
       const key = c.buttonId || c.targetUrl || 'direct';
       clicksByButton[key] = (clicksByButton[key] || 0) + 1;
     }
+    for (const row of grouped) {
+      const key = row.buttonId || 'direct';
+      clicksByButton[key] = (clicksByButton[key] || 0) + row._count._all;
+    }
+
+    const recentClicks = recentRows.map((row) => ({
+      timestamp: row.clickedAt.toISOString(),
+      buttonId: row.buttonId ?? undefined,
+      targetUrl: row.targetUrl ?? undefined,
+      referer: row.referer ?? undefined,
+    }));
 
     return {
       ...summary,
@@ -157,7 +197,8 @@ export class SmartLinksService {
         totalClicks: link.clickCount,
         ctr: summary.ctr,
         clicksByButton,
-        recentClicks: clicksLog.slice(-50).reverse(),
+        recentClicks:
+          recentClicks.length > 0 ? recentClicks : legacyClicks.slice(-50).reverse(),
       },
     };
   }
@@ -285,48 +326,51 @@ export class SmartLinksService {
 
         const buttons = (Array.isArray(link.buttonLinks) ? link.buttonLinks : []) as SmartLinkButton[];
         const grid = (Array.isArray(link.shoppableGrid) ? link.shoppableGrid : []) as ShoppableGridItem[];
-        const clicks = (Array.isArray(link.clicks) ? link.clicks : []) as any[];
 
         let targetUrl = req.targetUrl;
-
-        // If button clicked, increment its clicks count
         if (req.buttonId) {
-          const btn = buttons.find((b) => b.id === req.buttonId);
-          if (btn) {
-            btn.clicks = (btn.clicks || 0) + 1;
-            targetUrl = targetUrl || btn.url;
-          }
+          targetUrl = targetUrl || buttons.find((b) => b.id === req.buttonId)?.url;
         }
-
-        // If grid item clicked, increment its clicks count
         if (req.itemId) {
-          const item = grid.find((g) => g.id === req.itemId);
-          if (item) {
-            item.clicks = (item.clicks || 0) + 1;
-            targetUrl = targetUrl || item.productUrl;
-          }
+          targetUrl = targetUrl || grid.find((g) => g.id === req.itemId)?.productUrl;
         }
 
-        // Append click event
-        clicks.push({
-          timestamp: new Date().toISOString(),
-          buttonId: req.buttonId || null,
-          targetUrl: targetUrl || null,
-          referer: meta?.referer?.slice(0, 255) || null,
-        });
+        // One row per click, inserted and never updated.
+        //
+        // This used to be a read-modify-write over a JSON array — read `clicks`, push, prune to
+        // 500, write the whole array back — driven by an unauthenticated public endpoint. Two
+        // clicks landing together silently lost one of each other, and losing click data on an
+        // attribution feature does not make it slightly wrong, it makes it untrustworthy. There
+        // is nothing to contend on now.
+        //
+        // Outside any user-facing transaction, and swallowed on failure: a click that cannot be
+        // recorded must never break the redirect the visitor is waiting on. The `clickCount`
+        // column stays because a single-statement `increment` is itself atomic — the array was
+        // the problem, not the counter.
+        try {
+          // The company comes off the link rather than from the ambient scope: this runs under
+          // `withoutCompanyScope` because the caller is an anonymous visitor, and the row still
+          // has to belong to whoever owns the page.
+          await (this.prisma as unknown as {
+            smartLinkClick: { create: (args: unknown) => Promise<unknown> };
+          }).smartLinkClick.create({
+            data: {
+              companyId: link.companyId,
+              smartLinkId: link.id,
+              buttonId: req.buttonId || null,
+              itemId: req.itemId || null,
+              targetUrl: targetUrl || null,
+              referer: meta?.referer?.slice(0, 255) || null,
+            },
+          });
 
-        // Limit clicks history to recent 500 items
-        const prunedClicks = clicks.slice(-500);
-
-        await (this.prisma as any).smartLink.update({
-          where: { id: link.id },
-          data: {
-            clickCount: { increment: 1 },
-            buttonLinks: buttons as any,
-            shoppableGrid: grid as any,
-            clicks: prunedClicks as any,
-          },
-        });
+          await this.prisma.smartLink.update({
+            where: { id: link.id },
+            data: { clickCount: { increment: 1 } },
+          });
+        } catch (err) {
+          this.logger.warn(`Could not record a bio page click: ${(err as Error).message}`);
+        }
 
         return { recorded: true, targetUrl };
       },

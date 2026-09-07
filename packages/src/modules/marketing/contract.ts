@@ -556,6 +556,15 @@ export const MARKETING_ERROR_CODES = {
   oauthProviderUnavailable: 'oauth_provider_unavailable',
   tokenRefreshFailed: 'token_refresh_failed',
   vaultDecryptionFailed: 'vault_decryption_failed',
+  /**
+   * Distinct from `vaultDecryptionFailed` on purpose. "We no longer hold the key this row was
+   * written under" is a configuration mistake somebody fixes by restoring a retired key;
+   * "the authentication tag does not verify" is a modified row. Conflating them makes an
+   * ordinary rotation incident look like an attack.
+   */
+  vaultKeyUnknown: 'vault_key_unknown',
+  adWebhookPlatformUnknown: 'ad_webhook_platform_unknown',
+  adWebhookUnknownFields: 'ad_webhook_unknown_fields',
   memberNotFound: 'member_not_found',
   memberAlreadyExists: 'member_already_exists',
   jobNotFound: 'job_not_found',

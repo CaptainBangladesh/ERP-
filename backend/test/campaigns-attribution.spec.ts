@@ -10,6 +10,7 @@ describe('Campaigns, Attribution & SmartLinks Engine (Ticket 06)', () => {
   let mockBrands: any[];
   let mockCampaigns: any[];
   let mockSmartLinks: any[];
+  let mockSmartLinkClicks: any[];
   let mockAdSyncs: any[];
   let mockScheduledPosts: any[];
 
@@ -33,6 +34,7 @@ describe('Campaigns, Attribution & SmartLinks Engine (Ticket 06)', () => {
     ];
     mockCampaigns = [];
     mockSmartLinks = [];
+    mockSmartLinkClicks = [];
     mockAdSyncs = [];
     mockScheduledPosts = [];
 
@@ -146,6 +148,36 @@ describe('Campaigns, Attribution & SmartLinks Engine (Ticket 06)', () => {
           return { id: where.id };
         }),
         count: jest.fn(async () => mockSmartLinks.length),
+      },
+      // Clicks are rows now, not a JSON array on the link (ticket 12.3e).
+      smartLinkClick: {
+        create: jest.fn(async ({ data }: any) => {
+          const row = {
+            id: `click-${mockSmartLinkClicks.length + 1}`,
+            ...data,
+            clickedAt: new Date(),
+          };
+          mockSmartLinkClicks.push(row);
+          return row;
+        }),
+        findMany: jest.fn(async ({ where }: any) =>
+          mockSmartLinkClicks
+            .filter((c) => !where?.smartLinkId || c.smartLinkId === where.smartLinkId)
+            .slice()
+            .reverse(),
+        ),
+        groupBy: jest.fn(async ({ where }: any) => {
+          const counts = new Map<string | null, number>();
+          for (const click of mockSmartLinkClicks) {
+            if (where?.smartLinkId && click.smartLinkId !== where.smartLinkId) continue;
+            const key = click.buttonId ?? null;
+            counts.set(key, (counts.get(key) ?? 0) + 1);
+          }
+          return Array.from(counts.entries()).map(([buttonId, count]) => ({
+            buttonId,
+            _count: { _all: count },
+          }));
+        }),
       },
       adAccountSync: {
         create: jest.fn(async ({ data }) => {

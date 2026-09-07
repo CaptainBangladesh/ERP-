@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { companyApplied, InjectPrisma, type ScopedPrisma, Tenancy } from '../../platform/tenancy';
+import { InjectPrisma, type ScopedPrisma, Tenancy } from '../../platform/tenancy';
 import { DomainEvents } from '../../platform/events';
+import { CrmLeadIntake } from '../crm';
 
 export interface LeadHandoffParams {
   name?: string;
@@ -57,9 +57,26 @@ export interface LeadHandoffResult {
   };
 }
 
-const MARKETING_SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001';
-const MARKETING_SYSTEM_USER_NAME = 'Marketing Automation Engine';
+/**
+ * Who the CRM records as the author of everything this module writes to a lead's timeline.
+ *
+ * It lives here rather than inside `crm` on purpose: the CRM has no business knowing that a
+ * "Marketing Automation Engine" exists, only who claimed to be speaking.
+ */
+export const MARKETING_SYSTEM_ACTOR = {
+  userId: '00000000-0000-0000-0000-000000000001',
+  name: 'Marketing Automation Engine',
+} as const;
 
+/**
+ * Marketing's side of the CRM seam.
+ *
+ * A translator and nothing else, now. It used to write `Lead`, `LeadSubmission` and `Activity`
+ * with marketing's own Prisma client while also emitting `marketing.lead.captured`, so the
+ * module both announced the decoupling and skipped it. The writes go through `CrmLeadIntake`;
+ * what stays here is the shape of an inbound marketing lead, the UTM prose, the event, and the
+ * nurture-sequence check — all of which are marketing's own and none of which the CRM wants.
+ */
 @Injectable()
 export class CrmBridgeService {
   private readonly logger = new Logger(CrmBridgeService.name);
@@ -68,6 +85,7 @@ export class CrmBridgeService {
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly events: DomainEvents,
     private readonly tenancy: Tenancy,
+    private readonly crm: CrmLeadIntake,
   ) {}
 
   /**
@@ -80,127 +98,45 @@ export class CrmBridgeService {
     options: LeadHandoffOptions = {},
   ): Promise<LeadHandoffResult> {
     const db = (options.client ?? this.prisma) as ScopedPrisma;
-    const email = params.email?.trim();
-    const phone = params.phone?.trim();
-    const name = params.name?.trim() || email || 'Inbound Lead';
 
-    // 1. Case-insensitive email or phone search on CRM Lead
-    const searchConditions: Prisma.LeadWhereInput[] = [];
-    if (email) {
-      searchConditions.push({ email: { equals: email, mode: 'insensitive' } });
-    }
-    if (phone) {
-      searchConditions.push({ phone: { equals: phone } });
-    }
+    // 1-3. Match or create the lead. The search, the non-destructive fill and the create are
+    // all the CRM's now — including the ADR 0012 invariant, which used to be a rule this
+    // module was trusted to honour in code the CRM never saw.
+    const { leadId, isNew, lead: finalLead } = await this.crm.resolveInboundLead(
+      {
+        name: params.name,
+        email: params.email,
+        phone: params.phone,
+        organisationName: params.organisationName,
+        customFields: params.customFields,
+      },
+      MARKETING_SYSTEM_ACTOR,
+      options.client,
+    );
 
-    let existingLead = null;
-    if (searchConditions.length > 0) {
-      existingLead = await db.lead.findFirst({
-        where: { OR: searchConditions },
-      });
-    }
-
-    let leadId: string;
-    let isNew = false;
-    let finalLead: {
-      id: string;
-      name: string;
-      email: string | null;
-      phone: string | null;
-      organisationName: string | null;
-    };
-
-    if (existingLead) {
-      leadId = existingLead.id;
-      // 2. Non-destructive fill of empty fields (ADR 0003 & spec section 5)
-      const updatePayload: Prisma.LeadUncheckedUpdateInput = {};
-      if (!existingLead.email && email) updatePayload.email = email;
-      if (!existingLead.phone && phone) updatePayload.phone = phone;
-      if (!existingLead.organisationName && params.organisationName) {
-        updatePayload.organisationName = params.organisationName.trim();
-      }
-      if (
-        (existingLead.name === 'Inbound Lead' || existingLead.name === 'Unknown') &&
-        params.name?.trim()
-      ) {
-        updatePayload.name = params.name.trim();
-      }
-
-      if (params.customFields && Object.keys(params.customFields).length > 0) {
-        const existingCustom =
-          existingLead.customValues && typeof existingLead.customValues === 'object'
-            ? (existingLead.customValues as Record<string, unknown>)
-            : {};
-        updatePayload.customValues = {
-          ...params.customFields,
-          ...existingCustom,
-        } as Prisma.InputJsonValue;
-      }
-
-      if (Object.keys(updatePayload).length > 0) {
-        const updated = await db.lead.update({
-          where: { id: leadId },
-          data: updatePayload,
-        });
-        finalLead = {
-          id: updated.id,
-          name: updated.name,
-          email: updated.email,
-          phone: updated.phone,
-          organisationName: updated.organisationName,
-        };
-      } else {
-        finalLead = {
-          id: existingLead.id,
-          name: existingLead.name,
-          email: existingLead.email,
-          phone: existingLead.phone,
-          organisationName: existingLead.organisationName,
-        };
-      }
-    } else {
-      // 3. Create new CRM Lead
-      isNew = true;
-      const created = await db.lead.create({
-        data: companyApplied<Prisma.LeadUncheckedCreateInput>({
-          name,
-          email: email ?? null,
-          phone: phone ?? null,
-          organisationName: params.organisationName?.trim() ?? null,
-          customValues: (params.customFields ?? {}) as Prisma.InputJsonValue,
-        }),
-      });
-      leadId = created.id;
-      finalLead = {
-        id: created.id,
-        name: created.name,
-        email: created.email,
-        phone: created.phone,
-        organisationName: created.organisationName,
-      };
-    }
-
-    // 4. Create CRM LeadSubmission record
+    // 4. Record the submission against the lead.
     try {
-      await db.leadSubmission.create({
-        data: companyApplied<Prisma.LeadSubmissionUncheckedCreateInput>({
+      await this.crm.recordInboundSubmission(
+        {
           leadId,
           formName: params.sourceName,
-          rawPayload: (params.rawPayload ?? {}) as Prisma.InputJsonValue,
+          rawPayload: params.rawPayload ?? {},
           mappedFields: {
             name: finalLead.name,
             email: finalLead.email,
             phone: finalLead.phone,
             organisationName: finalLead.organisationName,
             utm: params.utm ?? {},
-          } as Prisma.InputJsonValue,
-        }),
-      });
+          },
+        },
+        options.client,
+      );
     } catch (err) {
-      this.logger.warn(`Could not create crm.leadSubmission: ${(err as Error).message}`);
+      this.logger.warn(`Could not record the CRM lead submission: ${(err as Error).message}`);
     }
 
-    // 5. Append Activity timeline entry with full UTM attribution
+    // 5. Append a timeline note with full UTM attribution. The prose is marketing's; the
+    // timeline is the CRM's.
     const utmDesc = `source=${params.utm?.source ?? 'direct'}, medium=${
       params.utm?.medium ?? 'none'
     }, campaign=${params.utm?.campaign ?? 'none'}${
@@ -208,17 +144,16 @@ export class CrmBridgeService {
     }${params.utm?.content ? `, content=${params.utm.content}` : ''}`;
 
     try {
-      await db.activity.create({
-        data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
-          type: 'note',
+      await this.crm.appendInboundActivity(
+        {
           leadId,
           notes: `Inbound marketing lead captured via ${params.sourceName}. UTM: ${utmDesc}`,
-          createdByUserId: MARKETING_SYSTEM_USER_ID,
-          createdByName: MARKETING_SYSTEM_USER_NAME,
-        }),
-      });
+        },
+        MARKETING_SYSTEM_ACTOR,
+        options.client,
+      );
     } catch (err) {
-      this.logger.warn(`Could not create crm.activity timeline entry: ${(err as Error).message}`);
+      this.logger.warn(`Could not append the CRM timeline entry: ${(err as Error).message}`);
     }
 
     // 6. Emit the decoupled domain event — after the caller commits, if it asked to defer.

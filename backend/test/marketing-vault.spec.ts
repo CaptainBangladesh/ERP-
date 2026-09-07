@@ -63,7 +63,8 @@ describe('Marketing: Brand & Encrypted OAuth Vault', () => {
 
       const encrypted = crypto.encrypt(secret);
       expect(encrypted).not.toBe(secret);
-      expect(encrypted.split('.').length).toBe(3); // iv.ciphertext.tag
+      expect(encrypted.split('.').length).toBe(4); // kid.iv.ciphertext.tag
+      expect(encrypted.startsWith('v1.')).toBe(true);
 
       const decrypted = crypto.decrypt(encrypted);
       expect(decrypted).toBe(secret);
@@ -83,14 +84,113 @@ describe('Marketing: Brand & Encrypted OAuth Vault', () => {
     it('detects tampering and throws when ciphertext or auth tag is modified', () => {
       const crypto = new CryptoService();
       const encrypted = crypto.encrypt('sensitive-data');
-      const [iv, ciphertext, tag] = encrypted.split('.') as [string, string, string];
+      const [kid, iv, ciphertext, tag] = encrypted.split('.') as [string, string, string, string];
 
       // Tamper ciphertext
       const tamperedCiphertext = Buffer.from(ciphertext, 'base64url');
       tamperedCiphertext[0] = tamperedCiphertext[0]! ^ 0xff;
-      const tampered = [iv, tamperedCiphertext.toString('base64url'), tag].join('.');
+      const tampered = [kid, iv, tamperedCiphertext.toString('base64url'), tag].join('.');
 
       expect(() => crypto.decrypt(tampered)).toThrow();
+    });
+
+    it('still reads a token encrypted under v1 after v2 becomes the active key', () => {
+      const before = { ...process.env };
+      try {
+        process.env.MARKETING_VAULT_SECRET = 'first-vault-secret-long-enough-to-pass-0001';
+        process.env.MARKETING_VAULT_KEY_ID = 'v1';
+        delete process.env.MARKETING_VAULT_RETIRED_KEYS;
+
+        const v1 = new CryptoService();
+        v1.forgetKey();
+        const underV1 = v1.encrypt('token-written-before-the-rotation');
+        expect(underV1.startsWith('v1.')).toBe(true);
+
+        // Rotate: new active secret, old one retired but still readable.
+        process.env.MARKETING_VAULT_SECRET = 'second-vault-secret-long-enough-to-pass-002';
+        process.env.MARKETING_VAULT_KEY_ID = 'v2';
+        process.env.MARKETING_VAULT_RETIRED_KEYS =
+          'v1:first-vault-secret-long-enough-to-pass-0001';
+
+        const v2 = new CryptoService();
+        v2.forgetKey();
+        expect(v2.encrypt('anything').startsWith('v2.')).toBe(true);
+        expect(v2.decrypt(underV1)).toBe('token-written-before-the-rotation');
+      } finally {
+        process.env = before;
+        new CryptoService().forgetKey();
+      }
+    });
+
+    it('reads pre-rotation three-part ciphertext as v1', () => {
+      const before = { ...process.env };
+      try {
+        process.env.MARKETING_VAULT_SECRET = 'legacy-vault-secret-long-enough-to-pass-01';
+        process.env.MARKETING_VAULT_KEY_ID = 'v1';
+        delete process.env.MARKETING_VAULT_RETIRED_KEYS;
+
+        const crypto = new CryptoService();
+        crypto.forgetKey();
+        const [, ...legacyParts] = crypto.encrypt('older-than-the-key-id').split('.');
+
+        expect(crypto.decrypt(legacyParts.join('.'))).toBe('older-than-the-key-id');
+      } finally {
+        process.env = before;
+        new CryptoService().forgetKey();
+      }
+    });
+
+    it('names a lost key differently from a modified row', () => {
+      const before = { ...process.env };
+      try {
+        process.env.MARKETING_VAULT_SECRET = 'active-vault-secret-long-enough-to-pass-01';
+        process.env.MARKETING_VAULT_KEY_ID = 'v9';
+        delete process.env.MARKETING_VAULT_RETIRED_KEYS;
+
+        const crypto = new CryptoService();
+        crypto.forgetKey();
+        const stored = crypto.encrypt('a token');
+        const fromAKeyWeNoLongerHold = stored.replace(/^v9\./, 'v3.');
+
+        // Conflating "we lost the key" with "someone edited this row" makes an operational
+        // incident look like an attack, so the two carry different codes.
+        expect(() => crypto.decrypt(fromAKeyWeNoLongerHold)).toThrow(
+          expect.objectContaining({ code: MARKETING_ERROR_CODES.vaultKeyUnknown }),
+        );
+      } finally {
+        process.env = before;
+        new CryptoService().forgetKey();
+      }
+    });
+
+    it('refuses to boot in production without a vault secret', () => {
+      const before = { ...process.env };
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.MARKETING_VAULT_SECRET;
+        delete process.env.MARKETING_OAUTH_STATE_SECRET;
+        delete process.env.MARKETING_ANALYTICS_PEPPER;
+
+        expect(() => new CryptoService().onModuleInit()).toThrow(/MARKETING_VAULT_SECRET/);
+      } finally {
+        process.env = before;
+        new CryptoService().forgetKey();
+      }
+    });
+
+    it('accepts a production boot once all three secrets are long enough', () => {
+      const before = { ...process.env };
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.MARKETING_VAULT_SECRET = 'a'.repeat(40);
+        process.env.MARKETING_OAUTH_STATE_SECRET = 'b'.repeat(40);
+        process.env.MARKETING_ANALYTICS_PEPPER = 'c'.repeat(40);
+
+        expect(() => new CryptoService().onModuleInit()).not.toThrow();
+      } finally {
+        process.env = before;
+        new CryptoService().forgetKey();
+      }
     });
 
     it('safely masks tokens for public responses', () => {
@@ -286,8 +386,8 @@ describe('Marketing: Brand & Encrypted OAuth Vault', () => {
       expect(rawDbRow).not.toBeNull();
       expect(rawDbRow?.encryptedAccessToken).not.toContain('valid_auth_code_123');
       expect(rawDbRow?.encryptedAccessToken).not.toContain('stub_access');
-      expect(rawDbRow?.encryptedAccessToken.split('.').length).toBe(3); // iv.ciphertext.tag
-      expect(rawDbRow?.encryptedRefreshToken?.split('.').length).toBe(3);
+      expect(rawDbRow?.encryptedAccessToken.split('.').length).toBe(4); // kid.iv.ciphertext.tag
+      expect(rawDbRow?.encryptedRefreshToken?.split('.').length).toBe(4);
 
       // In-memory internal decryption check (for publishers). Reaching a company-owned table
       // from a test means saying which company, the same as any job or script would.

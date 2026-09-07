@@ -6,6 +6,7 @@ import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
 import { DealsController } from './deals.controller';
 import { DealsService } from './deals.service';
+import { CrmLeadIntake } from './lead-intake';
 import { LeadsController } from './leads.controller';
 import { LeadsService } from './leads.service';
 import { StagesController } from './stages.controller';
@@ -114,6 +115,13 @@ import { PublicLeadEmailController } from './public-lead-email.controller';
     ScriptsService,
     PlaybooksService,
     PlannerService,
+    {
+      // What arrives in another module is `CrmLeadIntake` and not `LeadsService`: four methods
+      // over plain data, rather than the whole of what the CRM can do to a lead.
+      provide: CrmLeadIntake,
+      useExisting: LeadsService,
+    },
   ],
+  exports: [CrmLeadIntake],
 })
 export class CrmModule {}

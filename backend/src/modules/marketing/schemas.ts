@@ -14,6 +14,7 @@ import {
   SMART_LINK_COLOR_PATTERN,
   SMART_LINK_FONT_FAMILIES,
   SMART_LINK_URL_SCHEMES,
+  MARKETING_ERROR_CODES,
   type AutolistRepeatMode,
   type AutolistSlot,
   type AutolistStatus,
@@ -32,6 +33,8 @@ import {
   type SmartLinkSocialItem,
   type SmartLinkTheme,
 } from '@erp/shared';
+import { HttpStatus } from '@nestjs/common';
+import { ApiException } from '../../http/api-exception';
 import type { ListSpec } from '../../platform/list';
 import {
   accepted,
@@ -43,6 +46,9 @@ import {
   rule,
   text,
   validator,
+  Validator,
+  type Parsed,
+  type Schema,
 } from '../../platform/validation';
 
 /**
@@ -877,20 +883,9 @@ export const UpdateNurtureSequenceBody = validator({
   status: optional(text({ missing: 'Enter status.', maxLength: 30, tooLong: 'Status too long.' })),
 });
 
-export const AdWebhookBody = validator({
-  platform: optional(text({ missing: 'Enter platform.', maxLength: 50, tooLong: 'Platform too long.' })),
-  brandId: optional(identifier({ missing: 'Select brand.', invalid: 'Invalid brand ID.' })),
-  leadData: optional(jsonObject('lead data')),
-  field_data: optional(jsonArray('field data')),
-  formId: optional(text({ missing: 'Enter form ID.', maxLength: 100, tooLong: 'Form ID too long.' })),
-  adAccountId: optional(text({ missing: 'Enter ad account ID.', maxLength: 100, tooLong: 'Ad account ID too long.' })),
-  email: optional(text({ missing: 'Enter email.', maxLength: 200, tooLong: 'Email too long.' })),
-  name: optional(text({ missing: 'Enter name.', maxLength: 200, tooLong: 'Name too long.' })),
-  phone: optional(text({ missing: 'Enter phone.', maxLength: 50, tooLong: 'Phone too long.' })),
-  utmSource: optional(text({ missing: 'Enter UTM source.', maxLength: 100, tooLong: 'UTM source too long.' })),
-  utmMedium: optional(text({ missing: 'Enter UTM medium.', maxLength: 100, tooLong: 'UTM medium too long.' })),
-  utmCampaign: optional(text({ missing: 'Enter UTM campaign.', maxLength: 100, tooLong: 'UTM campaign too long.' })),
-});
+// `AdWebhookBody` used to be declared here and never wired to a controller, which is why the
+// endpoint took `Record<string, any>` while a schema for it sat unused two files away. The
+// real one lives at the end of this file, beside the platform union it belongs to.
 
 export const LEAD_FORM_LIST: ListSpec = {
   defaultSort: 'name',
@@ -1052,3 +1047,140 @@ export const TRACKING_SITE_LIST: ListSpec = {
   },
 };
 
+
+// ─── Ad lead webhooks ─────────────────────────────────────────────────────────────
+
+/**
+ * The platforms this module will accept a lead webhook from.
+ *
+ * A closed union, checked against the path parameter. Before ticket 12 the segment was taken
+ * as free text and lower-cased, so `POST /api/marketing/webhooks/ads/<anything>` reached the
+ * handler and the CRM handoff — on an unauthenticated endpoint.
+ */
+/**
+ * Note what is absent: a tenant identifier. The webhook used to accept one in the body, which
+ * let an unauthenticated caller nominate the company its lead landed in. It is read from the
+ * query string only now — that is where these integrations are configured anyway — so a body
+ * carrying one is a refused key rather than a routing instruction.
+ */
+export const AD_WEBHOOK_PLATFORMS = [
+  'meta',
+  'facebook',
+  'google',
+  'tiktok',
+  'linkedin',
+  'generic',
+] as const;
+
+export type AdWebhookPlatform = (typeof AD_WEBHOOK_PLATFORMS)[number];
+
+export function isAdWebhookPlatform(value: string): value is AdWebhookPlatform {
+  return (AD_WEBHOOK_PLATFORMS as readonly string[]).includes(value);
+}
+
+/** An array of objects, the shape a platform's own field list arrives in. */
+const objectList = (missing: string) =>
+  rule<Record<string, unknown>[]>(missing, (value) => {
+    if (!Array.isArray(value)) return refused(missing);
+    if (value.length > 200) return refused('Too many fields in this payload.');
+    if (!value.every((entry) => typeof entry === 'object' && entry !== null && !Array.isArray(entry))) {
+      return refused(missing);
+    }
+    return accepted(value as Record<string, unknown>[]);
+  });
+
+const adText = (label: string, maxLength = 500) =>
+  optional(text({ missing: `Enter ${label}.`, maxLength, tooLong: `${label} is too long.` }));
+
+/**
+ * Every top-level key an ad lead webhook may carry, from any supported platform.
+ *
+ * Declared rather than passed through, because this is an unauthenticated third-party endpoint
+ * and an unshaped body reaching a Prisma string column is how a caller gets to choose our
+ * status code. `AD_WEBHOOK_KEYS` below is the same list as a set: the validator drops unknown
+ * keys silently, and the handler refuses them, so a platform that starts sending something new
+ * is a visible 400 rather than a field that quietly stopped arriving.
+ */
+/**
+ * A validator that refuses what it does not recognise, instead of dropping it.
+ *
+ * The platform's default is right for our own API — an unknown key is ignored, so adding a
+ * field is not a breaking change for a client that echoes bodies back. It is wrong for an
+ * unauthenticated third-party webhook: there, a key we have never seen means the platform
+ * changed its payload, and a silent drop turns that into data that quietly stopped arriving
+ * instead of a refusal somebody investigates.
+ *
+ * A 400 rather than the platform's 422, and with no detail beyond the offending key names:
+ * the caller is Meta's or Google's delivery service, not a form.
+ */
+class ClosedValidator<S extends Schema> extends Validator<S> {
+  constructor(
+    private readonly allowed: readonly string[],
+    schema: S,
+  ) {
+    super(schema);
+  }
+
+  override parse(input: unknown): Parsed<S> {
+    if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+      const unknown = Object.keys(input).filter((key) => !this.allowed.includes(key));
+      if (unknown.length > 0) {
+        throw new ApiException(
+          MARKETING_ERROR_CODES.adWebhookUnknownFields,
+          `This payload carries fields this endpoint does not accept: ${unknown
+            .slice(0, 10)
+            .join(', ')}.`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    return super.parse(input);
+  }
+}
+
+const AD_WEBHOOK_SCHEMA = {
+  brandId: adText('a brand id', 64),
+  email: adText('an email address', 320),
+  name: adText('a name', 200),
+  full_name: adText('a name', 200),
+  phone: adText('a phone number', 60),
+  phone_number: adText('a phone number', 60),
+  company: adText('a company name', 200),
+  company_name: adText('a company name', 200),
+  campaign_name: adText('a campaign name'),
+  ad_name: adText('an ad name'),
+  adset_name: adText('an ad set name'),
+  ad_id: adText('an ad id', 128),
+  utmSource: adText('a UTM source', 120),
+  utmMedium: adText('a UTM medium', 120),
+  utmCampaign: adText('a UTM campaign', 120),
+  utmTerm: adText('a UTM term', 120),
+  utmContent: adText('a UTM content value', 120),
+  field_data: optional(objectList('Send field_data as a list of fields.')),
+  user_column_data: optional(objectList('Send user_column_data as a list of columns.')),
+} as const;
+
+const AD_WEBHOOK_KEYS: readonly string[] = [
+  'brandId',
+  'email',
+  'name',
+  'full_name',
+  'phone',
+  'phone_number',
+  'company',
+  'company_name',
+  'campaign_name',
+  'ad_name',
+  'adset_name',
+  'ad_id',
+  'utmSource',
+  'utmMedium',
+  'utmCampaign',
+  'utmTerm',
+  'utmContent',
+  'field_data',
+  'user_column_data',
+];
+
+export const AdWebhookBody = new ClosedValidator(AD_WEBHOOK_KEYS, AD_WEBHOOK_SCHEMA);

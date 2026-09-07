@@ -1,4 +1,5 @@
 import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
+import { CrmModule } from '../crm';
 import { BioPageCspMiddleware } from './bio-page-csp.middleware';
 import { BrandsController } from './brands.controller';
 import { BrandsService } from './brands.service';
@@ -45,6 +46,7 @@ import { SocialInboxWebhooksController } from './social-inbox-webhooks.controlle
 import { TrackingService } from './tracking.service';
 import { TrackingController } from './tracking.controller';
 import { PublicTrackingController } from './public-tracking.controller';
+import { RetentionService } from './retention.service';
 
 /**
  * Marketing.
@@ -52,8 +54,13 @@ import { PublicTrackingController } from './public-tracking.controller';
  * Exports nothing yet to other modules. When another module needs something from this one,
  * declare an abstract class in 'index.ts', bind the service to it here with 'useExisting',
  * and export that.
+ *
+ * Imports 'CrmModule' for one thing only: 'CrmLeadIntake', which is what arrives — not
+ * 'LeadsService'. Every inbound lead this module captures is written through those four
+ * methods, so there is no path from here to a CRM table.
  */
 @Module({
+  imports: [CrmModule],
   controllers: [
     MarketingController,
     BrandsController,
@@ -112,6 +119,7 @@ import { PublicTrackingController } from './public-tracking.controller';
     InboxService,
     DmFlowsService,
     TrackingService,
+    RetentionService,
   ],
   exports: [
     CryptoService,

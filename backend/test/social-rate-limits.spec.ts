@@ -7,6 +7,7 @@ import { SocialAdapterResolver } from '../src/modules/marketing/adapters/social-
 import { StubSocialNetworkAdapter } from '../src/modules/marketing/adapters/stub.adapter';
 import { DmFlowsService } from '../src/modules/marketing/dm-flows.service';
 import { CrmBridgeService } from '../src/modules/marketing/crm-bridge.service';
+import { crmIntakeOver } from './harness/crm-intake';
 import { MARKETING_ERROR_CODES } from '@erp/shared';
 import { ApiException } from '../src/http/api-exception';
 
@@ -206,7 +207,7 @@ describe('Social API Rate Limits, Permissions & Messaging Windows (Ticket 10)', 
 
     const mockDmFlows: any = { evaluateMessage: jest.fn().mockResolvedValue(null) };
     const mockCrmBridge: any = { handoffLead: jest.fn().mockResolvedValue({ leadId: 'lead-1', isNew: true }) };
-    inboxService = new InboxService(mockPrisma, mockDmFlows, mockCrmBridge);
+    inboxService = new InboxService(mockPrisma, mockDmFlows, mockCrmBridge, crmIntakeOver(mockPrisma));
   });
 
   describe('OAuth Permissions and Scopes', () => {

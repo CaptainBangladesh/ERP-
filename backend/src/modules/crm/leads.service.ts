@@ -29,6 +29,16 @@ import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/
 import type { Valid } from '../../platform/validation';
 import { PartyDirectory } from '../parties';
 import { SYSTEM_ACTOR_ID, SYSTEM_ACTOR_NAME, auditNotes } from './audit-events';
+import {
+  CrmLeadIntake,
+  type CrmInboundActivity,
+  type CrmInboundContact,
+  type CrmInboundSubmission,
+  type CrmIntakeActor,
+  type CrmIntakeLead,
+  type CrmLeadIntakeResult,
+  type CrmTransaction,
+} from './lead-intake';
 import { LeadFieldsService } from './lead-fields.service';
 import { LeadStatusLabelsService } from './lead-status-labels.service';
 import { leadStatusNotSettable } from './refusals';
@@ -56,7 +66,7 @@ import { WorkflowRulesService } from './workflow-rules.service';
  * restoring `priorStatus` — that a bare `status` write would have no way to also do.
  */
 @Injectable()
-export class LeadsService {
+export class LeadsService implements CrmLeadIntake {
   constructor(
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly parties: PartyDirectory,
@@ -567,6 +577,135 @@ export class LeadsService {
 
     return { removedCount: idsToDelete.length };
   }
+
+  // ---------------------------------------------------------------------------------------
+  // CrmLeadIntake — the public surface, implemented.
+  //
+  // These three are the only way another module reaches a CRM table, and they exist because
+  // `marketing` was reaching them directly. Everything above this line is the CRM talking to
+  // itself; everything below is the CRM answering somebody else, which is why the parameters
+  // are plain data and the transaction arrives as an opaque handle.
+  // ---------------------------------------------------------------------------------------
+
+  /**
+   * A CRM client that writes inside the caller's transaction when there is one.
+   *
+   * The handle is opaque across the seam and a Prisma client on this side; the cast is the
+   * one place that knowledge is re-applied, rather than being spread through three methods.
+   */
+  private intakeClient(tx?: CrmTransaction): ScopedPrisma {
+    return (tx ?? this.prisma) as ScopedPrisma;
+  }
+
+  async resolveInboundLead(
+    contact: CrmInboundContact,
+    actor: CrmIntakeActor,
+    tx?: CrmTransaction,
+  ): Promise<CrmLeadIntakeResult> {
+    const db = this.intakeClient(tx);
+    const email = contact.email?.trim();
+    const phone = contact.phone?.trim();
+
+    const match: Prisma.LeadWhereInput[] = [];
+    if (email) match.push({ email: { equals: email, mode: 'insensitive' } });
+    if (phone) match.push({ phone: { equals: phone } });
+
+    const existing =
+      match.length > 0 ? await db.lead.findFirst({ where: { OR: match } }) : null;
+
+    if (!existing) {
+      const created = await db.lead.create({
+        data: companyApplied<Prisma.LeadUncheckedCreateInput>({
+          name: contact.name?.trim() || email || 'Inbound Lead',
+          email: email ?? null,
+          phone: phone ?? null,
+          organisationName: contact.organisationName?.trim() ?? null,
+          customValues: (contact.customFields ?? {}) as Prisma.InputJsonValue,
+        }),
+      });
+
+      return { leadId: created.id, isNew: true, lead: intakeLead(created) };
+    }
+
+    // ADR 0012, and now the CRM's invariant rather than the caller's promise: fill what is
+    // empty, never overwrite what somebody already put there. A stranger filling in a web
+    // form does not get to rewrite a salesperson's notes.
+    const fill: Prisma.LeadUncheckedUpdateInput = {};
+    if (!existing.email && email) fill.email = email;
+    if (!existing.phone && phone) fill.phone = phone;
+    if (!existing.organisationName && contact.organisationName) {
+      fill.organisationName = contact.organisationName.trim();
+    }
+    // A placeholder name is an empty field wearing a label, so it fills like one.
+    if (
+      (existing.name === 'Inbound Lead' || existing.name === 'Unknown') &&
+      contact.name?.trim()
+    ) {
+      fill.name = contact.name.trim();
+    }
+    if (contact.customFields && Object.keys(contact.customFields).length > 0) {
+      const current =
+        existing.customValues && typeof existing.customValues === 'object'
+          ? (existing.customValues as Record<string, unknown>)
+          : {};
+      // Existing values last, so they win the spread.
+      fill.customValues = { ...contact.customFields, ...current } as Prisma.InputJsonValue;
+    }
+
+    if (Object.keys(fill).length === 0) {
+      return { leadId: existing.id, isNew: false, lead: intakeLead(existing) };
+    }
+
+    const updated = await db.lead.update({ where: { id: existing.id }, data: fill });
+    void actor;
+    return { leadId: updated.id, isNew: false, lead: intakeLead(updated) };
+  }
+
+  async recordInboundSubmission(
+    submission: CrmInboundSubmission,
+    tx?: CrmTransaction,
+  ): Promise<void> {
+    await this.intakeClient(tx).leadSubmission.create({
+      data: companyApplied<Prisma.LeadSubmissionUncheckedCreateInput>({
+        leadId: submission.leadId,
+        formName: submission.formName,
+        rawPayload: (submission.rawPayload ?? {}) as Prisma.InputJsonValue,
+        mappedFields: (submission.mappedFields ?? {}) as Prisma.InputJsonValue,
+      }),
+    });
+  }
+
+  async appendInboundActivity(
+    activity: CrmInboundActivity,
+    actor: CrmIntakeActor,
+    tx?: CrmTransaction,
+  ): Promise<void> {
+    await this.intakeClient(tx).activity.create({
+      data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
+        type: 'note',
+        leadId: activity.leadId,
+        notes: activity.notes,
+        createdByUserId: actor.userId,
+        createdByName: actor.name,
+      }),
+    });
+  }
+}
+
+function intakeLead(row: {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  organisationName: string | null;
+}): CrmIntakeLead {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    organisationName: row.organisationName,
+  };
 }
 
 function describe(row: any): LeadSummary {

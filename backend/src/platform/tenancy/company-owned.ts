@@ -243,6 +243,7 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   AutolistItem: { kind: 'company-owned' },
   MarketingCampaign: { kind: 'company-owned' },
   SmartLink: { kind: 'company-owned' },
+  SmartLinkClick: { kind: 'company-owned' },
   AdAccountSync: { kind: 'company-owned' },
   LeadCaptureForm: { kind: 'company-owned' },
   LeadCaptureSubmission: { kind: 'company-owned' },

@@ -1,4 +1,17 @@
 import { CrmBridgeService } from '../src/modules/marketing/crm-bridge.service';
+import { crmIntakeOver } from './harness/crm-intake';
+
+/**
+ * The body and query parameters of the webhook handler, for a spec that calls it directly.
+ *
+ * In the running application the validation pipe fills the body; calling the method by hand
+ * has to stand in for it, so the payload goes in as though it had already parsed.
+ */
+function postedAs(
+  body: Record<string, unknown>,
+): [never, { brandId: string }] {
+  return [body as never, { brandId: 'brand-1' }];
+}
 import { FormsService } from '../src/modules/marketing/forms.service';
 import { NurtureSequencesService } from '../src/modules/marketing/nurture-sequences.service';
 import { AdWebhooksController } from '../src/modules/marketing/ad-webhooks.controller';
@@ -237,7 +250,7 @@ describe('Inbound Lead Gen & CRM Handoff (Ticket 07)', () => {
       },
     };
 
-    crmBridge = new CrmBridgeService(mockPrisma, domainEvents, tenancy);
+    crmBridge = new CrmBridgeService(mockPrisma, domainEvents, tenancy, crmIntakeOver(mockPrisma));
     formsService = new FormsService(mockPrisma, tenancy, crmBridge);
     nurtureService = new NurtureSequencesService(mockPrisma);
     adWebhooksController = new AdWebhooksController(mockPrisma, tenancy, crmBridge);
@@ -438,7 +451,7 @@ describe('Inbound Lead Gen & CRM Handoff (Ticket 07)', () => {
     it('ingests Meta Facebook Lead Ads payload, hands off to CRM, and emits event', async () => {
       const response = await adWebhooksController.handleAdLeadWebhook(
         'facebook',
-        {
+        ...postedAs({
           field_data: [
             { name: 'full_name', values: ['Thomas Anderson'] },
             { name: 'email', values: ['neo@matrix.io'] },
@@ -446,8 +459,7 @@ describe('Inbound Lead Gen & CRM Handoff (Ticket 07)', () => {
             { name: 'company_name', values: ['Metacortex'] },
           ],
           campaign_name: 'Red Pill Promo Q3',
-        },
-        { brandId: 'brand-1' },
+        }),
       );
 
       expect(response.received).toBe(true);
@@ -470,15 +482,14 @@ describe('Inbound Lead Gen & CRM Handoff (Ticket 07)', () => {
     it('ingests Google Ads Lead Form payload and links attribution', async () => {
       const response = await adWebhooksController.handleAdLeadWebhook(
         'google',
-        {
+        ...postedAs({
           user_column_data: [
             { column_id: 'FULL_NAME', string_value: 'Trinity Moss' },
             { column_id: 'EMAIL', string_value: 'trinity@matrix.io' },
             { column_id: 'PHONE_NUMBER', string_value: '+1 555-0200' },
           ],
           campaign_name: 'Zion Cloud Search Ads',
-        },
-        { brandId: 'brand-1' },
+        }),
       );
 
       expect(response.received).toBe(true);
