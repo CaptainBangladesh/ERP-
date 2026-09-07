@@ -41,6 +41,9 @@ import { DmFlowsService } from './dm-flows.service';
 import { InboxController } from './inbox.controller';
 import { DmFlowsController } from './dm-flows.controller';
 import { SocialInboxWebhooksController } from './social-inbox-webhooks.controller';
+import { TrackingService } from './tracking.service';
+import { TrackingController } from './tracking.controller';
+import { PublicTrackingController } from './public-tracking.controller';
 
 /**
  * Marketing.
@@ -68,6 +71,8 @@ import { SocialInboxWebhooksController } from './social-inbox-webhooks.controlle
     InboxController,
     DmFlowsController,
     SocialInboxWebhooksController,
+    TrackingController,
+    PublicTrackingController,
   ],
   providers: [
     MarketingService,
@@ -105,6 +110,7 @@ import { SocialInboxWebhooksController } from './social-inbox-webhooks.controlle
     NurtureSequencesService,
     InboxService,
     DmFlowsService,
+    TrackingService,
   ],
   exports: [
     CryptoService,
@@ -124,6 +130,7 @@ import { SocialInboxWebhooksController } from './social-inbox-webhooks.controlle
     NurtureSequencesService,
     InboxService,
     DmFlowsService,
+    TrackingService,
   ],
 })
 export class MarketingModule {}

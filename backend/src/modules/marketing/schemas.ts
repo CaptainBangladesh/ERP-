@@ -755,3 +755,43 @@ export const SocialInboxWebhookBody = passthroughValidator({
   conversationId: optional(text({ missing: 'Enter conversation ID.', maxLength: 200, tooLong: 'Conversation ID too long.' })),
   brandId: optional(identifier({ missing: 'Select brand.', invalid: 'Invalid brand ID.' })),
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Web Tracking & Visitor Analytics (Ticket 09)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CreateTrackingSiteBody = validator({
+  brandId: identifier({ missing: 'Select brand.', invalid: 'Invalid brand ID.' }),
+  name: text({ missing: 'Enter site name.', maxLength: 120, tooLong: 'Name must be 120 characters or fewer.' }),
+  domain: text({ missing: 'Enter domain.', maxLength: 255, tooLong: 'Domain must be 255 characters or fewer.' }),
+  isActive: optional(rule<boolean>('Invalid active status.', (v) => typeof v === 'boolean' ? accepted(v) : refused('Must be boolean.'))),
+});
+
+export const CollectEventBody = passthroughValidator({
+  pixelKey: text({ missing: 'Enter pixel key.', maxLength: 128, tooLong: 'Pixel key too long.' }),
+  visitorId: text({ missing: 'Enter visitor ID.', maxLength: 128, tooLong: 'Visitor ID too long.' }),
+  sessionId: optional(text({ missing: 'Enter session ID.', maxLength: 128, tooLong: 'Session ID too long.' })),
+  path: text({ missing: 'Enter path.', maxLength: 2048, tooLong: 'Path too long.' }),
+  referrer: optional(text({ missing: 'Enter referrer.', maxLength: 2048, tooLong: 'Referrer too long.' })),
+  utmSource: optional(text({ missing: 'Enter UTM source.', maxLength: 120, tooLong: 'UTM source too long.' })),
+  utmMedium: optional(text({ missing: 'Enter UTM medium.', maxLength: 120, tooLong: 'UTM medium too long.' })),
+  utmCampaign: optional(text({ missing: 'Enter UTM campaign.', maxLength: 120, tooLong: 'UTM campaign too long.' })),
+  utmTerm: optional(text({ missing: 'Enter UTM term.', maxLength: 120, tooLong: 'UTM term too long.' })),
+  utmContent: optional(text({ missing: 'Enter UTM content.', maxLength: 120, tooLong: 'UTM content too long.' })),
+  country: optional(text({ missing: 'Enter country.', maxLength: 10, tooLong: 'Country too long.' })),
+  device: optional(text({ missing: 'Enter device.', maxLength: 50, tooLong: 'Device too long.' })),
+  browser: optional(text({ missing: 'Enter browser.', maxLength: 50, tooLong: 'Browser too long.' })),
+  screen: optional(text({ missing: 'Enter screen.', maxLength: 50, tooLong: 'Screen too long.' })),
+});
+
+export const TRACKING_SITE_LIST: ListSpec = {
+  defaultSort: 'createdAt',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    domain: { type: 'text', sortable: true, filterable: true, searchable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    isActive: { type: 'boolean', sortable: true, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+

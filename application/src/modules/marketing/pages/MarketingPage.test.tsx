@@ -692,6 +692,92 @@ describe('MarketingPage', () => {
     expect(screen.getByRole('button', { name: /Convert to CRM Lead/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Send Reply/i })).toBeInTheDocument();
   });
+
+  it('switches to tracking & analytics tab and displays tracked sites and analytics metrics', async () => {
+    server.use(
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [{ id: 'brand-1', name: 'Apex Athletics', slug: 'apex-athletics' }],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.brandSocialAccounts('brand-1'), () =>
+        HttpResponse.json({ items: [], page: { number: 1, size: 25, total: 0, pages: 0 } }),
+      ),
+      http.get(MARKETING_PATHS.expiringAccounts('brand-1'), () =>
+        HttpResponse.json({ thresholdDays: 7, accounts: [] }),
+      ),
+      http.get(MARKETING_PATHS.trackingSites, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'site-1',
+              brandId: 'brand-1',
+              name: 'Apex Online Store',
+              domain: 'store.apexathletics.com',
+              pixelKey: 'pix_apex_123',
+              isActive: true,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              _count: { pageViews: 42 },
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.trackingSiteAnalytics('site-1'), () =>
+        HttpResponse.json({
+          siteId: 'site-1',
+          totalPageviews: 42,
+          totalVisitors: 28,
+          totalSessions: 30,
+          daily: [
+            {
+              date: '2026-09-06',
+              pageviews: 42,
+              visitors: 28,
+              sessions: 30,
+            },
+          ],
+          topPages: [{ path: '/products/gear', pageviews: 24 }],
+          topReferrers: [{ referrer: 'google.com', pageviews: 30 }],
+          campaigns: [{ utmCampaign: 'Spring_Sale', pageviews: 42, visitors: 28 }],
+          devices: [{ device: 'mobile', count: 35 }],
+        }),
+      ),
+      http.get(MARKETING_PATHS.analyticsOverview, () =>
+        HttpResponse.json({
+          brandId: 'brand-1',
+          totalPageviews: 42,
+          totalVisitors: 28,
+          totalSessions: 30,
+          daily: [],
+          topPages: [],
+          topReferrers: [],
+          campaigns: [],
+          devices: [],
+        }),
+      ),
+      http.get(MARKETING_PATHS.marketings, () =>
+        HttpResponse.json({ items: [], page: { number: 1, size: 25, total: 0, pages: 0 } }),
+      ),
+    );
+
+    const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Click Tracking & Analytics tab
+    const analyticsTab = await screen.findByRole('button', { name: /Tracking & Analytics/i });
+    await user.click(analyticsTab);
+
+    // Verify Tracking & Analytics view rendered
+    expect(await screen.findByText('First-Party Web Tracking & Visitor Analytics')).toBeInTheDocument();
+    expect((await screen.findAllByText('Apex Online Store'))[0]).toBeInTheDocument();
+    expect((await screen.findAllByText('store.apexathletics.com'))[0]).toBeInTheDocument();
+    expect((await screen.findAllByText('42'))[0]).toBeInTheDocument();
+    expect((await screen.findAllByText('28'))[0]).toBeInTheDocument();
+    expect(await screen.findByText('Spring_Sale')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Register Tracked Site/i })).toBeInTheDocument();
+  });
 });
 
 

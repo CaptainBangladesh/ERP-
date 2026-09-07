@@ -79,6 +79,13 @@ export const MARKETING_PATHS = {
   dmFlows: `/${MARKETING_ROUTE}/dm-flows`,
   dmFlow: (id: string) => `/${MARKETING_ROUTE}/dm-flows/${id}`,
   socialInboxWebhooks: (platform: string) => `/${MARKETING_ROUTE}/webhooks/social-inbox/${platform}`,
+  // Web Tracking & Visitor Analytics
+  trackingSites: `/${MARKETING_ROUTE}/tracking-sites`,
+  trackingSite: (id: string) => `/${MARKETING_ROUTE}/tracking-sites/${id}`,
+  trackingSiteAnalytics: (id: string) => `/${MARKETING_ROUTE}/tracking-sites/${id}/analytics`,
+  analyticsOverview: `/${MARKETING_ROUTE}/analytics/overview`,
+  pixelJs: `/${MARKETING_ROUTE}/pixel.js`,
+  collect: `/${MARKETING_ROUTE}/collect`,
 } as const;
 
 /**
@@ -555,6 +562,7 @@ export const MARKETING_ERROR_CODES = {
   smartLinkSlugTaken: 'smart_link_slug_taken',
   adSyncNotFound: 'ad_sync_not_found',
   invalidUtmUrl: 'invalid_utm_url',
+  trackingSiteNotFound: 'tracking_site_not_found',
 } as const;
 
 // ─── Campaigns & UTM Tracking ──────────────────────────────────────────────────────
@@ -1077,3 +1085,90 @@ export interface SocialInboxWebhookResponse {
   autoReplied?: boolean;
   flowId?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Web Tracking & Visitor Analytics (Ticket 09)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TrackingSiteSummary {
+  id: string;
+  brandId: string;
+  name: string;
+  domain: string;
+  pixelKey: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: {
+    pageViews?: number;
+  };
+}
+
+export type TrackingSiteResponse = TrackingSiteSummary;
+export type TrackingSiteListResponse = ListResponse<TrackingSiteSummary>;
+
+export interface CreateTrackingSiteRequest {
+  brandId: string;
+  name: string;
+  domain: string;
+  isActive?: boolean;
+}
+
+export interface CollectEventRequest {
+  pixelKey: string;
+  visitorId: string;
+  sessionId?: string;
+  path: string;
+  referrer?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmTerm?: string;
+  utmContent?: string;
+  country?: string;
+  device?: string;
+  browser?: string;
+  screen?: string;
+}
+
+export interface DailyAnalyticsItem {
+  date: string;
+  pageviews: number;
+  visitors: number;
+  sessions: number;
+}
+
+export interface PageAnalyticsItem {
+  path: string;
+  pageviews: number;
+}
+
+export interface ReferrerAnalyticsItem {
+  referrer: string;
+  pageviews: number;
+}
+
+export interface UtmCampaignAnalyticsItem {
+  utmCampaign: string;
+  pageviews: number;
+  visitors: number;
+}
+
+export interface DeviceAnalyticsItem {
+  device: string;
+  count: number;
+}
+
+export interface TrackingAnalyticsResponse {
+  siteId?: string;
+  brandId?: string;
+  totalPageviews: number;
+  totalVisitors: number;
+  totalSessions: number;
+  daily: DailyAnalyticsItem[];
+  topPages: PageAnalyticsItem[];
+  topReferrers: ReferrerAnalyticsItem[];
+  campaigns: UtmCampaignAnalyticsItem[];
+  devices: DeviceAnalyticsItem[];
+}
+

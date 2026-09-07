@@ -27,6 +27,7 @@ import { SocialCalendarPage } from './SocialCalendarPage';
 import { CampaignsManager } from '../components/CampaignsManager';
 import { LeadGenManager } from '../components/LeadGenManager';
 import { SocialInboxManager } from '../components/SocialInboxManager';
+import { TrackingManager } from '../components/TrackingManager';
 
 /**
  * Marketing & Social Media Command Center.
@@ -37,9 +38,9 @@ import { SocialInboxManager } from '../components/SocialInboxManager';
 export function MarketingPage({
   initialTab = 'vault',
 }: {
-  initialTab?: 'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'inbox' | 'records' | 'queue';
+  initialTab?: 'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'inbox' | 'analytics' | 'records' | 'queue';
 } = {}) {
-  const [activeTab, setActiveTab] = useState<'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'inbox' | 'records' | 'queue'>(() => {
+  const [activeTab, setActiveTab] = useState<'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'inbox' | 'analytics' | 'records' | 'queue'>(() => {
     if (typeof window !== 'undefined' && window.location.pathname.includes('/calendar')) {
       return 'calendar';
     }
@@ -204,6 +205,18 @@ export function MarketingPage({
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab('analytics')}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
+            activeTab === 'analytics'
+              ? 'border-slate-900 font-semibold text-slate-900'
+              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
+          }`}
+        >
+          <span>📊</span>
+          <span>Tracking & Analytics</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('queue')}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
             activeTab === 'queue'
@@ -312,6 +325,23 @@ export function MarketingPage({
               <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
               <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
                 Select a Brand workspace to view social direct messages, respond to customers, and configure keyword DM flows.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Tab: Tracking Pixel & Visitor Analytics (Ticket 09) */}
+      {activeTab === 'analytics' && (
+        <>
+          {activeBrand ? (
+            <TrackingManager brandId={activeBrand.id} brandName={activeBrand.name} />
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
+              <span className="text-3xl">📊</span>
+              <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
+              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
+                Select a Brand workspace to configure website tracking pixels and view visitor analytics.
               </p>
             </div>
           )}

@@ -1613,6 +1613,7 @@ model MarketingBrand {
   nurtureSequences NurtureSequence[]
   socialMessages   SocialMessage[]
   dmAutomationFlows DmAutomationFlow[]
+  trackingSites    TrackingSite[]
 
   @@unique([companyId, slug])
   @@index([companyId])
@@ -1962,3 +1963,56 @@ model DmAutomationFlow {
   @@index([triggerKeyword])
   @@map("dm_automation_flows")
 }
+
+/// A first-party tracked website domain and its client pixel configuration.
+model TrackingSite {
+  id        String         @id @default(uuid()) @db.Uuid
+  companyId String         @map("company_id") @db.Uuid
+  brandId   String         @map("brand_id") @db.Uuid
+  brand     MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name      String
+  domain    String
+  pixelKey  String         @unique @default(uuid()) @map("pixel_key")
+  isActive  Boolean        @default(true) @map("is_active")
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  pageViews PageViewEvent[]
+
+  @@index([companyId])
+  @@index([brandId])
+  @@index([pixelKey])
+  @@map("tracking_sites")
+}
+
+/// A real-time website pageview beacon event capturing visitor ID, path, referrer, UTM attribution, and device.
+model PageViewEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  companyId      String       @map("company_id") @db.Uuid
+  trackingSiteId String       @map("tracking_site_id") @db.Uuid
+  trackingSite   TrackingSite @relation(fields: [trackingSiteId], references: [id], onDelete: Cascade)
+  visitorId      String       @map("visitor_id")
+  sessionId      String?      @map("session_id")
+  path           String
+  referrer       String?
+  utmSource      String?      @map("utm_source")
+  utmMedium      String?      @map("utm_medium")
+  utmCampaign    String?      @map("utm_campaign")
+  utmTerm        String?      @map("utm_term")
+  utmContent     String?      @map("utm_content")
+  country        String?
+  device         String?
+  browser        String?
+  ipHash         String?      @map("ip_hash")
+  timestamp      DateTime     @default(now())
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@index([trackingSiteId])
+  @@index([visitorId])
+  @@index([sessionId])
+  @@index([timestamp])
+  @@index([utmCampaign])
+  @@map("page_view_events")
+}
+

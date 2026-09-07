@@ -33,6 +33,7 @@ export const manifest: ModuleManifest = {
     '20260906160000_campaigns_and_attribution_engine',
     '20260906170000_inbound_lead_gen_and_crm_handoff',
     '20260906180000_unified_social_inbox_and_dm_flows',
+    '20260906190000_tracking_pixel_and_visitor_analytics',
   ],
 
   models: [
@@ -52,6 +53,8 @@ export const manifest: ModuleManifest = {
     'NurtureSequence',
     'SocialMessage',
     'DmAutomationFlow',
+    'TrackingSite',
+    'PageViewEvent',
   ],
 
   permissions: [
@@ -81,6 +84,8 @@ export const manifest: ModuleManifest = {
     'marketing:inbox:write',
     'marketing:dm-flows:read',
     'marketing:dm-flows:write',
+    'marketing:tracking:read',
+    'marketing:tracking:write',
   ],
 
   navigation: [

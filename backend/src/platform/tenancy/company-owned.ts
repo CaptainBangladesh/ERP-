@@ -249,6 +249,8 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   NurtureSequence: { kind: 'company-owned' },
   SocialMessage: { kind: 'company-owned' },
   DmAutomationFlow: { kind: 'company-owned' },
+  TrackingSite: { kind: 'company-owned' },
+  PageViewEvent: { kind: 'company-owned' },
 };
 
 /**
