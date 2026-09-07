@@ -863,6 +863,7 @@ model Lead {
   emailSends LeadEmailSend[]
   assignees LeadAssignee[]
   playbookEnrollments PlaybookEnrollment[]
+  approachPlan ApproachPlan?
 
   @@index([companyId])
   @@index([companyId, groupId])
@@ -1433,6 +1434,63 @@ model PlaybookEnrollment {
   @@unique([companyId, leadId])
   @@index([companyId])
   @@map("playbook_enrollments")
+}
+
+/// A lead's approach plan — the strategy surface on the lead workspace: how we'll approach *this*
+/// prospect. Intent, not history: it sits beside the activity timeline, never in it. A hybrid of
+/// four structured fields a rep can scan across leads and a free `notes` block for the rest; all
+/// nullable, because a plan may be partial. One per lead (`leadId @unique`), upserted in place.
+model ApproachPlan {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  leadId          String   @unique @map("lead_id") @db.Uuid
+  lead            Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  angle           String?
+  decisionMakers  String?  @map("decision_makers")
+  objections      String?
+  nextSteps       String?  @map("next_steps")
+  notes           String?
+  /// The last rep to edit the plan — a plain platform `User` reference, no FK, resolved to a name
+  /// by the frontend the same way lead ownership is.
+  updatedByUserId String   @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@map("approach_plans")
+}
+
+/// A rep's personal planner notes — their own day/week plan and free notes, private to them. The
+/// "my tasks" half of the personal planner is not here: it reads the existing activities list
+/// filtered to the rep's assigned tasks. One row per rep per company.
+model PlannerNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  /// The rep whose notes these are — a plain platform `User` reference, no FK. `@@unique` with
+  /// `companyId` makes the planner a singleton per rep.
+  userId    String   @map("user_id") @db.Uuid
+  body      String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, userId])
+  @@index([companyId])
+  @@map("planner_notes")
+}
+
+/// The team's shared plan — one strategy/targets note the whole team sees, one row per company.
+/// Deliberately lean: a notes doc, not a project tool. Reads on the team gate, writes manager-only.
+model TeamPlan {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @unique @map("company_id") @db.Uuid
+  body            String   @default("")
+  /// The last manager to edit the plan — plain `User` reference, no FK, resolved by the frontend.
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@map("team_plans")
 }
 
 /// An email campaign targeted at a segment of leads.

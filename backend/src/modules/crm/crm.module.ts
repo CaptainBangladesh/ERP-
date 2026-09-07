@@ -39,6 +39,8 @@ import { ScriptsController } from './scripts.controller';
 import { ScriptsService } from './scripts.service';
 import { PlaybooksController } from './playbooks.controller';
 import { PlaybooksService } from './playbooks.service';
+import { PlannerController } from './planner.controller';
+import { PlannerService } from './planner.service';
 
 import { PublicCaptureController } from './public-capture.controller';
 import { PublicCampaignsController } from './public-campaigns.controller';
@@ -65,6 +67,7 @@ import { PublicLeadEmailController } from './public-lead-email.controller';
     PlanningController,
     ScriptsController,
     PlaybooksController,
+    PlannerController,
     PublicCaptureController,
     PublicCampaignsController,
     PublicLeadEmailController,
@@ -110,6 +113,7 @@ import { PublicLeadEmailController } from './public-lead-email.controller';
     PlanningService,
     ScriptsService,
     PlaybooksService,
+    PlannerService,
   ],
 })
 export class CrmModule {}

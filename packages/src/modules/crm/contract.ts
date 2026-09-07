@@ -1904,4 +1904,95 @@ export interface LeadSourcePerformanceResponse {
   totalConverted?: number | LeadSourcePerformanceSummary;
 }
 
+// ─── planner & notes (ticket 04) ───────────────────────────────────────────────────────
+
+/**
+ * The three planning/notes surfaces of Sales Enablement & Planning — the "where we put our
+ * intent" layer, distinct from the activity timeline (which is *history*):
+ *
+ * - the **approach plan** — one per lead, hung off the lead workspace: how we'll approach *this*
+ *   prospect. A hybrid — four structured intent fields (`angle`, `decisionMakers`, `objections`,
+ *   `nextSteps`) that prompt a rep on what a plan should contain and read back scannably, plus a
+ *   free `notes` block for everything the fields don't hold. Reads on `crm:leads:read`, writes on
+ *   `crm:leads:write` — planning a lead is working it. Upserted whole (`PUT`), one row per lead.
+ * - the **personal planner** — a rep's own home. "My tasks" is *not* a new endpoint: the workspace
+ *   reads the existing `GET /activities?filter.assignedToUserId=<me>&filter.type=task`. This surface
+ *   adds only the rep's own free notes / day-week plan (`PLANNER_NOTE_PATHS`), private to them,
+ *   riding on `crm:activities:read` (every rep working their slate has it).
+ * - the **team plan** — one shared strategy/targets note the whole team sees, one row per company.
+ *   Reads on `crm:team:read` (the team gate), writes on `crm:team:manage` (a manager sets the plan).
+ *
+ * Deliberately lean: notes docs, not a project tool. No scheduler, no versioning (ADR 0009).
+ */
+export const APPROACH_PLAN_PATHS = {
+  byLead: (leadId: string) => `/${CRM_ROUTE}/leads/${leadId}/approach-plan`,
+} as const;
+
+export const PLANNER_NOTE_PATHS = {
+  /** The current rep's own planner notes — always their own, no id in the path. */
+  myNotes: `/${CRM_ROUTE}/planner/notes`,
+} as const;
+
+export const TEAM_PLAN_PATHS = {
+  teamPlan: `/${CRM_ROUTE}/team-plan`,
+} as const;
+
+/**
+ * A lead's approach plan. Every field is nullable — a plan may be partial, and a rep fills the
+ * fields that matter for this prospect. `GET` always returns this shape, even for a lead with no
+ * plan yet: an all-null plan with `updatedAt` null, so the workspace never has to special-case an
+ * empty body. `updatedByUserId`/`updatedAt` are the last edit; resolved to a name by the frontend
+ * the same way lead ownership is (no FK, no cached name).
+ */
+export interface ApproachPlanResponse {
+  leadId: string;
+  /** The strategic angle — the story or wedge we lead with on this prospect. */
+  angle: string | null;
+  /** Who has to say yes, and what we know about them. */
+  decisionMakers: string | null;
+  /** Objections we expect to hear, and how we'll answer them. */
+  objections: string | null;
+  /** The concrete moves we plan next — intent, not the logged history. */
+  nextSteps: string | null;
+  /** The free-notes escape hatch: anything the structured fields don't hold. */
+  notes: string | null;
+  updatedByUserId: string | null;
+  /** Null until the plan is first saved. */
+  updatedAt: string | null;
+}
+
+/**
+ * Save (upsert) a lead's approach plan. Every field is optional and clearable: a field sent blank
+ * or null is cleared to null, an absent field is left untouched, so the workspace can save one
+ * field at a time or the whole plan at once.
+ */
+export interface SaveApproachPlanRequest {
+  angle?: string | null;
+  decisionMakers?: string | null;
+  objections?: string | null;
+  nextSteps?: string | null;
+  notes?: string | null;
+}
+
+/** A rep's own planner notes. `updatedAt` is null until they first write something. */
+export interface PlannerNoteResponse {
+  body: string;
+  updatedAt: string | null;
+}
+
+export interface SavePlannerNoteRequest {
+  body: string;
+}
+
+/** The team's shared plan. `updatedByUserId`/`updatedAt` are null until a manager first writes it. */
+export interface TeamPlanResponse {
+  body: string;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+export interface SaveTeamPlanRequest {
+  body: string;
+}
+
 

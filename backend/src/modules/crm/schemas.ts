@@ -1069,6 +1069,51 @@ export const EnrollPlaybookBody = validator({
   playbookId: identifier({ missing: 'Choose a playbook.', invalid: 'That is not a playbook.' }),
 });
 
+// ─── planner & notes (ticket 04) ───────────────────────────────────────────────────────
+
+const PLAN_FIELD = {
+  missing: 'Enter something, or leave it blank.',
+  maxLength: 5000,
+  tooLong: 'That is too long — use 5000 characters or fewer.',
+} as const;
+
+const PLAN_NOTES = {
+  missing: 'Enter something, or leave it blank.',
+  maxLength: 20000,
+  tooLong: 'That is too long.',
+} as const;
+
+/**
+ * A lead's approach plan, upserted whole. Every field is clearable: absent leaves it untouched,
+ * blank or null clears it to null. The structured fields cap shorter than the free `notes` block.
+ */
+export const SaveApproachPlanBody = validator({
+  angle: clearable(text(PLAN_FIELD)),
+  decisionMakers: clearable(text(PLAN_FIELD)),
+  objections: clearable(text(PLAN_FIELD)),
+  nextSteps: clearable(text(PLAN_FIELD)),
+  notes: clearable(text(PLAN_NOTES)),
+});
+
+/**
+ * A free-notes body — a rep's planner or the team plan. Empty is valid (it clears the note), so
+ * unlike `text` this accepts the empty string; only an over-long body is refused. Whitespace and
+ * newlines are preserved as typed.
+ */
+const NOTE_BODY = rule<string>('Enter your notes.', (value) => {
+  const given = typeof value === 'string' ? value : '';
+  if (given.length > 20000) return refused('That is too long.');
+  return accepted(given);
+});
+
+export const SavePlannerNoteBody = validator({
+  body: NOTE_BODY,
+});
+
+export const SaveTeamPlanBody = validator({
+  body: NOTE_BODY,
+});
+
 
 
 

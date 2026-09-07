@@ -58,8 +58,8 @@ Tailwind/shared-UI gotcha: new shared components need the `@source` line — see
 **Four tickets, two parallel tracks** (deliberately coarser than session-sized — the driver
 prefers fewer, larger units and breaks sub-steps out at build time): 01 task assignee (shared
 foundation), 02 planning workspace (calendar + heatmap + coordination + nav section), 03 scripts +
-playbooks + guided selling, 04 planner & notes. Frontier: **01 and 03** (03 is independent, runs in
-parallel with the 01→02→04 track).
+playbooks + guided selling, 04 planner & notes. Frontier: **none — all four are resolved.** (03 was
+independent and ran in parallel with the 01→02→04 track.) This map is complete.
 
 Use `/grilling` and `/domain-modeling` throughout; `/prototype` when a UI shape needs a concrete
 artifact to react to (esp. the planning-workspace nav and the planner surfaces); the `dataviz`
@@ -90,6 +90,19 @@ already resolved above.
   (ticket 01). Surfaces: a **Guidance** tab on the lead workspace, and a lean `/crm/playbooks`
   authoring page (nav order 57). Deal-stage/tag keying deferred — the shipped surface is the lead
   workspace, whose relevance dimension is `status`. See `issues/03-scripts-playbooks-guided-selling.md`.
+- **04 planner & notes (resolved).** The open structured-vs-free question settled as a **hybrid**:
+  `ApproachPlan` carries four structured intent fields (`angle`, `decisionMakers`, `objections`,
+  `nextSteps`) plus a free `notes` block — the fields prompt what a plan should hold and read back
+  scannably, the block catches the rest. Three company-owned singletons: `ApproachPlan`
+  (`leadId @unique`), `PlannerNote` (`@@unique([companyId, userId])`, private to a rep) and
+  `TeamPlan` (`companyId @unique`, shared). All upserted whole via `PUT`; `GET` on the approach plan
+  always returns the shape (an all-null empty plan) rather than a null body. **No new permission
+  strings**: the approach plan rides on `crm:leads:read`/`:write` (planning a lead is working it),
+  the personal planner on `crm:activities:read`, the team plan reads on `crm:team:read` and writes
+  on `crm:team:manage`. **"My tasks" is not a new endpoint** — the planner reads the existing
+  `GET /activities?filter.assignedToUserId=<me>&filter.type=task` from ticket 01. Surfaces: an
+  **Approach plan** tab on the lead workspace, `/crm/planner` ("My Planner", nav 58) and
+  `/crm/team-plan` ("Team Plan", nav 59). See `issues/04-planner-and-notes.md`.
 
 ## Not yet specified
 

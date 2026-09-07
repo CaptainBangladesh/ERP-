@@ -27,6 +27,7 @@ export const manifest: ModuleManifest = {
     '20260901002000_lead_submission_mapped_fields',
     '20260906000000_activity_assignee',
     '20260906010000_scripts_playbooks',
+    '20260906020000_planner_and_notes',
   ],
 
   models: [
@@ -53,6 +54,9 @@ export const manifest: ModuleManifest = {
     'Playbook',
     'PlaybookStep',
     'PlaybookEnrollment',
+    'ApproachPlan',
+    'PlannerNote',
+    'TeamPlan',
     'MailboxConnection',
     'MailboxAuthState',
     'Unsubscribe',
@@ -163,6 +167,19 @@ export const manifest: ModuleManifest = {
      * and next-best-action on every lead they work.
      */
     { label: 'Playbooks', path: '/crm/playbooks', order: 57, permission: 'crm:playbooks:write' },
+    /**
+     * The personal planning home — the rep's own assigned tasks (read from the activities list,
+     * no new endpoint) alongside their private planner notes. Gated by `crm:activities:read`, the
+     * permission every rep working their own slate already has, so a rep without the team gate
+     * still gets their own planner.
+     */
+    { label: 'My Planner', path: '/crm/planner', order: 58, permission: 'crm:activities:read' },
+    /**
+     * The team's shared plan — one strategy/targets note the whole team sees. Reading rides on
+     * `crm:team:read` (the team gate that governs the whole Planning track); a manager with
+     * `crm:team:manage` is the one who edits it.
+     */
+    { label: 'Team Plan', path: '/crm/team-plan', order: 59, permission: 'crm:team:read' },
   ],
 
   events: {

@@ -207,6 +207,12 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   Playbook: { kind: 'company-owned' },
   PlaybookStep: { kind: 'company-owned' },
   PlaybookEnrollment: { kind: 'company-owned' },
+  // Planner & notes surfaces. Ordinary company-owned tables: a lead's approach plan, a rep's own
+  // planner notes and the team's shared plan are all just this company's own writing, edited in
+  // place — nothing restricted or immutable.
+  ApproachPlan: { kind: 'company-owned' },
+  PlannerNote: { kind: 'company-owned' },
+  TeamPlan: { kind: 'company-owned' },
   Campaign: { kind: 'company-owned' },
   CampaignRecipient: { kind: 'company-owned' },
   Unsubscribe: { kind: 'company-owned' },
