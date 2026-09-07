@@ -31,6 +31,7 @@ export const manifest: ModuleManifest = {
     '20260906140000_marketing_jobs_queue',
     '20260906150000_social_publishing_engine',
     '20260906160000_campaigns_and_attribution_engine',
+    '20260906170000_inbound_lead_gen_and_crm_handoff',
   ],
 
   models: [
@@ -45,6 +46,9 @@ export const manifest: ModuleManifest = {
     'MarketingCampaign',
     'SmartLink',
     'AdAccountSync',
+    'LeadCaptureForm',
+    'LeadCaptureSubmission',
+    'NurtureSequence',
   ],
 
   permissions: [
@@ -66,6 +70,10 @@ export const manifest: ModuleManifest = {
     'marketing:smart-links:write',
     'marketing:ad-sync:read',
     'marketing:ad-sync:write',
+    'marketing:forms:read',
+    'marketing:forms:write',
+    'marketing:nurture:read',
+    'marketing:nurture:write',
   ],
 
   navigation: [
@@ -78,12 +86,10 @@ export const manifest: ModuleManifest = {
   ],
 
   /**
-   * Nothing yet, and that is the right default. A declared event is a promise the assembler
-   * enforces; one nobody consumes is a promise made to nobody. Declare it when something
-   * listens.
+   * Domain events emitted by the marketing engine.
    */
   events: {
-    emits: [],
+    emits: ['marketing.lead.captured'],
     consumes: [],
   },
 };

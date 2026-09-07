@@ -25,6 +25,7 @@ import { JobQueueMonitor } from '../components/JobQueueMonitor';
 import { PublishingManager } from '../components/PublishingManager';
 import { SocialCalendarPage } from './SocialCalendarPage';
 import { CampaignsManager } from '../components/CampaignsManager';
+import { LeadGenManager } from '../components/LeadGenManager';
 
 /**
  * Marketing & Social Media Command Center.
@@ -35,9 +36,9 @@ import { CampaignsManager } from '../components/CampaignsManager';
 export function MarketingPage({
   initialTab = 'vault',
 }: {
-  initialTab?: 'vault' | 'calendar' | 'publishing' | 'campaigns' | 'records' | 'queue';
+  initialTab?: 'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'records' | 'queue';
 } = {}) {
-  const [activeTab, setActiveTab] = useState<'vault' | 'calendar' | 'publishing' | 'campaigns' | 'records' | 'queue'>(() => {
+  const [activeTab, setActiveTab] = useState<'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'records' | 'queue'>(() => {
     if (typeof window !== 'undefined' && window.location.pathname.includes('/calendar')) {
       return 'calendar';
     }
@@ -178,6 +179,18 @@ export function MarketingPage({
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab('leadgen')}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
+            activeTab === 'leadgen'
+              ? 'border-slate-900 font-semibold text-slate-900'
+              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
+          }`}
+        >
+          <span>🧲</span>
+          <span>Inbound & CRM</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('queue')}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
             activeTab === 'queue'
@@ -252,6 +265,23 @@ export function MarketingPage({
               <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
               <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
                 Select a Brand workspace to create campaigns, generate UTM links, and manage SmartLinks.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Tab: Inbound & CRM Handoff (Ticket 07) */}
+      {activeTab === 'leadgen' && (
+        <>
+          {activeBrand ? (
+            <LeadGenManager brandId={activeBrand.id} brandName={activeBrand.name} />
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
+              <span className="text-3xl">🧲</span>
+              <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
+              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
+                Select a Brand workspace to create web forms, ad lead webhooks, and nurture sequences.
               </p>
             </div>
           )}

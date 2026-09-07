@@ -518,5 +518,93 @@ describe('MarketingPage', () => {
     expect(screen.getByRole('button', { name: /SmartLinks/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Paid Ad Sync/i })).toBeInTheDocument();
   });
+
+  it('renders Inbound & CRM Handoff tab and displays forms, webhooks, and nurture flows', async () => {
+    server.use(
+      http.get(MARKETING_PATHS.brands, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'brand-1',
+              companyId: 'company-1',
+              name: 'Apex Athletics',
+              slug: 'apex-athletics',
+              timezone: 'UTC',
+              storageQuotaMb: 1000,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.forms, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'form-1',
+              brandId: 'brand-1',
+              name: 'Enterprise Demo Request',
+              description: 'Captured via company landing page',
+              schemaFields: [
+                { name: 'name', label: 'Name', type: 'text', required: true },
+                { name: 'email', label: 'Email', type: 'email', required: true },
+              ],
+              embedCode: '<form></form>',
+              submitCount: 42,
+              isActive: true,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.nurtureSequences, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'seq-1',
+              brandId: 'brand-1',
+              name: 'Inbound Welcome Series',
+              description: 'Follow-up email drip',
+              triggerEvent: 'marketing.lead.captured',
+              steps: [
+                { orderIndex: 0, delayMinutes: 0, emailSubject: 'Welcome!', emailBody: 'Hi' },
+              ],
+              status: 'ACTIVE',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+          page: { number: 1, size: 25, total: 1, pages: 1 },
+        }),
+      ),
+      http.get(MARKETING_PATHS.brandSocialAccounts('brand-1'), () =>
+        HttpResponse.json({ items: [], page: { number: 1, size: 25, total: 0, pages: 0 } }),
+      ),
+      http.get(MARKETING_PATHS.expiringAccounts('brand-1'), () =>
+        HttpResponse.json({ thresholdDays: 7, accounts: [] }),
+      ),
+      http.get(MARKETING_PATHS.marketings, () =>
+        HttpResponse.json({ items: [], page: { number: 1, size: 25, total: 0, pages: 0 } }),
+      ),
+    );
+
+    const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
+
+    // Click Inbound & CRM tab
+    const leadGenTab = await screen.findByRole('button', { name: /Inbound & CRM/i });
+    await user.click(leadGenTab);
+
+    // Verify inbound components rendered
+    expect(await screen.findByText('Inbound Lead Gen & CRM Handoff')).toBeInTheDocument();
+    expect(screen.getByText('Enterprise Demo Request')).toBeInTheDocument();
+    expect(screen.getByText(/42 leads/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /\+ New Web Form/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Ad Webhooks/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Nurture Sequences/i })).toBeInTheDocument();
+  });
 });
+
 

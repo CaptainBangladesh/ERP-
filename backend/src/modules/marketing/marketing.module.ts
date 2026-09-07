@@ -29,6 +29,13 @@ import { SmartLinksController } from './smart-links.controller';
 import { PublicSmartLinksController } from './public-smart-links.controller';
 import { AdSyncService } from './ad-sync.service';
 import { AdSyncController } from './ad-sync.controller';
+import { CrmBridgeService } from './crm-bridge.service';
+import { FormsService } from './forms.service';
+import { FormsController } from './forms.controller';
+import { PublicFormsController } from './public-forms.controller';
+import { NurtureSequencesService } from './nurture-sequences.service';
+import { NurtureSequencesController } from './nurture-sequences.controller';
+import { AdWebhooksController } from './ad-webhooks.controller';
 
 /**
  * Marketing.
@@ -49,6 +56,10 @@ import { AdSyncController } from './ad-sync.controller';
     SmartLinksController,
     PublicSmartLinksController,
     AdSyncController,
+    FormsController,
+    PublicFormsController,
+    NurtureSequencesController,
+    AdWebhooksController,
   ],
   providers: [
     MarketingService,
@@ -81,6 +92,9 @@ import { AdSyncController } from './ad-sync.controller';
     CampaignsService,
     SmartLinksService,
     AdSyncService,
+    CrmBridgeService,
+    FormsService,
+    NurtureSequencesService,
   ],
   exports: [
     CryptoService,
@@ -95,6 +109,9 @@ import { AdSyncController } from './ad-sync.controller';
     CampaignsService,
     SmartLinksService,
     AdSyncService,
+    CrmBridgeService,
+    FormsService,
+    NurtureSequencesService,
   ],
 })
 export class MarketingModule {}

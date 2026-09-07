@@ -244,6 +244,9 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   MarketingCampaign: { kind: 'company-owned' },
   SmartLink: { kind: 'company-owned' },
   AdAccountSync: { kind: 'company-owned' },
+  LeadCaptureForm: { kind: 'company-owned' },
+  LeadCaptureSubmission: { kind: 'company-owned' },
+  NurtureSequence: { kind: 'company-owned' },
 };
 
 /**

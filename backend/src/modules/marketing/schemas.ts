@@ -583,5 +583,85 @@ export const AD_SYNC_LIST: ListSpec = {
   },
 };
 
+// ─── Inbound Lead Gen & CRM Handoff (Ticket 07) ──────────────────────────────────
+
+export const CreateLeadCaptureFormBody = validator({
+  brandId: identifier({ missing: 'Select a brand.', invalid: 'Invalid brand ID.' }),
+  name: text({ missing: 'Enter form name.', maxLength: 150, tooLong: 'Form name too long.' }),
+  description: optional(text({ missing: 'Enter description.', maxLength: 500, tooLong: 'Description too long.' })),
+  schemaFields: optional(jsonArray('schema fields')),
+});
+
+export const UpdateLeadCaptureFormBody = validator({
+  name: optional(text({ missing: 'Enter form name.', maxLength: 150, tooLong: 'Form name too long.' })),
+  description: optional(text({ missing: 'Enter description.', maxLength: 500, tooLong: 'Description too long.' })),
+  schemaFields: optional(jsonArray('schema fields')),
+  isActive: optional(rule<boolean>('Invalid active status.', (v) => typeof v === 'boolean' ? accepted(v) : refused('Must be boolean.'))),
+});
+
+export const SubmitPublicFormBody = validator({
+  fields: jsonObject('form fields'),
+  utm: optional(jsonObject('UTM parameters')),
+});
+
+export const CreateNurtureSequenceBody = validator({
+  brandId: identifier({ missing: 'Select a brand.', invalid: 'Invalid brand ID.' }),
+  name: text({ missing: 'Enter sequence name.', maxLength: 150, tooLong: 'Sequence name too long.' }),
+  description: optional(text({ missing: 'Enter description.', maxLength: 500, tooLong: 'Description too long.' })),
+  triggerEvent: text({ missing: 'Enter trigger event.', maxLength: 100, tooLong: 'Trigger event too long.' }),
+  steps: optional(jsonArray('steps')),
+});
+
+export const UpdateNurtureSequenceBody = validator({
+  name: optional(text({ missing: 'Enter sequence name.', maxLength: 150, tooLong: 'Sequence name too long.' })),
+  description: optional(text({ missing: 'Enter description.', maxLength: 500, tooLong: 'Description too long.' })),
+  triggerEvent: optional(text({ missing: 'Enter trigger event.', maxLength: 100, tooLong: 'Trigger event too long.' })),
+  steps: optional(jsonArray('steps')),
+  status: optional(text({ missing: 'Enter status.', maxLength: 30, tooLong: 'Status too long.' })),
+});
+
+export const AdWebhookBody = validator({
+  platform: optional(text({ missing: 'Enter platform.', maxLength: 50, tooLong: 'Platform too long.' })),
+  brandId: optional(identifier({ missing: 'Select brand.', invalid: 'Invalid brand ID.' })),
+  companyId: optional(identifier({ missing: 'Select company.', invalid: 'Invalid company ID.' })),
+  leadData: optional(jsonObject('lead data')),
+  field_data: optional(jsonArray('field data')),
+  formId: optional(text({ missing: 'Enter form ID.', maxLength: 100, tooLong: 'Form ID too long.' })),
+  adAccountId: optional(text({ missing: 'Enter ad account ID.', maxLength: 100, tooLong: 'Ad account ID too long.' })),
+  email: optional(text({ missing: 'Enter email.', maxLength: 200, tooLong: 'Email too long.' })),
+  name: optional(text({ missing: 'Enter name.', maxLength: 200, tooLong: 'Name too long.' })),
+  phone: optional(text({ missing: 'Enter phone.', maxLength: 50, tooLong: 'Phone too long.' })),
+  utmSource: optional(text({ missing: 'Enter UTM source.', maxLength: 100, tooLong: 'UTM source too long.' })),
+  utmMedium: optional(text({ missing: 'Enter UTM medium.', maxLength: 100, tooLong: 'UTM medium too long.' })),
+  utmCampaign: optional(text({ missing: 'Enter UTM campaign.', maxLength: 100, tooLong: 'UTM campaign too long.' })),
+});
+
+export const LEAD_FORM_LIST: ListSpec = {
+  defaultSort: 'name',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const LEAD_SUBMISSION_LIST: ListSpec = {
+  defaultSort: 'submittedAt',
+  fields: {
+    formId: { type: 'text', sortable: false, filterable: true },
+    submittedAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const NURTURE_SEQUENCE_LIST: ListSpec = {
+  defaultSort: 'name',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    status: { type: 'text', sortable: true, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
 
 

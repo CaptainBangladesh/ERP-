@@ -1609,6 +1609,8 @@ model MarketingBrand {
   campaigns      MarketingCampaign[]
   smartLinks     SmartLink[]
   adAccountSyncs AdAccountSync[]
+  leadForms      LeadCaptureForm[]
+  nurtureSequences NurtureSequence[]
 
   @@unique([companyId, slug])
   @@index([companyId])
@@ -1843,6 +1845,68 @@ model AdAccountSync {
   @@index([brandId])
   @@index([platform])
   @@map("ad_account_syncs")
+}
+
+/// Custom inbound lead capture form with customizable field schema, embed snippet, and submission tracking.
+model LeadCaptureForm {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  brandId      String   @map("brand_id") @db.Uuid
+  brand        MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  schemaFields Json     @default("[]") @map("schema_fields")
+  embedCode    String?  @map("embed_code")
+  submitCount  Int      @default(0) @map("submit_count")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  submissions  LeadCaptureSubmission[]
+
+  @@index([companyId])
+  @@index([brandId])
+  @@map("lead_capture_forms")
+}
+
+/// Inbound submission payload captured through an embed form, capturing raw payload, mapped fields, and UTM parameters.
+model LeadCaptureSubmission {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  formId       String   @map("form_id") @db.Uuid
+  form         LeadCaptureForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+  rawPayload   Json     @default("{}") @map("raw_payload")
+  mappedFields Json?    @map("mapped_fields")
+  utmSource    String?  @map("utm_source")
+  utmMedium    String?  @map("utm_medium")
+  utmCampaign  String?  @map("utm_campaign")
+  utmTerm      String?  @map("utm_term")
+  utmContent   String?  @map("utm_content")
+  crmLeadId    String?  @map("crm_lead_id") @db.Uuid
+  submittedAt  DateTime @default(now()) @map("submitted_at")
+
+  @@index([companyId])
+  @@index([formId])
+  @@map("lead_capture_submissions")
+}
+
+/// Automated drip email sequence triggered by inbound lead events with configurable delay and template steps.
+model NurtureSequence {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  brandId      String   @map("brand_id") @db.Uuid
+  brand        MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  triggerEvent String   @map("trigger_event")
+  steps        Json     @default("[]")
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([brandId])
+  @@map("nurture_sequences")
 }
 
 

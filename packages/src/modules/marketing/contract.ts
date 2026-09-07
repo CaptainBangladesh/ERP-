@@ -61,6 +61,14 @@ export const MARKETING_PATHS = {
   adSyncs: `/${MARKETING_ROUTE}/ad-syncs`,
   adSync: (id: string) => `/${MARKETING_ROUTE}/ad-syncs/${id}`,
   triggerAdSync: (id: string) => `/${MARKETING_ROUTE}/ad-syncs/${id}/sync`,
+  // Inbound Lead Gen & CRM Handoff (Forms, Submissions, Nurture)
+  forms: `/${MARKETING_ROUTE}/forms`,
+  form: (id: string) => `/${MARKETING_ROUTE}/forms/${id}`,
+  formSubmissions: (formId: string) => `/${MARKETING_ROUTE}/forms/${formId}/submissions`,
+  publicFormSubmit: (formId: string) => `/${MARKETING_ROUTE}/forms/${formId}/submit`,
+  nurtureSequences: `/${MARKETING_ROUTE}/nurture-sequences`,
+  nurtureSequence: (id: string) => `/${MARKETING_ROUTE}/nurture-sequences/${id}`,
+  adWebhooks: (platform: string) => `/${MARKETING_ROUTE}/webhooks/ads/${platform}`,
 } as const;
 
 /**
@@ -809,6 +817,128 @@ export type AdAccountSyncListResponse = ListResponse<AdAccountSyncSummary>;
 export interface SyncAdAccountResponse {
   synced: boolean;
   adSync: AdAccountSyncSummary;
+}
+
+// ─── Inbound Lead Gen & CRM Handoff (Ticket 07) ──────────────────────────────────
+
+export interface LeadCaptureFormField {
+  name: string;
+  label: string;
+  type: 'text' | 'email' | 'phone' | 'textarea' | 'select' | 'number';
+  required?: boolean;
+  placeholder?: string;
+  options?: string[];
+}
+
+export interface CreateLeadCaptureFormRequest {
+  brandId: string;
+  name: string;
+  description?: string;
+  schemaFields?: LeadCaptureFormField[];
+}
+
+export interface UpdateLeadCaptureFormRequest {
+  name?: string;
+  description?: string;
+  schemaFields?: LeadCaptureFormField[];
+  isActive?: boolean;
+}
+
+export interface LeadCaptureFormSummary {
+  id: string;
+  brandId: string;
+  name: string;
+  description: string | null;
+  schemaFields: LeadCaptureFormField[];
+  embedCode: string | null;
+  submitCount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LeadCaptureFormResponse = LeadCaptureFormSummary;
+export type LeadCaptureFormListResponse = ListResponse<LeadCaptureFormSummary>;
+
+export interface LeadCaptureSubmissionSummary {
+  id: string;
+  formId: string;
+  rawPayload: Record<string, unknown>;
+  mappedFields: Record<string, unknown> | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmTerm: string | null;
+  utmContent: string | null;
+  crmLeadId: string | null;
+  submittedAt: string;
+}
+
+export type LeadCaptureSubmissionResponse = LeadCaptureSubmissionSummary;
+export type LeadCaptureSubmissionListResponse = ListResponse<LeadCaptureSubmissionSummary>;
+
+export interface PublicFormSubmitRequest {
+  fields: Record<string, unknown>;
+  utm?: {
+    source?: string;
+    medium?: string;
+    campaign?: string;
+    term?: string;
+    content?: string;
+  };
+}
+
+export interface PublicFormSubmitResponse {
+  success: boolean;
+  submissionId: string;
+  leadId: string;
+  isNewLead: boolean;
+  message?: string;
+}
+
+export interface NurtureSequenceStep {
+  orderIndex: number;
+  delayMinutes: number;
+  emailSubject: string;
+  emailBody: string;
+}
+
+export interface CreateNurtureSequenceRequest {
+  brandId: string;
+  name: string;
+  description?: string;
+  triggerEvent: string;
+  steps?: NurtureSequenceStep[];
+}
+
+export interface UpdateNurtureSequenceRequest {
+  name?: string;
+  description?: string;
+  triggerEvent?: string;
+  steps?: NurtureSequenceStep[];
+  status?: 'ACTIVE' | 'PAUSED';
+}
+
+export interface NurtureSequenceSummary {
+  id: string;
+  brandId: string;
+  name: string;
+  description: string | null;
+  triggerEvent: string;
+  steps: NurtureSequenceStep[];
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NurtureSequenceResponse = NurtureSequenceSummary;
+export type NurtureSequenceListResponse = ListResponse<NurtureSequenceSummary>;
+
+export interface AdWebhookResponse {
+  received: boolean;
+  platform: string;
+  leadId: string;
+  isNewLead: boolean;
 }
 
 
