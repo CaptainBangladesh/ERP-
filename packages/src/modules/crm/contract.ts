@@ -1478,6 +1478,200 @@ export interface EmailTemplateListResponse {
 }
 export type EmailTemplateResponse = EmailTemplateSummary;
 
+// ─── scripts, playbooks & guided selling ─────────────────────────────────────────────
+
+/**
+ * A **Script** is spoken/guidance content — what a rep says on a call, in discovery, when
+ * handling an objection, or closing — as distinct from an `EmailTemplate`, which is content
+ * for *sending*. It carries `{{lead.*}}`/`{{custom.*}}` merge-tags resolved by the same
+ * `template-tag-resolver` the email side uses, so a script reads back with the lead's own name
+ * and details already in it. It is keyed to a lead lifecycle `status` so the lead workspace can
+ * surface the most relevant ones for where the lead is now.
+ */
+export const SCRIPT_CATEGORIES = ['opener', 'discovery', 'objection', 'closing', 'general'] as const;
+
+export type ScriptCategory = (typeof SCRIPT_CATEGORIES)[number];
+
+export const SCRIPT_PATHS = {
+  scripts: `/${CRM_ROUTE}/scripts`,
+  script: (id: string) => `/${CRM_ROUTE}/scripts/${id}`,
+} as const;
+
+export const PLAYBOOK_PATHS = {
+  playbooks: `/${CRM_ROUTE}/playbooks`,
+  playbook: (id: string) => `/${CRM_ROUTE}/playbooks/${id}`,
+} as const;
+
+/**
+ * The guided-selling surfaces, all hung off one lead. `guidance` is the read the workspace
+ * panel makes — the relevant scripts merged with this lead, plus its playbook position and the
+ * one next-best-action. `enroll`/`advance`/`unenroll` are the manual progression: this platform
+ * has no scheduler (ADR 0009), so a rep marks a step done rather than a timer advancing it.
+ */
+export const LEAD_GUIDANCE_PATHS = {
+  guidance: (leadId: string) => `/${CRM_ROUTE}/leads/${leadId}/guidance`,
+  enroll: (leadId: string) => `/${CRM_ROUTE}/leads/${leadId}/playbook`,
+  advance: (leadId: string) => `/${CRM_ROUTE}/leads/${leadId}/playbook/advance`,
+  unenroll: (leadId: string) => `/${CRM_ROUTE}/leads/${leadId}/playbook`,
+} as const;
+
+export interface ScriptSummary {
+  id: string;
+  title: string;
+  body: string;
+  category: ScriptCategory;
+  /** The lead lifecycle status this script is most useful in, or `null` when it applies to any. */
+  leadStatus: LeadStatusKey | null;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateScriptRequest {
+  title: string;
+  body: string;
+  category: ScriptCategory;
+  leadStatus?: LeadStatusKey | null;
+}
+
+export interface UpdateScriptRequest {
+  title?: string;
+  body?: string;
+  category?: ScriptCategory;
+  leadStatus?: LeadStatusKey | null;
+}
+
+export interface ScriptListResponse {
+  items: ScriptSummary[];
+}
+
+export type ScriptResponse = ScriptSummary;
+
+/**
+ * A script rendered against one lead: `body` is the raw template as authored, `resolvedBody`
+ * has the lead's own data merged in and is what the panel shows and copies.
+ */
+export interface ResolvedScript {
+  id: string;
+  title: string;
+  category: ScriptCategory;
+  leadStatus: LeadStatusKey | null;
+  body: string;
+  resolvedBody: string;
+}
+
+export interface PlaybookStepSummary {
+  id: string;
+  order: number;
+  title: string;
+  instruction: string;
+  /** The Script this step has the rep deliver, or `null`. `SetNull` if that script is deleted. */
+  scriptId: string | null;
+  /** The activity type the one-click "do it" logs for this step, or `null`. */
+  activityType: ActivityType | null;
+}
+
+/** One step as authored. `order` is not sent — it is the array position, renumbered by the server. */
+export interface PlaybookStepInput {
+  title: string;
+  instruction: string;
+  scriptId?: string | null;
+  activityType?: ActivityType | null;
+}
+
+export interface PlaybookSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  steps: PlaybookStepSummary[];
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatePlaybookRequest {
+  name: string;
+  description?: string | null;
+  steps: PlaybookStepInput[];
+}
+
+export interface UpdatePlaybookRequest {
+  name?: string;
+  description?: string | null;
+  /** When present, replaces the whole ordered step list; absent leaves the steps untouched. */
+  steps?: PlaybookStepInput[];
+}
+
+export interface PlaybookListResponse {
+  items: PlaybookSummary[];
+}
+
+export type PlaybookResponse = PlaybookSummary;
+
+/** A lead's live position in a playbook — the guided-selling pointer. */
+export interface PlaybookEnrollmentSummary {
+  playbookId: string;
+  playbookName: string;
+  /** How many steps the rep has marked done. */
+  completedSteps: number;
+  totalSteps: number;
+  /** Set once every step is done; `null` while the play is still in progress. */
+  completedAt: string | null;
+  /** The step the rep is on now, or `null` once the play is finished. */
+  currentStep: PlaybookStepSummary | null;
+}
+
+export const GUIDED_ACTION_KINDS = ['playbook-step', 'status-suggestion', 'none'] as const;
+
+export type GuidedActionKind = (typeof GUIDED_ACTION_KINDS)[number];
+
+/**
+ * The one on-request next-best-action the lead workspace proposes. `kind` says where it came
+ * from: the lead's current playbook step, a suggestion from its `status` and how long since the
+ * last touch, or `none` when there is nothing to prompt (a disqualified lead). `activityType` is
+ * what the one-click "do it" logs — a task assigned to the current rep (ticket 01) — and is
+ * `null` when there is no action to take.
+ */
+export interface GuidedNextAction {
+  kind: GuidedActionKind;
+  title: string;
+  instruction: string;
+  activityType: ActivityType | null;
+  /** The script to deliver, merged with the lead's data, when the step or status names one. */
+  script: ResolvedScript | null;
+  /** Present when `kind === 'playbook-step'`: the order of the step being recommended. */
+  playbookStepOrder: number | null;
+  /** Why this was suggested — the lead's status or recency — shown under the recommendation. */
+  reason: string;
+}
+
+/** Everything the lead-workspace guidance surface needs, in one request. */
+export interface LeadGuidanceResponse {
+  scripts: ResolvedScript[];
+  enrollment: PlaybookEnrollmentSummary | null;
+  nextBestAction: GuidedNextAction;
+}
+
+export interface EnrollPlaybookRequest {
+  playbookId: string;
+}
+
+export const SCRIPT_ERROR_CODES = {
+  scriptNotFound: 'script_not_found',
+} as const;
+
+export const PLAYBOOK_ERROR_CODES = {
+  playbookNotFound: 'playbook_not_found',
+  /** Tried to enrol a lead on a playbook that has no steps to walk. */
+  playbookHasNoSteps: 'playbook_has_no_steps',
+  /** Named a `scriptId` in a step that does not exist in this company. */
+  stepScriptNotFound: 'step_script_not_found',
+  /** Asked to advance a lead that is not on any playbook. */
+  leadNotEnrolled: 'lead_not_enrolled',
+  /** Asked to advance a lead whose playbook is already finished. */
+  playbookAlreadyComplete: 'playbook_already_complete',
+} as const;
+
 export interface CreateLeadGroupRequest {
   name: string;
   color?: string;

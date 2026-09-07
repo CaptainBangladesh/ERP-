@@ -28,6 +28,7 @@ import { MerchantSnapshot } from '../components/MerchantProfileCard';
 import { LeadActivityFeed } from '../components/LeadActivityFeed';
 import { LeadFilesTab } from '../components/LeadFilesTab';
 import { LeadSurveyTab } from '../components/LeadSurveyTab';
+import { LeadGuidancePanel } from '../components/LeadGuidancePanel';
 import { ConvertLeadModal } from '../components/ConvertLeadModal';
 import { MailboxesModal } from '../components/MailboxesModal';
 import { SendEmailModal } from '../components/SendEmailModal';
@@ -78,7 +79,7 @@ export function leadWorkspacePath(id: string): string {
   return `/crm/leads/${id}`;
 }
 
-type WorkspaceTab = 'activity' | 'files' | 'survey' | 'details';
+type WorkspaceTab = 'activity' | 'guidance' | 'files' | 'survey' | 'details';
 
 function useLeadIdFromPath(): string {
   const path = useLocationPath();
@@ -340,6 +341,9 @@ export function LeadWorkspace() {
             <TabButton active={tab === 'activity'} onClick={() => setTab('activity')} label="Activity" count={activities.data?.items.length}>
               <ActivityIcon size={15} />
             </TabButton>
+            <TabButton active={tab === 'guidance'} onClick={() => setTab('guidance')} label="Guidance">
+              <BoltIcon size={15} />
+            </TabButton>
             <TabButton active={tab === 'files'} onClick={() => setTab('files')} label="Files" count={files.data?.items.length}>
               <FileIcon size={15} />
             </TabButton>
@@ -380,6 +384,10 @@ export function LeadWorkspace() {
               onComposerTypeChange={setComposerType}
               composerFocusSignal={composerFocusSignal}
             />
+          )}
+
+          {tab === 'guidance' && (
+            <LeadGuidancePanel leadId={leadId} canWrite={canWrite} currentUserId={session?.user?.id} />
           )}
 
           {tab === 'files' && <LeadFilesTab leadId={leadId} canWrite={canWrite} />}

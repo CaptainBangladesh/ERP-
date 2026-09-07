@@ -9,6 +9,7 @@ import { WorkspaceEntry } from './pages/WorkspaceEntry';
 import { ActivitiesPage } from './pages/ActivitiesPage';
 import { TeamPlanningPage } from './pages/TeamPlanningPage';
 import { WorkflowRulesPage } from './pages/WorkflowRulesPage';
+import { PlaybooksPage } from './pages/PlaybooksPage';
 import { CaptureSourcesPage } from './pages/CaptureSourcesPage';
 import { CampaignsPage } from './pages/CampaignsPage';
 import { PublicFormRoute } from '../../pages/PublicFormPage';
@@ -27,6 +28,7 @@ export const manifest: FrontendModuleManifest = {
     { path: '/crm/campaigns', component: CampaignsPage },
     { path: '/crm/deals', component: DealsPage },
     { path: '/crm/workflow-rules', component: WorkflowRulesPage },
+    { path: '/crm/playbooks', component: PlaybooksPage },
     { path: '/public/crm/form', component: PublicFormRoute, public: true },
   ],
 };

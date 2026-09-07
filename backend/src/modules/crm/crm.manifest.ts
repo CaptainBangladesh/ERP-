@@ -26,6 +26,7 @@ export const manifest: ModuleManifest = {
     '20260901001000_lead_email_open_activity',
     '20260901002000_lead_submission_mapped_fields',
     '20260906000000_activity_assignee',
+    '20260906010000_scripts_playbooks',
   ],
 
   models: [
@@ -48,6 +49,10 @@ export const manifest: ModuleManifest = {
     'CampaignRecipient',
     'CaptureSource',
     'EmailTemplate',
+    'Script',
+    'Playbook',
+    'PlaybookStep',
+    'PlaybookEnrollment',
     'MailboxConnection',
     'MailboxAuthState',
     'Unsubscribe',
@@ -99,6 +104,15 @@ export const manifest: ModuleManifest = {
     'crm:mailboxes:write',
     'crm:email-templates:read',
     'crm:email-templates:write',
+    /**
+     * Authoring the company's sales scripts and playbooks — the manager gate for the
+     * content-and-guidance track. Only `:write` exists: *reading* scripts and running the
+     * guided-selling surfaces is what any rep working a lead does, so those endpoints ride on
+     * `crm:leads:read`/`crm:leads:write` (the same posture email-templates take, whose reads
+     * ride on `crm:leads:read`). This one string gates creating/editing/deleting scripts and
+     * playbooks, and the Playbooks authoring page in the nav.
+     */
+    'crm:playbooks:write',
     'crm:campaigns:read',
     'crm:campaigns:write',
     'crm:capture-sources:read',
@@ -142,6 +156,13 @@ export const manifest: ModuleManifest = {
      */
     { label: 'Forms', path: '/crm/capture-sources', order: 55, permission: 'crm:capture-sources:read' },
     { label: 'Campaigns', path: '/crm/campaigns', order: 56, permission: 'crm:campaigns:read' },
+    /**
+     * Where a manager authors the company's call/objection scripts and the playbooks that
+     * sequence them — the content the lead workspace surfaces in context. Gated by
+     * `crm:playbooks:write`: a rep without it never sees the entry, but still gets the scripts
+     * and next-best-action on every lead they work.
+     */
+    { label: 'Playbooks', path: '/crm/playbooks', order: 57, permission: 'crm:playbooks:write' },
   ],
 
   events: {

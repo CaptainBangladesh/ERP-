@@ -9,6 +9,7 @@ import {
   LEAD_SOURCE_FIELDS,
   LEAD_SOURCES,
   MONEY_SCALE,
+  SCRIPT_CATEGORIES,
   STAGE_FIELDS,
   STAGE_OUTCOMES,
   WORKFLOW_ACTION_TYPES,
@@ -18,6 +19,8 @@ import {
   type LeadCustomValues,
   type LeadFieldType,
   type LeadQualifyAction,
+  type PlaybookStepInput,
+  type ScriptCategory,
   type SettableLeadStatusKey,
   type SettableStageOutcome,
   type WorkflowActionType,
@@ -920,6 +923,151 @@ export const CAMPAIGN_LIST: ListSpec = {
     createdAt: { type: 'date', sortable: true, filterable: true },
   },
 };
+
+// ─── scripts, playbooks & guided selling ──────────────────────────────────────────────
+
+const SCRIPT_TITLE = {
+  missing: 'Enter a title.',
+  maxLength: 200,
+  tooLong: 'Use 200 characters or fewer.',
+} as const;
+
+const SCRIPT_BODY = {
+  missing: 'Enter the script.',
+  maxLength: 20000,
+  tooLong: 'Script is too long.',
+} as const;
+
+const SCRIPT_CATEGORY = oneOf<ScriptCategory>(SCRIPT_CATEGORIES, {
+  missing: 'Choose a category.',
+  invalid: 'That is not a script category.',
+});
+
+/**
+ * The lead status a script is keyed to. Any status key is accepted — a built-in *or* a company's
+ * own custom status — because a script keyed to a custom status is a real thing, matched by plain
+ * equality against `lead.status`. Wrapped in `clearable` at the call site, so blank or null means
+ * "any status".
+ */
+const SCRIPT_LEAD_STATUS = rule<string>('Enter a status.', (value) => {
+  const given = typeof value === 'string' ? value.trim() : '';
+  if (given.length === 0) return refused('Enter a status, or leave it blank for any status.');
+  if (given.length > 64) return refused('That is not a valid status.');
+  return accepted(given);
+});
+
+export const CreateScriptBody = validator({
+  title: text(SCRIPT_TITLE),
+  body: text(SCRIPT_BODY),
+  category: SCRIPT_CATEGORY,
+  leadStatus: clearable(SCRIPT_LEAD_STATUS),
+});
+
+export const UpdateScriptBody = validator({
+  title: optional(text(SCRIPT_TITLE)),
+  body: optional(text(SCRIPT_BODY)),
+  category: optional(SCRIPT_CATEGORY),
+  leadStatus: clearable(SCRIPT_LEAD_STATUS),
+}).and((values, report) => {
+  const changed = Object.values(values).some((v) => v !== undefined);
+  if (!changed) report('title', 'Change something — this request changes nothing.');
+});
+
+const PLAYBOOK_NAME = {
+  missing: 'Enter a name.',
+  maxLength: 200,
+  tooLong: 'Use 200 characters or fewer.',
+} as const;
+
+const PLAYBOOK_DESCRIPTION = {
+  missing: 'Enter a description.',
+  maxLength: 2000,
+  tooLong: 'Description is too long.',
+} as const;
+
+const STEP_TITLE = {
+  missing: 'Enter a step title.',
+  maxLength: 200,
+  tooLong: 'Use 200 characters or fewer.',
+} as const;
+
+const STEP_INSTRUCTION = {
+  missing: 'Enter what to do in this step.',
+  maxLength: 5000,
+  tooLong: 'Instruction is too long.',
+} as const;
+
+const STEP_SCRIPT_ID = identifier({ missing: 'Choose a script.', invalid: 'That is not a script.' });
+
+/**
+ * The ordered steps of a playbook. Each is validated the way a standalone body would be; the
+ * server assigns `order` from array position, so a caller never sends it. A `scriptId` or
+ * `activityType` that is absent, null or blank becomes null — a step need name neither. Whether a
+ * named `scriptId` actually exists in this company is the service's question (it has the database);
+ * this only refuses a malformed one.
+ */
+const PLAYBOOK_STEPS = rule<PlaybookStepInput[]>('Enter the steps of this play.', (value) => {
+  if (!Array.isArray(value)) return refused('Steps must be a list.');
+  if (value.length > 50) return refused('Use 50 steps or fewer.');
+
+  const steps: PlaybookStepInput[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return refused('Each step is a title and an instruction.');
+    }
+    const e = entry as Record<string, unknown>;
+
+    const title = text(STEP_TITLE).read(e.title);
+    if (!title.ok) return title;
+
+    const instruction = text(STEP_INSTRUCTION).read(e.instruction);
+    if (!instruction.ok) return instruction;
+
+    let scriptId: string | null = null;
+    if (e.scriptId !== undefined && e.scriptId !== null && e.scriptId !== '') {
+      const read = STEP_SCRIPT_ID.read(e.scriptId);
+      if (!read.ok) return read;
+      scriptId = read.value;
+    }
+
+    let activityType: ActivityType | null = null;
+    if (e.activityType !== undefined && e.activityType !== null && e.activityType !== '') {
+      const read = ACTIVITY_TYPE.read(e.activityType);
+      if (!read.ok) return read;
+      activityType = read.value;
+    }
+
+    steps.push({ title: title.value, instruction: instruction.value, scriptId, activityType });
+  }
+
+  return accepted(steps);
+});
+
+export const CreatePlaybookBody = validator({
+  name: text(PLAYBOOK_NAME),
+  description: clearable(text(PLAYBOOK_DESCRIPTION)),
+  steps: PLAYBOOK_STEPS,
+}).and((values, report) => {
+  if (!values.steps || values.steps.length === 0) {
+    report('steps', 'A playbook needs at least one step.');
+  }
+});
+
+export const UpdatePlaybookBody = validator({
+  name: optional(text(PLAYBOOK_NAME)),
+  description: clearable(text(PLAYBOOK_DESCRIPTION)),
+  steps: optional(PLAYBOOK_STEPS),
+}).and((values, report) => {
+  const changed = Object.values(values).some((v) => v !== undefined);
+  if (!changed) report('name', 'Change something — this request changes nothing.');
+  if (values.steps !== undefined && values.steps.length === 0) {
+    report('steps', 'A playbook needs at least one step.');
+  }
+});
+
+export const EnrollPlaybookBody = validator({
+  playbookId: identifier({ missing: 'Choose a playbook.', invalid: 'That is not a playbook.' }),
+});
 
 
 
