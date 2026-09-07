@@ -36,6 +36,7 @@ export const manifest: ModuleManifest = {
     '20260906190000_tracking_pixel_and_visitor_analytics',
     '20260907120000_publishing_quota_network_attempt',
     '20260907130000_marketing_reliability_and_vault',
+    '20260907140000_composer_intelligence',
   ],
 
   models: [
@@ -58,6 +59,8 @@ export const manifest: ModuleManifest = {
     'DmAutomationFlow',
     'TrackingSite',
     'PageViewEvent',
+    'PostingTimeInsight',
+    'ComposerSnippet',
   ],
 
   permissions: [
@@ -89,6 +92,10 @@ export const manifest: ModuleManifest = {
     'marketing:dm-flows:write',
     'marketing:tracking:read',
     'marketing:tracking:write',
+    'marketing:insights:read',
+    'marketing:insights:write',
+    'marketing:snippets:read',
+    'marketing:snippets:write',
   ],
 
   navigation: [

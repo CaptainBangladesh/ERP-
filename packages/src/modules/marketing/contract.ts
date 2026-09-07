@@ -97,6 +97,11 @@ export const MARKETING_PATHS = {
   analyticsOverview: `/${MARKETING_ROUTE}/analytics/overview`,
   pixelJs: `/${MARKETING_ROUTE}/pixel.js`,
   collect: `/${MARKETING_ROUTE}/collect`,
+  // Composer intelligence (ticket 14, phase 1)
+  bestTimes: `/${MARKETING_ROUTE}/insights/best-times`,
+  recomputeBestTimes: `/${MARKETING_ROUTE}/insights/best-times/recompute`,
+  snippets: `/${MARKETING_ROUTE}/snippets`,
+  snippet: (id: string) => `/${MARKETING_ROUTE}/snippets/${id}`,
 } as const;
 
 /**
@@ -588,6 +593,7 @@ export const MARKETING_ERROR_CODES = {
   formSubmissionInvalid: 'invalid_form_submission',
   formDailyCapReached: 'form_daily_cap_reached',
   messagingWindowExpired: 'messaging_window_expired',
+  snippetNotFound: 'snippet_not_found',
 } as const;
 
 // ─── Campaigns & UTM Tracking ──────────────────────────────────────────────────────
@@ -1260,3 +1266,417 @@ export interface TrackingAnalyticsResponse {
   devices: DeviceAnalyticsItem[];
 }
 
+
+// ─── Composer intelligence (ticket 14, phase 1) ────────────────────────────────────
+
+/**
+ * Where a posting-time recommendation actually came from.
+ *
+ * Not a label the UI decides. The API cannot express a recommendation without saying whose
+ * data produced it (14j), because "your audience is most active at 7pm" and "people in
+ * general are most active at 7pm" are different claims and only one of them is worth acting
+ * on.
+ */
+export const POSTING_TIME_SOURCES = ['tenant', 'cohort', 'global'] as const;
+export type PostingTimeSource = (typeof POSTING_TIME_SOURCES)[number];
+
+/** Posts with metrics needed for that (brand, network) before `tenant` is honest. */
+export const TENANT_POSTING_TIME_MINIMUM = 30;
+
+/** The trailing window the tenant figure is computed over, in days. */
+export const POSTING_TIME_WINDOW_DAYS = 90;
+
+/** One hour of one weekday, in the brand's timezone. */
+export interface PostingTimeBucket {
+  /** 0 = Sunday, in the brand's timezone. */
+  dayOfWeek: number;
+  /** 0-23, in the brand's timezone. */
+  hour: number;
+  /** Mean engagement for posts published in this bucket, normalised to 0-100. */
+  score: number;
+  /** Posts behind this bucket. Never fewer than 5 — thin buckets merge (14l). */
+  sampleSize: number;
+}
+
+export interface BestTimeResponse {
+  brandId: string;
+  platform: SocialPlatform;
+  /** Required, not optional. See `POSTING_TIME_SOURCES`. */
+  source: PostingTimeSource;
+  /** Required. Posts behind the whole recommendation. */
+  sampleSize: number;
+  /** The brand's timezone — the buckets are hours in it, never in the viewer's. */
+  timezone: string;
+  /** When the queued recompute last produced this, or null if it has not yet run. */
+  computedAt: string | null;
+  buckets: PostingTimeBucket[];
+  /** The strongest few buckets, already sorted. */
+  recommendations: PostingTimeBucket[];
+}
+
+export const SNIPPET_KINDS = ['first_comment', 'cta'] as const;
+export type SnippetKind = (typeof SNIPPET_KINDS)[number];
+
+export interface SnippetSummary {
+  id: string;
+  brandId: string;
+  kind: SnippetKind;
+  label: string;
+  /** Plain text. Rendered into a textarea value, never as HTML (14o). */
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SnippetListResponse = ListResponse<SnippetSummary>;
+
+export interface CreateSnippetRequest {
+  brandId: string;
+  kind: SnippetKind;
+  label: string;
+  body: string;
+}
+
+export interface UpdateSnippetRequest {
+  label?: string;
+  body?: string;
+}
+
+// ─── Per-network limits (ticket 14, decision 14m) ──────────────────────────────────
+/**
+ * What each social network will accept, and the one validator that reads it.
+ *
+ * There is exactly one of these tables. The composer imports it to draw its meters and the
+ * publisher imports it to refuse a post, so the number the user was shown and the number the
+ * server enforces cannot drift apart — decision 14m. A network that changes its limits is a
+ * table edit here and nothing else: no model call, no call to the network to ask.
+ *
+ * Wire-adjacent data with no behaviour, which is why it sits beside `contract.ts` rather than
+ * in either workspace.
+ */
+
+/**
+ * What the network does with a URL in the body text.
+ *
+ * Not a cosmetic distinction: on three of these networks a link in the caption is either
+ * removed or costs the post its reach, and the user needs to hear that while writing rather
+ * than after publishing.
+ */
+export type LinkHandling =
+  /** Rendered as a working link. */
+  | 'clickable'
+  /** Kept as text, but not tappable — the user needs a bio link or a first comment. */
+  | 'not-clickable'
+  /** Works, but the network shows the post to fewer people for carrying it. */
+  | 'deprioritised'
+  /** Removed by the network, or rejected outright. */
+  | 'unsupported';
+
+/** One accepted media shape, as a name and the width ÷ height it stands for. */
+export interface AspectRatio {
+  readonly label: string;
+  readonly ratio: number;
+}
+
+export interface NetworkLimits {
+  readonly platform: SocialPlatform;
+  readonly label: string;
+  /** Characters of body text the network accepts. */
+  readonly characterLimit: number;
+  /** Images or videos attachable to one post. */
+  readonly maxMedia: number;
+  readonly aspectRatios: readonly AspectRatio[];
+  readonly maxMentions: number;
+  readonly maxHashtags: number;
+  readonly linkHandling: LinkHandling;
+  /** Said in the composer, and repeated verbatim by the publisher's refusal. */
+  readonly linkNote: string;
+  /** Longest single video, in seconds. */
+  readonly maxVideoSeconds: number;
+}
+
+const RATIO_SQUARE: AspectRatio = { label: '1:1', ratio: 1 };
+const RATIO_PORTRAIT: AspectRatio = { label: '4:5', ratio: 0.8 };
+const RATIO_VERTICAL: AspectRatio = { label: '9:16', ratio: 0.5625 };
+const RATIO_LANDSCAPE: AspectRatio = { label: '1.91:1', ratio: 1.91 };
+const RATIO_WIDE: AspectRatio = { label: '16:9', ratio: 1.7778 };
+
+/**
+ * The table. Frozen, because a lookup table that a caller can edit at runtime is a lookup
+ * table that says something different on the server than it said in the browser.
+ */
+export const NETWORK_LIMITS: Readonly<Record<SocialPlatform, NetworkLimits>> = Object.freeze({
+  instagram: Object.freeze({
+    platform: 'instagram',
+    label: 'Instagram',
+    characterLimit: 2200,
+    maxMedia: 10,
+    aspectRatios: Object.freeze([RATIO_SQUARE, RATIO_PORTRAIT, RATIO_VERTICAL, RATIO_LANDSCAPE]),
+    maxMentions: 20,
+    maxHashtags: 30,
+    linkHandling: 'not-clickable',
+    linkNote: 'Instagram captions do not make links tappable — use the bio link or a first comment.',
+    maxVideoSeconds: 900,
+  }),
+  facebook: Object.freeze({
+    platform: 'facebook',
+    label: 'Facebook',
+    characterLimit: 63206,
+    maxMedia: 10,
+    aspectRatios: Object.freeze([RATIO_LANDSCAPE, RATIO_SQUARE, RATIO_PORTRAIT, RATIO_VERTICAL]),
+    maxMentions: 50,
+    maxHashtags: 30,
+    linkHandling: 'clickable',
+    linkNote: 'Links are clickable and get a preview card.',
+    maxVideoSeconds: 14_400,
+  }),
+  linkedin: Object.freeze({
+    platform: 'linkedin',
+    label: 'LinkedIn',
+    characterLimit: 3000,
+    maxMedia: 20,
+    aspectRatios: Object.freeze([RATIO_LANDSCAPE, RATIO_SQUARE, RATIO_PORTRAIT, RATIO_VERTICAL]),
+    maxMentions: 30,
+    maxHashtags: 30,
+    linkHandling: 'deprioritised',
+    linkNote: 'LinkedIn shows posts carrying an outbound link to fewer people — consider the first comment.',
+    maxVideoSeconds: 900,
+  }),
+  x: Object.freeze({
+    platform: 'x',
+    label: 'X',
+    characterLimit: 280,
+    maxMedia: 4,
+    aspectRatios: Object.freeze([RATIO_WIDE, RATIO_SQUARE]),
+    maxMentions: 10,
+    maxHashtags: 10,
+    linkHandling: 'clickable',
+    linkNote: 'Links are shortened to 23 characters and count against the limit.',
+    maxVideoSeconds: 140,
+  }),
+  tiktok: Object.freeze({
+    platform: 'tiktok',
+    label: 'TikTok',
+    characterLimit: 2200,
+    maxMedia: 35,
+    aspectRatios: Object.freeze([RATIO_VERTICAL]),
+    maxMentions: 10,
+    maxHashtags: 30,
+    linkHandling: 'not-clickable',
+    linkNote: 'A link in a TikTok caption is plain text — it is not tappable.',
+    maxVideoSeconds: 600,
+  }),
+  youtube: Object.freeze({
+    platform: 'youtube',
+    label: 'YouTube',
+    characterLimit: 5000,
+    maxMedia: 1,
+    aspectRatios: Object.freeze([RATIO_WIDE, RATIO_VERTICAL]),
+    maxMentions: 20,
+    maxHashtags: 15,
+    linkHandling: 'clickable',
+    linkNote: 'Description links are clickable once the channel is verified.',
+    maxVideoSeconds: 43_200,
+  }),
+  pinterest: Object.freeze({
+    platform: 'pinterest',
+    label: 'Pinterest',
+    characterLimit: 500,
+    maxMedia: 1,
+    aspectRatios: Object.freeze([{ label: '2:3', ratio: 0.6667 }, RATIO_SQUARE, RATIO_VERTICAL]),
+    maxMentions: 10,
+    maxHashtags: 20,
+    linkHandling: 'clickable',
+    linkNote: 'The destination link belongs on the Pin, not in the description.',
+    maxVideoSeconds: 900,
+  }),
+  threads: Object.freeze({
+    platform: 'threads',
+    label: 'Threads',
+    characterLimit: 500,
+    maxMedia: 20,
+    aspectRatios: Object.freeze([RATIO_SQUARE, RATIO_PORTRAIT, RATIO_VERTICAL]),
+    maxMentions: 20,
+    maxHashtags: 1,
+    linkHandling: 'clickable',
+    linkNote: 'Threads accepts one topic tag per post.',
+    maxVideoSeconds: 300,
+  }),
+  bluesky: Object.freeze({
+    platform: 'bluesky',
+    label: 'Bluesky',
+    characterLimit: 300,
+    maxMedia: 4,
+    aspectRatios: Object.freeze([RATIO_WIDE, RATIO_SQUARE]),
+    maxMentions: 10,
+    maxHashtags: 10,
+    linkHandling: 'clickable',
+    linkNote: 'Links are clickable and count in full against the 300 characters.',
+    maxVideoSeconds: 60,
+  }),
+  google_business: Object.freeze({
+    platform: 'google_business',
+    label: 'Google Business Profile',
+    characterLimit: 1500,
+    maxMedia: 1,
+    aspectRatios: Object.freeze([{ label: '4:3', ratio: 1.3333 }, RATIO_SQUARE]),
+    maxMentions: 0,
+    maxHashtags: 0,
+    linkHandling: 'unsupported',
+    linkNote: 'Google Business Profile strips hashtags and body links — use the post action button.',
+    maxVideoSeconds: 30,
+  }),
+});
+
+/** Everything the validator needs to know about a draft. */
+export interface DraftForNetwork {
+  readonly content: string;
+  readonly mediaCount?: number;
+  /** Width ÷ height for each attached image or video, where the client knows them. */
+  readonly mediaAspectRatios?: readonly number[];
+  readonly videoSeconds?: number;
+}
+
+export type NetworkLimitCode =
+  | 'character_limit'
+  | 'media_count'
+  | 'aspect_ratio'
+  | 'mention_limit'
+  | 'hashtag_limit'
+  | 'link_unsupported'
+  | 'video_length';
+
+export interface NetworkLimitViolation {
+  readonly platform: SocialPlatform;
+  readonly code: NetworkLimitCode;
+  /** Shown by the composer and repeated by the publisher's refusal — one string, one source. */
+  readonly message: string;
+}
+
+/**
+ * Hashtags and mentions, counted the way the networks count them.
+ *
+ * Anchored to a word boundary so `#` inside a URL fragment or an email address is not a tag.
+ */
+const HASHTAG = /(^|[^\w#/])#(\w{1,138})/gu;
+const MENTION = /(^|[^\w@/])@([\w.]{1,60})/gu;
+const URL_IN_TEXT = /\bhttps?:\/\/[^\s<>"']+/giu;
+
+/** How close a real image has to be to a listed ratio before it is that ratio. */
+const RATIO_TOLERANCE = 0.05;
+
+function countMatches(text: string, pattern: RegExp): number {
+  // A fresh lastIndex each call: these are module-level /g regexes and are shared.
+  pattern.lastIndex = 0;
+  let count = 0;
+  while (pattern.exec(text) !== null) count += 1;
+  return count;
+}
+
+export function countHashtags(text: string): number {
+  return countMatches(text, HASHTAG);
+}
+
+export function countMentions(text: string): number {
+  return countMatches(text, MENTION);
+}
+
+export function containsLink(text: string): boolean {
+  URL_IN_TEXT.lastIndex = 0;
+  return URL_IN_TEXT.test(text);
+}
+
+/**
+ * Every way one draft breaks one network's rules.
+ *
+ * Returns all of them rather than the first, because a composer that reveals one problem per
+ * attempt is a composer people publish around. Pure: no network call, no clock, no state.
+ */
+export function validateForNetwork(
+  platform: SocialPlatform,
+  draft: DraftForNetwork,
+): NetworkLimitViolation[] {
+  const limits = NETWORK_LIMITS[platform];
+  if (!limits) return [];
+
+  const violations: NetworkLimitViolation[] = [];
+  const fail = (code: NetworkLimitCode, message: string): void => {
+    violations.push({ platform, code, message });
+  };
+
+  const content = draft.content ?? '';
+
+  if (content.length > limits.characterLimit) {
+    fail(
+      'character_limit',
+      `${limits.label} allows ${limits.characterLimit} characters; this post is ${content.length}.`,
+    );
+  }
+
+  const mediaCount = draft.mediaCount ?? 0;
+  if (mediaCount > limits.maxMedia) {
+    fail(
+      'media_count',
+      `${limits.label} allows ${limits.maxMedia} attachment(s); this post has ${mediaCount}.`,
+    );
+  }
+
+  for (const ratio of draft.mediaAspectRatios ?? []) {
+    if (!Number.isFinite(ratio) || ratio <= 0) continue;
+    const matched = limits.aspectRatios.some(
+      (accepted) => Math.abs(accepted.ratio - ratio) <= RATIO_TOLERANCE,
+    );
+    if (!matched) {
+      fail(
+        'aspect_ratio',
+        `${limits.label} accepts ${limits.aspectRatios
+          .map((accepted) => accepted.label)
+          .join(', ')}; one attachment is ${ratio.toFixed(2)}:1.`,
+      );
+      break;
+    }
+  }
+
+  const mentions = countMentions(content);
+  if (mentions > limits.maxMentions) {
+    fail(
+      'mention_limit',
+      limits.maxMentions === 0
+        ? `${limits.label} does not support @ mentions.`
+        : `${limits.label} allows ${limits.maxMentions} mention(s); this post has ${mentions}.`,
+    );
+  }
+
+  const hashtags = countHashtags(content);
+  if (hashtags > limits.maxHashtags) {
+    fail(
+      'hashtag_limit',
+      limits.maxHashtags === 0
+        ? `${limits.label} does not support hashtags.`
+        : `${limits.label} allows ${limits.maxHashtags} hashtag(s); this post has ${hashtags}.`,
+    );
+  }
+
+  if (limits.linkHandling === 'unsupported' && containsLink(content)) {
+    fail('link_unsupported', limits.linkNote);
+  }
+
+  if (draft.videoSeconds !== undefined && draft.videoSeconds > limits.maxVideoSeconds) {
+    fail(
+      'video_length',
+      `${limits.label} allows video up to ${limits.maxVideoSeconds}s; this one is ${Math.round(
+        draft.videoSeconds,
+      )}s.`,
+    );
+  }
+
+  return violations;
+}
+
+/** The same check across every selected channel, so the composer can list them together. */
+export function validateForNetworks(
+  platforms: readonly SocialPlatform[],
+  draft: DraftForNetwork,
+): NetworkLimitViolation[] {
+  return platforms.flatMap((platform) => validateForNetwork(platform, draft));
+}

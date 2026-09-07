@@ -252,6 +252,8 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   DmAutomationFlow: { kind: 'company-owned' },
   TrackingSite: { kind: 'company-owned' },
   PageViewEvent: { kind: 'company-owned' },
+  PostingTimeInsight: { kind: 'company-owned' },
+  ComposerSnippet: { kind: 'company-owned' },
 };
 
 /**

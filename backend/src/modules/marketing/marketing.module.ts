@@ -47,6 +47,10 @@ import { TrackingService } from './tracking.service';
 import { TrackingController } from './tracking.controller';
 import { PublicTrackingController } from './public-tracking.controller';
 import { RetentionService } from './retention.service';
+import { InsightsService } from './insights.service';
+import { InsightsController } from './insights.controller';
+import { SnippetsService } from './snippets.service';
+import { SnippetsController } from './snippets.controller';
 
 /**
  * Marketing.
@@ -81,6 +85,8 @@ import { RetentionService } from './retention.service';
     SocialInboxWebhooksController,
     TrackingController,
     PublicTrackingController,
+    InsightsController,
+    SnippetsController,
   ],
   providers: [
     MarketingService,
@@ -120,6 +126,8 @@ import { RetentionService } from './retention.service';
     DmFlowsService,
     TrackingService,
     RetentionService,
+    InsightsService,
+    SnippetsService,
   ],
   exports: [
     CryptoService,
@@ -140,6 +148,8 @@ import { RetentionService } from './retention.service';
     InboxService,
     DmFlowsService,
     TrackingService,
+    InsightsService,
+    SnippetsService,
   ],
 })
 export class MarketingModule implements NestModule {

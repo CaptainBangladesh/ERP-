@@ -15,6 +15,7 @@ import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { defined } from '../../prisma/columns';
+import { SnippetsService } from './snippets.service';
 import { SocialAccountsService } from './social-accounts.service';
 import {
   AddBrandMemberBody,
@@ -28,6 +29,7 @@ export class BrandsService {
   constructor(
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly accounts: SocialAccountsService,
+    private readonly snippets: SnippetsService,
   ) {}
 
   async createBrand(
@@ -74,6 +76,10 @@ export class BrandsService {
         }),
       });
     }
+
+    // A snippet library nobody has filled in is a blank panel the first time the composer is
+    // opened, so the brand starts with the public starter set (14.4). Idempotent by label.
+    await this.snippets.seedStarterSnippets(brand.id);
 
     return describeBrand(brand);
   }

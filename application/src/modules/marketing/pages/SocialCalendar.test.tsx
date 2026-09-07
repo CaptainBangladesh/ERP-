@@ -211,7 +211,9 @@ describe('SocialCalendarPage and Social Media Suite', () => {
     expect(await within(modal).findByText('Multi-Network Post Composer')).toBeInTheDocument();
     expect(within(modal).getByText(/Base \(All Channels\)/i)).toBeInTheDocument();
     expect(within(modal).getByText('Brand Asset Library')).toBeInTheDocument();
-    expect(within(modal).getByText('Optimal Engagement Heatmap')).toBeInTheDocument();
+    // Renamed with ticket 14: the panel is computed from the tenant's own posting history and
+    // is not an inference, so it no longer claims to be one (14f).
+    expect(within(modal).getByText('Best times to post')).toBeInTheDocument();
 
     // Shows multi-accounts checkboxes
     expect(within(modal).getByText('@velocity')).toBeInTheDocument();

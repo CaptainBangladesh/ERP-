@@ -1614,6 +1614,8 @@ model MarketingBrand {
   socialMessages   SocialMessage[]
   dmAutomationFlows DmAutomationFlow[]
   trackingSites    TrackingSite[]
+  postingTimeInsights PostingTimeInsight[]
+  composerSnippets ComposerSnippet[]
 
   @@unique([companyId, slug])
   @@index([companyId])
@@ -2049,3 +2051,51 @@ model PageViewEvent {
   @@map("page_view_events")
 }
 
+
+/// A brand's computed best-times-to-post for one network.
+///
+/// Written only by the queued recompute (14j) — a 90-day aggregate is not something to
+/// compute while a composer waits — and read by the request handler. `buckets` holds hour-of-
+/// week counts and scores in the brand's timezone and nothing else: no visitor id, no ip
+/// hash, no session id ever reaches this row (14l).
+model PostingTimeInsight {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  brandId    String   @map("brand_id") @db.Uuid
+  brand      MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  platform   String
+  /// 'tenant' | 'cohort' | 'global' — the provenance the API is required to carry.
+  source     String
+  sampleSize Int      @map("sample_size")
+  timezone   String   @default("UTC")
+  buckets    Json
+  computedAt DateTime @default(now()) @map("computed_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([brandId, platform])
+  @@index([companyId])
+  @@index([brandId])
+  @@map("posting_time_insights")
+}
+
+/// A saved first comment or call to action, per brand.
+///
+/// `body` is text and is rendered as a textarea value — never as HTML (14o).
+model ComposerSnippet {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  brandId   String   @map("brand_id") @db.Uuid
+  brand     MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  /// 'first_comment' | 'cta'
+  kind      String
+  label     String
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([brandId])
+  @@index([companyId, label])
+  @@map("composer_snippets")
+}

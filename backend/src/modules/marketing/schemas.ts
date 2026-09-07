@@ -8,6 +8,7 @@ import {
   SCHEDULED_POST_STATUSES,
   SOCIAL_ACCOUNT_STATUSES,
   SOCIAL_PLATFORMS,
+  SNIPPET_KINDS,
   MARKETING_CAMPAIGN_STATUSES,
   AD_PLATFORMS,
   SMART_LINK_CARD_STYLES,
@@ -24,6 +25,7 @@ import {
   type ScheduledPostStatus,
   type SocialAccountStatus,
   type SocialPlatform,
+  type SnippetKind,
   type MarketingCampaignStatus,
   type AdPlatform,
   type ShoppableGridItem,
@@ -1184,3 +1186,76 @@ const AD_WEBHOOK_KEYS: readonly string[] = [
 ];
 
 export const AdWebhookBody = new ClosedValidator(AD_WEBHOOK_KEYS, AD_WEBHOOK_SCHEMA);
+
+// ─── Composer intelligence (ticket 14, phase 1) ───────────────────────────────────
+
+const SNIPPET_KIND_RULE = oneOf<SnippetKind>(SNIPPET_KINDS, {
+  missing: 'Say whether this is a first comment or a call to action.',
+  invalid: 'That is not a snippet kind.',
+});
+
+export const CreateSnippetBody = validator({
+  brandId: identifier({
+    missing: 'Choose a brand.',
+    invalid: 'That is not a brand identifier.',
+  }),
+  kind: SNIPPET_KIND_RULE,
+  label: text({
+    missing: 'Give the snippet a name.',
+    maxLength: 100,
+    tooLong: 'Use 100 characters or fewer.',
+  }),
+  body: text({
+    missing: 'Write the snippet.',
+    maxLength: 2000,
+    tooLong: 'Use 2000 characters or fewer.',
+  }),
+});
+
+export const UpdateSnippetBody = validator({
+  label: optional(
+    text({
+      missing: 'Give the snippet a name.',
+      maxLength: 100,
+      tooLong: 'Use 100 characters or fewer.',
+    }),
+  ),
+  body: optional(
+    text({
+      missing: 'Write the snippet.',
+      maxLength: 2000,
+      tooLong: 'Use 2000 characters or fewer.',
+    }),
+  ),
+}).and((values, report) => {
+  const changed = Object.values(values).some((value) => value !== undefined);
+  if (!changed) report('label', 'Change something — this request changes nothing.');
+});
+
+export const SNIPPET_LIST: ListSpec = {
+  defaultSort: 'label',
+  fields: {
+    label: { type: 'text', sortable: true, filterable: true, searchable: true },
+    body: { type: 'text', sortable: false, filterable: false, searchable: true },
+    kind: { type: 'text', sortable: true, filterable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+/**
+ * The network a best-time recompute is asked for.
+ *
+ * A closed union rather than a free string: the value keys a lookup table and a stored row,
+ * and an unrecognised platform must be a refusal rather than an empty heatmap.
+ */
+export const RecomputeBestTimesBody = validator({
+  brandId: identifier({
+    missing: 'Choose a brand.',
+    invalid: 'That is not a brand identifier.',
+  }),
+  platform: oneOf<SocialPlatform>(SOCIAL_PLATFORMS, {
+    missing: 'Choose a network.',
+    invalid: 'That is not a network this module publishes to.',
+  }),
+});

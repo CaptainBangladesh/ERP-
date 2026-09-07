@@ -9,6 +9,7 @@ import {
   type ScheduledPostSummary,
   type SocialPlatform,
   type SyncMetricsResponse,
+  validateForNetwork,
   type UpdateScheduledPostRequest,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
@@ -169,6 +170,19 @@ export class SocialPublisherService implements OnModuleInit {
     );
 
     /**
+     * The composer's meters, re-run here against the account we actually resolved.
+     *
+     * Decision 14m: a validator that only runs in the browser is a warning, not a limit — the
+     * failure it prevents happens on the server, and the client check can be skipped by
+     * anyone posting to this endpoint directly. Same frozen table, so the refusal is the
+     * sentence the composer already showed rather than a second wording of it.
+     *
+     * Before the claim, so a post that cannot be published stays in a state its author can
+     * edit, and so no network call is reachable from a draft the network would reject.
+     */
+    this.enforceNetworkLimits(post);
+
+    /**
      * Claim the row, conditionally — the same move the job queue makes.
      *
      * Reading `post.status` and then writing `PUBLISHING` in a second statement lets two
@@ -275,6 +289,34 @@ export class SocialPublisherService implements OnModuleInit {
         HttpStatus.BAD_GATEWAY,
       );
     }
+  }
+
+  /**
+   * One draft against one network's rules, from the one table both sides import.
+   *
+   * `mediaUrls` is a persisted JSON column, so it is read defensively: a legacy row holding
+   * something that is not an array counts as no media rather than throwing on the publish
+   * path.
+   */
+  private enforceNetworkLimits(post: {
+    content: string;
+    mediaUrls: unknown;
+    socialAccount: { platform: string };
+  }): void {
+    const mediaUrls = Array.isArray(post.mediaUrls) ? post.mediaUrls : [];
+
+    const violations = validateForNetwork(post.socialAccount.platform as SocialPlatform, {
+      content: post.content,
+      mediaCount: mediaUrls.length,
+    });
+
+    if (violations.length === 0) return;
+
+    throw new ApiException(
+      MARKETING_ERROR_CODES.postNotPublishable,
+      violations.map((violation) => violation.message).join(' '),
+      HttpStatus.BAD_REQUEST,
+    );
   }
 
   /**

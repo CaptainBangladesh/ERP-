@@ -2,16 +2,23 @@ import React, { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   MARKETING_PATHS,
+  NETWORK_LIMITS,
+  validateForNetworks,
+  type BestTimeResponse,
   type BrandSummary,
   type CreateScheduledPostRequest,
   type ScheduledPostResponse,
   type SocialAccountListResponse,
   type SocialAccountSummary,
+  type SnippetListResponse,
+  type SnippetSummary,
   type SocialPlatform,
 } from '@erp/shared';
 import { Button, Modal } from '@erp/shared/ui';
 import { api, ApiFailure } from '../../../api/client';
 import { lastPublishedBrandId, rememberPublishedBrand } from '../brand-context';
+import { lintDraft } from '../composer-lint';
+import { HOOK_FORMULAS, applyTemplate, appendTemplate } from '../hook-templates';
 import { CharacterMeter, PlatformChip } from './MarketingPrimitives';
 
 export interface PostComposerModalProps {
@@ -24,14 +31,20 @@ export interface PostComposerModalProps {
   onPostCreated?: (post: ScheduledPostResponse) => void;
 }
 
+/**
+ * How each network *looks* in the composer — nothing about what it accepts.
+ *
+ * The caps, media counts, aspect ratios and link handling used to live here as a second copy
+ * of numbers the server also held. They now come from `NETWORK_LIMITS` in `@erp/shared`,
+ * which the publisher imports too, so the meter the writer sees and the rule the server
+ * enforces are the same table (14m).
+ */
 const PLATFORM_META: Record<
   string,
   {
     icon: string;
     label: string;
-    maxChars: number;
     color: string;
-    ratioHint: string;
     formats: string[];
     placeholder: string;
   }
@@ -39,90 +52,70 @@ const PLATFORM_META: Record<
   instagram: {
     icon: '📸',
     label: 'Instagram',
-    maxChars: 2200,
     color: 'text-pink-600 bg-pink-50 border-pink-200',
-    ratioHint: '1:1 Square (1080x1080), 4:5 Portrait (1080x1350), 9:16 Reels/Stories. Max 10 carousel slides.',
     formats: ['Feed Post', 'Carousel', 'Reel', 'Story'],
     placeholder: 'Write your Instagram caption... First 125 chars appear before "...more". Add up to 30 hashtags.',
   },
   facebook: {
     icon: '📘',
     label: 'Facebook',
-    maxChars: 63206,
     color: 'text-blue-600 bg-blue-50 border-blue-200',
-    ratioHint: '1.91:1 Landscape (1200x630) or 1:1 Square. Supports link previews & video carousels.',
     formats: ['Standard Post', 'Photo Album', 'Reel', 'Story'],
     placeholder: 'Share an update, link, or announcement with your Facebook community...',
   },
   linkedin: {
     icon: '💼',
     label: 'LinkedIn',
-    maxChars: 3000,
     color: 'text-sky-700 bg-sky-50 border-sky-200',
-    ratioHint: '1.91:1 Landscape, 1:1 Square, or Multi-page PDF Document Carousel (swipeable decks).',
     formats: ['Text & Image', 'PDF Document Carousel', 'Article Link'],
     placeholder: 'Craft a thought-leadership insight or company milestone for professionals...',
   },
   x: {
     icon: '🐦',
     label: 'X (Twitter)',
-    maxChars: 280,
     color: 'text-slate-800 bg-slate-100 border-slate-300',
-    ratioHint: '16:9 Landscape (1200x675) or 1:1. Max 4 images, 1 GIF, or 1 video (up to 140s).',
     formats: ['Tweet', 'Thread Starter', 'Media Tweet'],
     placeholder: 'What is happening? Keep it punchy (280 characters)...',
   },
   tiktok: {
     icon: '🎵',
     label: 'TikTok',
-    maxChars: 2200,
     color: 'text-neutral-900 bg-neutral-100 border-neutral-300',
-    ratioHint: '9:16 Vertical Video (1080x1920). 15s to 10m duration. Trending sound tags.',
     formats: ['TikTok Video', 'Photo Slideshow'],
     placeholder: 'Add video description, catchy hook, and #fyp hashtags...',
   },
   youtube: {
     icon: '▶️',
     label: 'YouTube',
-    maxChars: 5000,
     color: 'text-red-600 bg-red-50 border-red-200',
-    ratioHint: '16:9 Landscape (1920x1080 / 4K) or 9:16 Shorts (< 60s).',
     formats: ['Video Upload', 'YouTube Short'],
     placeholder: 'Video description, timestamp chapter links, and search keywords...',
   },
   pinterest: {
     icon: '📌',
     label: 'Pinterest',
-    maxChars: 500,
     color: 'text-rose-600 bg-rose-50 border-rose-200',
-    ratioHint: '2:3 Vertical Pin (1000x1500) for highest repin rate.',
     formats: ['Standard Pin', 'Idea Pin'],
     placeholder: 'Pin title, inspirational description, and destination URL...',
   },
   threads: {
     icon: '🧵',
     label: 'Threads',
-    maxChars: 500,
     color: 'text-slate-900 bg-slate-100 border-slate-300',
-    ratioHint: '1:1 Square or vertical video up to 5 mins.',
     formats: ['Thread', 'Image Carousel'],
     placeholder: 'Start an open conversation or commentary...',
   },
   bluesky: {
     icon: '🦋',
     label: 'Bluesky',
-    maxChars: 300,
     color: 'text-sky-500 bg-sky-50 border-sky-200',
-    ratioHint: '16:9 or 1:1 media. Supports alt text for accessibility.',
     formats: ['Skeet Post', 'Media Post'],
     placeholder: 'Post a concise thought to the AT Protocol network...',
   },
   google_business: {
     icon: '📍',
     label: 'Google Business',
-    maxChars: 1500,
     color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
-    ratioHint: '4:3 or 16:9 high-resolution business photo (min 720x540).',
     formats: ['Update', 'Offer / Deal', 'Event'],
     placeholder: 'Local store announcement, special offer, or event details...',
   },
@@ -174,14 +167,39 @@ const SAMPLE_BRAND_ASSETS = [
   },
 ];
 
-// Best times to post mock matrix (Day of week 0-6, hour 0-23, engagement multiplier)
-const BEST_TIME_SLOTS = [
-  { day: 'Tuesday', hour: 10, label: 'Tue 10:00 AM', score: 98, boost: '+48%' },
-  { day: 'Wednesday', hour: 14, label: 'Wed 2:00 PM', score: 95, boost: '+44%' },
-  { day: 'Thursday', hour: 11, label: 'Thu 11:00 AM', score: 92, boost: '+41%' },
-  { day: 'Friday', hour: 15, label: 'Fri 3:00 PM', score: 89, boost: '+38%' },
-  { day: 'Monday', hour: 9, label: 'Mon 9:00 AM', score: 85, boost: '+32%' },
-];
+/**
+ * What a recommendation's provenance is called on screen.
+ *
+ * Derived from the response's `source` and `sampleSize`, never decided here (14j): a global
+ * median presented as this brand's own audience is the failure the field exists to prevent.
+ */
+function sourceLabel(best: BestTimeResponse): string {
+  if (best.source === 'tenant') {
+    return `From this brand's own history — ${best.sampleSize} posts, last 90 days`;
+  }
+  if (best.source === 'cohort') {
+    return `Not enough history for this brand yet — showing your other brands on this network (${best.sampleSize} posts)`;
+  }
+  return 'Not enough history yet — showing general posting times, not this brand’s own data';
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function bucketLabel(dayOfWeek: number, hour: number): string {
+  const day = WEEKDAY_NAMES[dayOfWeek] ?? 'Sunday';
+  return `${day.slice(0, 3)} ${String(hour).padStart(2, '0')}:00`;
+}
+
+
+/** The text the linter reads, for whichever tab is in front of the user. */
+function currentTabContentForLint(
+  activeTab: 'base' | SocialPlatform,
+  baseContent: string,
+  customizations: Record<string, { content?: string }>,
+): string {
+  if (activeTab === 'base') return baseContent;
+  return customizations[activeTab]?.content ?? baseContent;
+}
 
 export function PostComposerModal({
   brand,
@@ -260,6 +278,83 @@ export function PostComposerModal({
     return Array.from(set);
   }, [selectedAccounts]);
 
+  /**
+   * The network the recommendation is about.
+   *
+   * One network at a time, because "best time to post" is a different answer per network and
+   * an average across four of them is an answer to nobody's question.
+   */
+  const insightPlatform: SocialPlatform =
+    activeTab !== 'base' ? activeTab : selectedPlatforms[0] ?? 'instagram';
+
+  const { data: bestTimes } = useQuery({
+    queryKey: ['marketing-best-times', brand.id, insightPlatform],
+    queryFn: () =>
+      api.get<BestTimeResponse>(
+        `${MARKETING_PATHS.bestTimes}?brandId=${encodeURIComponent(brand.id)}&platform=${encodeURIComponent(insightPlatform)}`,
+      ),
+    enabled: isOpen,
+  });
+
+  const { data: snippetList } = useQuery({
+    queryKey: ['marketing-snippets', brand.id],
+    queryFn: () =>
+      api.get<SnippetListResponse>(
+        `${MARKETING_PATHS.snippets}?filter.brandId=${encodeURIComponent(brand.id)}&pageSize=50`,
+      ),
+    enabled: isOpen,
+  });
+
+  const snippets: SnippetSummary[] = snippetList?.items ?? [];
+
+  /**
+   * The one validator, run against the selected channels before publish is enabled (14.1).
+   *
+   * The same call the server makes over the same table, so the sentence shown here is the
+   * sentence the refusal would carry. The client check is UX; it is the publisher's copy that
+   * is the limit.
+   */
+  const limitViolations = useMemo(() => {
+    return selectedPlatforms.flatMap((platform) => {
+      const content = platformCustomizations[platform]?.content?.trim()
+        ? (platformCustomizations[platform]?.content as string)
+        : baseContent;
+      return validateForNetworks([platform], { content, mediaCount: mediaUrls.length });
+    });
+  }, [selectedPlatforms, platformCustomizations, baseContent, mediaUrls]);
+
+  /** Warnings, and only warnings — nothing here can stop a publish (14n). */
+  const lintWarnings = useMemo(
+    () => lintDraft(currentTabContentForLint(activeTab, baseContent, platformCustomizations), selectedPlatforms),
+    [activeTab, baseContent, platformCustomizations, selectedPlatforms],
+  );
+
+  const [hookSubject, setHookSubject] = useState('');
+
+  const applyHook = (skeleton: string) => {
+    const filled = applyTemplate(skeleton, {
+      subject: hookSubject,
+      brand: brand.name,
+      cta: 'Link in bio',
+    });
+    handleContentChange(appendTemplate(currentTabContent, filled));
+  };
+
+  const insertSnippet = (snippet: SnippetSummary) => {
+    const filled = applyTemplate(snippet.body, {
+      subject: hookSubject,
+      brand: brand.name,
+      cta: 'Link in bio',
+    });
+    if (snippet.kind === 'first_comment' && activeTab !== 'base') {
+      handleFirstCommentChange(
+        currentTabFirstComment ? `${currentTabFirstComment} ${filled}` : filled,
+      );
+      return;
+    }
+    handleContentChange(appendTemplate(currentTabContent, filled));
+  };
+
   // Active platform metadata
   const currentPlatformMeta = activeTab === 'base' ? null : PLATFORM_META[activeTab];
 
@@ -324,18 +419,16 @@ export function PostComposerModal({
     setSelectedAccountIds([]);
   };
 
-  // Apply recommended best time
-  const applyBestTime = (slot: (typeof BEST_TIME_SLOTS)[0]) => {
+  // Apply a recommended bucket to the schedule field.
+  const applyBestTime = (bucket: { dayOfWeek: number; hour: number }) => {
     const date = new Date();
-    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const targetDayIndex = daysOfWeek.indexOf(slot.day);
     const currentDayIndex = date.getDay();
-    let daysToAdd = (targetDayIndex - currentDayIndex + 7) % 7;
-    if (daysToAdd === 0 && date.getHours() >= slot.hour) {
+    let daysToAdd = (bucket.dayOfWeek - currentDayIndex + 7) % 7;
+    if (daysToAdd === 0 && date.getHours() >= bucket.hour) {
       daysToAdd = 7;
     }
     date.setDate(date.getDate() + daysToAdd);
-    date.setHours(slot.hour, 0, 0, 0);
+    date.setHours(bucket.hour, 0, 0, 0);
     date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
     setScheduledAtTime(date.toISOString().slice(0, 16));
   };
@@ -439,7 +532,11 @@ export function PostComposerModal({
           </Button>
           <Button
             variant="primary"
-            disabled={createPostsMutation.isPending || selectedAccountIds.length === 0}
+            disabled={
+              createPostsMutation.isPending ||
+              selectedAccountIds.length === 0 ||
+              limitViolations.length > 0
+            }
             onClick={startPublish}
           >
             {createPostsMutation.isPending
@@ -593,11 +690,15 @@ export function PostComposerModal({
                 })}
               </div>
 
-              {/* Aspect Ratio Hint Ribbon */}
-              {currentPlatformMeta && (
+              {/* Format guide, read from the one shared limits table */}
+              {activeTab !== 'base' && NETWORK_LIMITS[activeTab] && (
                 <div className="flex items-center gap-2 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-600">
                   <span className="font-semibold text-slate-900">📐 Format Guide:</span>
-                  <span>{currentPlatformMeta.ratioHint}</span>
+                  <span>
+                    {NETWORK_LIMITS[activeTab].aspectRatios.map((r) => r.label).join(' · ')} ·{' '}
+                    up to {NETWORK_LIMITS[activeTab].maxMedia} attachment(s) ·{' '}
+                    {NETWORK_LIMITS[activeTab].linkNote}
+                  </span>
                 </div>
               )}
 
@@ -622,7 +723,8 @@ export function PostComposerModal({
                       <span>
                         🏷️ Hashtags:{' '}
                         <strong className="text-slate-700">
-                          {(currentTabContent.match(/#[a-zA-Z0-9_]+/g) ?? []).length} / 30
+                          {(currentTabContent.match(/#[a-zA-Z0-9_]+/g) ?? []).length} /{' '}
+                          {NETWORK_LIMITS.instagram.maxHashtags}
                         </strong>
                       </span>
                     )}
@@ -633,10 +735,98 @@ export function PostComposerModal({
 
                   <CharacterMeter
                     used={currentTabContent.length}
-                    budget={currentPlatformMeta?.maxChars}
+                    budget={activeTab === 'base' ? undefined : NETWORK_LIMITS[activeTab]?.characterLimit}
                   />
                 </div>
               </div>
+
+              {/* Per-network limits — the same check the publisher re-runs (14.1 / 14m) */}
+              {limitViolations.length > 0 && (
+                <div
+                  data-testid="limit-violations"
+                  role="alert"
+                  className="flex flex-col gap-1 rounded-xl border border-rose-200 bg-rose-50 p-3 text-[11px] text-rose-800"
+                >
+                  <span className="font-bold">This post cannot be published as written:</span>
+                  <ul className="flex flex-col gap-0.5 pl-4 list-disc">
+                    {limitViolations.map((violation, idx) => (
+                      <li key={`${violation.platform}-${violation.code}-${idx}`}>
+                        {violation.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Lint — warnings only. Nothing here blocks a publish (14n). */}
+              {lintWarnings.length > 0 && (
+                <div
+                  data-testid="lint-warnings"
+                  className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-[11px] text-amber-900"
+                >
+                  <span className="font-bold">Worth a second look — none of these stop you publishing:</span>
+                  <ul className="flex flex-col gap-0.5 pl-4 list-disc">
+                    {lintWarnings.map((warning) => (
+                      <li key={warning.code + warning.message}>{warning.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Hook formulas — literal substitution over three keys, no template engine */}
+              <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="composer-hook-subject"
+                    className="text-xs font-bold uppercase tracking-wider text-slate-600"
+                  >
+                    Hook formulas
+                  </label>
+                  <input
+                    id="composer-hook-subject"
+                    type="text"
+                    value={hookSubject}
+                    onChange={(e) => setHookSubject(e.target.value)}
+                    placeholder="Your subject, e.g. stock counts"
+                    className="flex-1 max-w-[220px] rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {HOOK_FORMULAS.map((formula) => (
+                    <button
+                      key={formula.id}
+                      type="button"
+                      title={formula.description}
+                      onClick={() => applyHook(formula.skeleton)}
+                      className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                    >
+                      {formula.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Snippet library — bodies are text, inserted as a textarea value (14o) */}
+              {snippets.length > 0 && (
+                <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    Saved snippets
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {snippets.map((snippet) => (
+                      <button
+                        key={snippet.id}
+                        type="button"
+                        title={snippet.body}
+                        onClick={() => insertSnippet(snippet)}
+                        className="rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                      >
+                        {snippet.kind === 'first_comment' ? '💬' : '🎯'} {snippet.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* First-Comment Scheduling (Instagram / LinkedIn) */}
               {(activeTab === 'instagram' || activeTab === 'linkedin') && (
@@ -814,34 +1004,45 @@ export function PostComposerModal({
               />
             </div>
 
-            {/* Best Times to Post Heatmap Preview */}
+            {/* Best Times to Post — from this tenant's own data, and it says so */}
             <div className="flex flex-col gap-2.5 rounded-xl border border-amber-200 bg-amber-50/40 p-4 shadow-xs">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
                   <span>⚡</span>
-                  <span>Optimal Engagement Heatmap</span>
+                  <span>Best times to post</span>
                 </span>
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                  AI Recommended
-                </span>
+                {bestTimes && (
+                  <span
+                    data-testid="best-time-source"
+                    className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+                  >
+                    {bestTimes.source === 'tenant' ? 'Your data' : bestTimes.source === 'cohort' ? 'Your other brands' : 'General average'}
+                  </span>
+                )}
               </div>
-              <p className="text-[11px] text-slate-600">
-                Follower activity peaks during these high-engagement windows:
+              <p className="text-[11px] text-slate-600" data-testid="best-time-provenance">
+                {bestTimes
+                  ? `${sourceLabel(bestTimes)} · times shown in ${bestTimes.timezone}`
+                  : 'Loading posting-time history…'}
               </p>
 
               <div className="flex flex-col gap-1.5">
-                {BEST_TIME_SLOTS.slice(0, 3).map((slot, idx) => (
+                {(bestTimes?.recommendations ?? []).slice(0, 3).map((bucket, idx) => (
                   <div
-                    key={idx}
+                    key={`${bucket.dayOfWeek}-${bucket.hour}-${idx}`}
                     className="flex items-center justify-between rounded-lg bg-white p-2 border border-amber-100 text-xs shadow-2xs"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-800">{slot.label}</span>
-                      <span className="text-[10px] font-bold text-emerald-600">{slot.boost}</span>
+                      <span className="font-semibold text-slate-800">
+                        {bucketLabel(bucket.dayOfWeek, bucket.hour)}
+                      </span>
+                      <span className="text-[10px] font-bold text-emerald-600">
+                        score {bucket.score}
+                      </span>
                     </div>
                     <button
                       type="button"
-                      onClick={() => applyBestTime(slot)}
+                      onClick={() => applyBestTime(bucket)}
                       className="rounded-md bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-amber-600 transition"
                     >
                       Apply
