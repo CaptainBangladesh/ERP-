@@ -247,7 +247,7 @@ describe('MarketingPage', () => {
     const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
 
     // Click Queue & Tasks tab
-    const queueTab = await screen.findByRole('button', { name: /Queue & Tasks/i });
+    const queueTab = await screen.findByRole('tab', { name: /Queue & Tasks/i });
     await user.click(queueTab);
 
     // Queue Monitor view appears
@@ -336,7 +336,7 @@ describe('MarketingPage', () => {
     const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
 
     // Click Publishing & Autolists tab
-    const publishingTab = await screen.findByRole('button', { name: /Publishing & Autolists/i });
+    const publishingTab = await screen.findByRole('tab', { name: /Publishing & Autolists/i });
     await user.click(publishingTab);
 
     // Shows scheduled posts
@@ -419,7 +419,7 @@ describe('MarketingPage', () => {
     const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
 
     // Click Calendar & Planner tab
-    const calendarTab = await screen.findByRole('button', { name: /Calendar & Planner/i });
+    const calendarTab = await screen.findByRole('tab', { name: /Calendar & Planner/i });
     await user.click(calendarTab);
 
     // Shows Calendar controls
@@ -508,7 +508,7 @@ describe('MarketingPage', () => {
     const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
 
     // Click Campaigns & Attribution tab
-    const campaignsTab = await screen.findByRole('button', { name: /Campaigns & Attribution/i });
+    const campaignsTab = await screen.findByRole('tab', { name: /Campaigns & Attribution/i });
     await user.click(campaignsTab);
 
     // Verify campaign displays
@@ -594,7 +594,7 @@ describe('MarketingPage', () => {
     const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
 
     // Click Inbound & CRM tab
-    const leadGenTab = await screen.findByRole('button', { name: /Inbound & CRM/i });
+    const leadGenTab = await screen.findByRole('tab', { name: /Inbound & CRM/i });
     await user.click(leadGenTab);
 
     // Verify inbound components rendered
@@ -682,7 +682,7 @@ describe('MarketingPage', () => {
     const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
 
     // Click Social Inbox & DMs tab
-    const inboxTab = await screen.findByRole('button', { name: /Social Inbox & DMs/i });
+    const inboxTab = await screen.findByRole('tab', { name: /Social Inbox & DMs/i });
     await user.click(inboxTab);
 
     // Verify inbox view rendered
@@ -766,7 +766,7 @@ describe('MarketingPage', () => {
     const { user } = renderPage(<MarketingPage />, { path: '/marketing' });
 
     // Click Tracking & Analytics tab
-    const analyticsTab = await screen.findByRole('button', { name: /Tracking & Analytics/i });
+    const analyticsTab = await screen.findByRole('tab', { name: /Tracking & Analytics/i });
     await user.click(analyticsTab);
 
     // Verify Tracking & Analytics view rendered

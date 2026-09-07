@@ -8,7 +8,7 @@ import {
   type Session,
 } from '@erp/shared';
 import { api, setAuthToken, setSessionUnusableHandler } from '../api/client';
-import { readStoredToken, writeStoredToken } from './token-storage';
+import { clearUserScopedStorage, readStoredToken, writeStoredToken } from './token-storage';
 
 /**
  * Who is signed in, for the whole application.
@@ -82,6 +82,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // copy has been wiped by a hot reload, so clearing that fallback has to happen before
       // the in-memory one or a request in between would still find a token to send.
       writeStoredToken(undefined);
+      // What a module remembered about this person goes with the token. Marketing's active
+      // brand is the one that matters: it decides whose credentials the composer opens against.
+      clearUserScopedStorage();
       setAuthToken(undefined);
       setHasExpired(expired);
       setToken(undefined);

@@ -364,7 +364,54 @@ export class SocialPublisherService implements OnModuleInit {
       );
     }
 
-    const scheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : undefined;
+    /**
+     * The server decides what a legal reschedule is, not the calendar.
+     *
+     * Three clients now move a post — the drag, the per-post "Reschedule…" menu, and the
+     * keyboard path — and they all come through here. If the rule about what time is
+     * acceptable lived in any of them, the three would drift and the drag would permit what
+     * the keyboard refused. The UI renders this refusal rather than pre-empting it.
+     */
+    let scheduledAt: Date | undefined;
+    if (input.scheduledAt !== undefined) {
+      scheduledAt = new Date(input.scheduledAt);
+      if (isNaN(scheduledAt.getTime())) {
+        throw new ApiException(
+          'invalid_scheduled_at',
+          'Invalid scheduled timestamp.',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      if (scheduledAt.getTime() <= Date.now()) {
+        throw new ApiException(
+          'invalid_scheduled_at',
+          'A post cannot be scheduled in the past.',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    /**
+     * Moving a post to another channel re-checks the channel.
+     *
+     * `schedulePost` verifies the account belongs to the brand; this path did not, so a post
+     * could be updated onto an account the caller's brand does not own — the same
+     * wrong-client-publish hazard the composer's confirmation exists to prevent, reached by a
+     * different verb. `findFirst` on the scoped client covers the company; `brandId` covers
+     * the brand.
+     */
+    if (input.socialAccountId !== undefined && input.socialAccountId !== existing.socialAccountId) {
+      const target = await this.prisma.socialAccount.findFirst({
+        where: { id: input.socialAccountId, brandId: existing.brandId },
+      });
+      if (!target) {
+        throw new ApiException(
+          MARKETING_ERROR_CODES.socialAccountNotFound,
+          'Social account not found under the selected brand.',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+    }
 
     const updated = await this.prisma.scheduledPost.update({
       where: { id: postId },

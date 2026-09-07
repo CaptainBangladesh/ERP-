@@ -13,6 +13,7 @@ import {
   type SocialMessageListResponse,
   type SocialMessageStatus,
 } from '@erp/shared';
+import { Button, Field, Modal, Select } from '@erp/shared/ui';
 import { api } from '../../../api/client';
 
 export function SocialInboxManager({
@@ -167,8 +168,7 @@ export function SocialInboxManager({
     setShowConvertModal(true);
   };
 
-  const handleConvertSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitConvert = () => {
     if (!activeConversation) return;
 
     convertToLeadMutation.mutate({
@@ -178,6 +178,18 @@ export function SocialInboxManager({
       email: leadEmail.trim() || undefined,
       phone: leadPhone.trim() || undefined,
       organisationName: leadOrganisation.trim() || undefined,
+    });
+  };
+
+  const submitFlow = () => {
+    if (!newFlow.name || !newFlow.triggerKeyword || !newFlow.responseTemplate) return;
+    createFlowMutation.mutate({
+      brandId,
+      name: newFlow.name,
+      triggerKeyword: newFlow.triggerKeyword,
+      matchType: newFlow.matchType,
+      responseTemplate: newFlow.responseTemplate,
+      leadMagnetUrl: newFlow.leadMagnetUrl || undefined,
     });
   };
 
@@ -553,256 +565,183 @@ export function SocialInboxManager({
 
       {/* Convert to CRM Lead Modal */}
       {showConvertModal && activeConversation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">Convert Conversation to CRM Lead</h3>
-                <p className="text-xs text-slate-500">
-                  Promotes this social conversation into a Sales CRM Lead and attaches the entire message history to its Activity Timeline.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowConvertModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            {convertResult ? (
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl mb-4 text-emerald-800 text-xs">
-                <div className="font-bold text-sm mb-1 text-emerald-900">
-                  🎉 Successfully Converted to CRM Lead!
-                </div>
-                <p>
-                  <strong>Lead ID:</strong> {convertResult.leadId}
-                </p>
-                <p>
-                  <strong>Lead Name:</strong> {convertResult.leadName}
-                </p>
-                <p>
-                  <strong>Messages Attached to Activity:</strong> {convertResult.messageCount}
-                </p>
-                <div className="mt-4 text-right">
-                  <button
-                    type="button"
-                    onClick={() => setShowConvertModal(false)}
-                    className="rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
+        <Modal
+          onClose={() => setShowConvertModal(false)}
+          title="Convert Conversation to CRM Lead"
+          description="Promotes this social conversation into a Sales CRM lead and attaches the whole message history to its activity timeline."
+          icon="🔁"
+          size="lg"
+          footer={
+            convertResult ? (
+              <Button variant="primary" onClick={() => setShowConvertModal(false)}>
+                Done
+              </Button>
             ) : (
-              <form onSubmit={handleConvertSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Contact / Lead Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={leadName}
-                    onChange={(e) => setLeadName(e.target.value)}
-                    placeholder="Jane Doe"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+              <>
+                <Button variant="secondary" onClick={() => setShowConvertModal(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => submitConvert()}
+                  disabled={convertToLeadMutation.isPending}
+                >
+                  {convertToLeadMutation.isPending ? 'Converting…' : 'Confirm & Create Lead'}
+                </Button>
+              </>
+            )
+          }
+        >
+          {convertResult ? (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-800">
+              <div className="mb-1 text-sm font-bold text-emerald-900">
+                Successfully converted to a CRM lead
+              </div>
+              <p>
+                <strong>Lead ID:</strong> {convertResult.leadId}
+              </p>
+              <p>
+                <strong>Lead Name:</strong> {convertResult.leadName}
+              </p>
+              <p>
+                <strong>Messages Attached to Activity:</strong> {convertResult.messageCount}
+              </p>
+            </div>
+          ) : (
+            <form
+              noValidate
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitConvert();
+              }}
+              className="flex flex-col gap-4"
+            >
+              <Field id="convert-lead-name" label="Contact / lead name" value={leadName} onChange={setLeadName} />
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Email Address
-                    </label>
-                    <input
-                      type="email"
-                      value={leadEmail}
-                      onChange={(e) => setLeadEmail(e.target.value)}
-                      placeholder="jane@example.com"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Phone Number
-                    </label>
-                    <input
-                      type="tel"
-                      value={leadPhone}
-                      onChange={(e) => setLeadPhone(e.target.value)}
-                      placeholder="+1 (555) 000-0000"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-                </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  id="convert-lead-email"
+                  label="Email address"
+                  type="email"
+                  value={leadEmail}
+                  onChange={setLeadEmail}
+                />
+                <Field
+                  id="convert-lead-phone"
+                  label="Phone number"
+                  value={leadPhone}
+                  onChange={setLeadPhone}
+                />
+              </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Organization / Company Name
-                  </label>
-                  <input
-                    type="text"
-                    value={leadOrganisation}
-                    onChange={(e) => setLeadOrganisation(e.target.value)}
-                    placeholder="Acme Corp"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+              <Field
+                id="convert-lead-org"
+                label="Organization / company name"
+                value={leadOrganisation}
+                onChange={setLeadOrganisation}
+              />
 
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600">
-                  ℹ️ The full message thread (<strong>{messages.length} messages</strong>) will be logged as an Activity Note and attributed to the Social Inbox.
-                </div>
+              <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                The full message thread (<strong>{messages.length} messages</strong>) is logged as an
+                activity note and attributed to the Social Inbox.
+              </p>
 
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowConvertModal(false)}
-                    className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={convertToLeadMutation.isPending}
-                    className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-                  >
-                    {convertToLeadMutation.isPending ? 'Converting...' : 'Confirm & Create Lead'}
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
+              <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
+            </form>
+          )}
+        </Modal>
       )}
 
       {/* Create DM Flow Modal */}
       {showFlowModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">New Keyword DM Automation Flow</h3>
-                <p className="text-xs text-slate-500">
-                  Deliver instant replies, links, and lead magnets when audiences message trigger words.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowFlowModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg"
+        <Modal
+          onClose={() => setShowFlowModal(false)}
+          title="New Keyword DM Automation Flow"
+          description="Deliver instant replies, links, and lead magnets when audiences message trigger words."
+          icon="💬"
+          size="lg"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setShowFlowModal(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => submitFlow()}
+                disabled={createFlowMutation.isPending}
               >
-                ✕
-              </button>
+                {createFlowMutation.isPending ? 'Saving…' : 'Create Flow'}
+              </Button>
+            </>
+          }
+        >
+          <form
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitFlow();
+            }}
+            className="flex flex-col gap-4"
+          >
+            <Field
+              id="dm-flow-name"
+              label="Flow name"
+              value={newFlow.name ?? ''}
+              onChange={(value) => setNewFlow({ ...newFlow, name: value })}
+              hint="e.g. Growth Guide Lead Magnet"
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                id="dm-flow-keyword"
+                label="Trigger keyword"
+                value={newFlow.triggerKeyword ?? ''}
+                onChange={(value) => setNewFlow({ ...newFlow, triggerKeyword: value })}
+                hint="e.g. GUIDE"
+              />
+              <Select
+                id="dm-flow-match"
+                label="Match rule"
+                value={newFlow.matchType ?? 'EXACT'}
+                onChange={(value) =>
+                  setNewFlow({ ...newFlow, matchType: value as typeof newFlow.matchType })
+                }
+                options={[
+                  { value: 'EXACT', label: 'Exact match (single keyword)' },
+                  { value: 'CONTAINS', label: 'Contains keyword in text' },
+                ]}
+              />
             </div>
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                createFlowMutation.mutate({
-                  brandId,
-                  name: newFlow.name!,
-                  triggerKeyword: newFlow.triggerKeyword!,
-                  matchType: newFlow.matchType,
-                  responseTemplate: newFlow.responseTemplate!,
-                  leadMagnetUrl: newFlow.leadMagnetUrl || undefined,
-                });
-              }}
-              className="space-y-4"
-            >
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Flow Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newFlow.name}
-                  onChange={(e) => setNewFlow({ ...newFlow, name: e.target.value })}
-                  placeholder="e.g. Growth Guide Lead Magnet"
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                />
-              </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="dm-flow-template" className="text-sm font-medium text-slate-700">
+                Response template
+              </label>
+              <textarea
+                id="dm-flow-template"
+                rows={3}
+                value={newFlow.responseTemplate}
+                onChange={(e) => setNewFlow({ ...newFlow, responseTemplate: e.target.value })}
+                aria-describedby="dm-flow-template-hint"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              />
+              <span id="dm-flow-template-hint" className="text-xs text-slate-500">
+                Use <code className="text-indigo-600">{"{{leadMagnetUrl}}"}</code> or{' '}
+                <code className="text-indigo-600">{"{{link}}"}</code> to insert the lead magnet URL.
+              </span>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Trigger Keyword *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newFlow.triggerKeyword}
-                    onChange={(e) => setNewFlow({ ...newFlow, triggerKeyword: e.target.value })}
-                    placeholder="GUIDE"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Match Rule
-                  </label>
-                  <select
-                    value={newFlow.matchType}
-                    onChange={(e) => setNewFlow({ ...newFlow, matchType: e.target.value as any })}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="EXACT">Exact Match (single keyword)</option>
-                    <option value="CONTAINS">Contains Keyword in text</option>
-                  </select>
-                </div>
-              </div>
+            <Field
+              id="dm-flow-magnet"
+              label="Lead magnet URL / link (optional)"
+              value={newFlow.leadMagnetUrl || ''}
+              onChange={(value) => setNewFlow({ ...newFlow, leadMagnetUrl: value })}
+              hint="e.g. https://acme.com/ebook.pdf"
+            />
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Response Template *
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  value={newFlow.responseTemplate}
-                  onChange={(e) => setNewFlow({ ...newFlow, responseTemplate: e.target.value })}
-                  placeholder="Hey! Grab your free guide here: {{leadMagnetUrl}}"
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none font-mono text-xs"
-                />
-                <span className="text-[10px] text-slate-400">
-                  Tip: Use <code className="text-indigo-600">{"{{leadMagnetUrl}}"}</code> or <code className="text-indigo-600">{"{{link}}"}</code> to insert the lead magnet URL.
-                </span>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Lead Magnet URL / Link (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={newFlow.leadMagnetUrl || ''}
-                  onChange={(e) => setNewFlow({ ...newFlow, leadMagnetUrl: e.target.value })}
-                  placeholder="https://acme.com/ebook.pdf"
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowFlowModal(false)}
-                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={createFlowMutation.isPending}
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
-                >
-                  {createFlowMutation.isPending ? 'Saving...' : 'Create Flow'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
+          </form>
+        </Modal>
       )}
     </div>
   );

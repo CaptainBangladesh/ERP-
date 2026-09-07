@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
@@ -9,7 +9,6 @@ import {
   listPath,
   listQueryString,
   type BrandListResponse,
-  type BrandSummary,
   type CreateMarketingRequest,
   type ListQuery,
   type MarketingListResponse,
@@ -17,8 +16,12 @@ import {
   type MarketingStatus,
   type MarketingSummary,
 } from '@erp/shared';
-import { DataTable, Field, FormError } from '@erp/shared/ui';
+import { Button, DataTable, Field, FormError } from '@erp/shared/ui';
+import { navigate, useLocationPath, useLocationSearch } from '../../../app/location';
+import { useOptionalSession } from '../../../session/SessionProvider';
 import { ApiFailure, api } from '../../../api/client';
+import { BRAND_QUERY_PARAM, rememberBrandId, resolveActiveBrand, storedBrandId } from '../brand-context';
+import { TabStrip, type TabDefinition } from '../components/TabStrip';
 import { BrandSwitcher } from '../components/BrandSwitcher';
 import { SocialAccountsVault } from '../components/SocialAccountsVault';
 import { JobQueueMonitor } from '../components/JobQueueMonitor';
@@ -30,25 +33,70 @@ import { SocialInboxManager } from '../components/SocialInboxManager';
 import { TrackingManager } from '../components/TrackingManager';
 
 /**
+ * Every destination this workspace has, as data.
+ *
+ * Nine of these were nine pasted twelve-line buttons plus seven pasted empty states — about 250
+ * of this file's 444 lines saying the same thing over and over. They are now one array read by
+ * one `TabStrip` and one `EmptyState`, and adding a destination is an entry here.
+ *
+ * The grouping is the other half of 13.2e: nine top-level tabs is past what a strip carries, and
+ * the category research is consistent that density is what new users struggle with. `records` is
+ * the ticket-01 scaffold CRUD that sat beside the real "Campaigns & Attribution" under a
+ * near-identical name; its *tab* is deleted, and it stays `hidden` rather than removed so
+ * `/marketing/records` is still reachable by URL for the scaffold's own tests.
+ */
+const TABS = [
+  { id: 'calendar', label: 'Calendar & Planner', icon: '🗓️', group: 'Plan' },
+  { id: 'publishing', label: 'Publishing & Autolists', icon: '🚀', group: 'Plan' },
+  { id: 'inbox', label: 'Social Inbox & DMs', icon: '💬', group: 'Engage' },
+  { id: 'campaigns', label: 'Campaigns & Attribution', icon: '🎯', group: 'Grow' },
+  { id: 'leadgen', label: 'Inbound & CRM', icon: '🧲', group: 'Grow' },
+  { id: 'analytics', label: 'Tracking & Analytics', icon: '📊', group: 'Grow' },
+  { id: 'vault', label: 'Brand & OAuth Vault', icon: '🔐', group: 'Settings' },
+  { id: 'queue', label: 'Queue & Tasks', icon: '⚡', group: 'Settings' },
+  { id: 'records', label: 'Campaign Records', icon: '📋', group: 'Settings', hidden: true },
+] as const satisfies readonly TabDefinition[];
+
+type TabId = (typeof TABS)[number]['id'];
+
+const DEFAULT_TAB: TabId = 'vault';
+const PANEL_ID = 'marketing-tabpanel';
+
+/**
  * Marketing & Social Media Command Center.
  *
  * Provides Brand multi-tenancy workspace isolation, AES-256-GCM encrypted OAuth credential
  * vault across 10 social networks, background task queues, and campaign records.
  */
-export function MarketingPage({
-  initialTab = 'vault',
-}: {
-  initialTab?: 'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'inbox' | 'analytics' | 'records' | 'queue';
-} = {}) {
-  const [activeTab, setActiveTab] = useState<'vault' | 'calendar' | 'publishing' | 'campaigns' | 'leadgen' | 'inbox' | 'analytics' | 'records' | 'queue'>(() => {
-    if (typeof window !== 'undefined' && window.location.pathname.includes('/calendar')) {
-      return 'calendar';
-    }
-    return initialTab;
-  });
-  const [activeBrandId, setActiveBrandId] = useState<string | null>(null);
+export function MarketingPage({ initialTab = DEFAULT_TAB }: { initialTab?: TabId } = {}) {
+  const path = useLocationPath();
+  const search = useLocationSearch();
+  // Optional, because the storage key is namespaced by user and there is simply nothing to
+  // namespace by until the session has answered. An unknown user reads and writes nothing.
+  const sessionState = useOptionalSession();
+  const userId = sessionState?.session?.user?.id;
+  // Until the session has answered there is no key to read storage under, and writing the URL
+  // before then would put `brands[0]` in it — which then out-proposes the stored brand on the
+  // very next render. So the correction waits for the session, not only for the brand list.
+  const isSessionSettled = !sessionState?.isRestoring;
   const [query, setQuery] = useState<ListQuery>({});
   const queryClient = useQueryClient();
+
+  /**
+   * The tab is the URL, not `useState`.
+   *
+   * It used to be state seeded by a one-shot `window.location.pathname` read in the initialiser,
+   * which is why a client-side navigation to `/marketing/calendar` did not select the calendar,
+   * why a tab could not be linked, and why the back button did nothing.
+   *
+   * The segment is matched against `TABS` ids and *nothing else* — never used to index an
+   * object, resolve a component, or build a fetch path — so an unrecognised segment is simply a
+   * segment that matched no tab. It renders the default and corrects the URL with `replace`;
+   * the unknown string never reaches the DOM.
+   */
+  const segment = path.startsWith('/marketing/') ? path.slice('/marketing/'.length) : '';
+  const matched = TABS.find((tab) => tab.id === segment);
+  const activeTab: TabId = matched ? matched.id : segment === '' ? initialTab : DEFAULT_TAB;
 
   // Load Brands
   const brandsQuery = useQuery({
@@ -56,9 +104,61 @@ export function MarketingPage({
     queryFn: () => api.get<BrandListResponse>(MARKETING_PATHS.brands),
   });
 
-  const brands = brandsQuery.data?.items ?? [];
-  const activeBrand =
-    brands.find((b) => b.id === activeBrandId) ?? brands[0] ?? null;
+  const brands = useMemo(() => brandsQuery.data?.items ?? [], [brandsQuery.data]);
+
+  /**
+   * The URL proposes a brand, storage proposes one, and the server's list decides.
+   *
+   * `?brand=…` is what makes a shared link carry its client; that also makes the id something a
+   * colleague pastes and something an attacker crafts, and every panel below drives credentialed
+   * publishing with it. So it is resolved against the brands the API returned for *this session*
+   * and discarded if it is not among them.
+   */
+  const urlBrandId = new URLSearchParams(search).get(BRAND_QUERY_PARAM);
+  const { brand: activeBrand, wasProposalHonoured } = resolveActiveBrand(brands, [
+    urlBrandId,
+    storedBrandId(userId),
+  ]);
+
+  const goTo = (tab: TabId, brandId: string | null) => {
+    // Built from a literal prefix plus an allowlisted id, so no caller-supplied string can ever
+    // reach `pushState` — a protocol-relative `//host` value has nowhere to enter.
+    const suffix = brandId ? `?${BRAND_QUERY_PARAM}=${encodeURIComponent(brandId)}` : '';
+    return `/marketing/${tab}${suffix}`;
+  };
+
+  /**
+   * Keeps the URL honest about where you actually are.
+   *
+   * Three cases collapse into one write: an unknown segment, a brand the list did not return,
+   * and a resolved brand that simply was not in the URL yet. All are corrections rather than
+   * navigations, so all use `replace` — a back button that walks through the app's own tidying
+   * up is a back button that does nothing.
+   */
+  useEffect(() => {
+    if (brandsQuery.isPending || !isSessionSettled) return;
+
+    const needsTabFix = path.startsWith('/marketing') && !matched && segment !== '';
+    const needsBrandFix = activeBrand ? urlBrandId !== activeBrand.id : Boolean(urlBrandId);
+    if (!needsTabFix && !needsBrandFix && wasProposalHonoured) return;
+
+    navigate(goTo(activeTab, activeBrand?.id ?? null), { replace: true });
+  }, [
+    path,
+    segment,
+    matched,
+    urlBrandId,
+    activeBrand,
+    activeTab,
+    wasProposalHonoured,
+    brandsQuery.isPending,
+    isSessionSettled,
+  ]);
+
+  /** Persisted only once it has survived resolution, so a rejected id is never written back. */
+  useEffect(() => {
+    if (activeBrand) rememberBrandId(userId, activeBrand.id);
+  }, [activeBrand, userId]);
 
   // Load Legacy/General Marketing records
   const marketing = useQuery({
@@ -101,285 +201,154 @@ export function MarketingPage({
         <BrandSwitcher
           brands={brands}
           activeBrand={activeBrand}
-          onSelectBrand={(b) => setActiveBrandId(b.id)}
+          onSelectBrand={(b) => navigate(goTo(activeTab, b.id))}
           onBrandCreated={(newBrand) => {
-            setActiveBrandId(newBrand.id);
             void queryClient.invalidateQueries({ queryKey: ['marketing', 'brands'] });
+            navigate(goTo(activeTab, newBrand.id));
           }}
         />
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex border-b border-slate-200 text-sm font-medium text-slate-600">
-        <button
-          type="button"
-          onClick={() => setActiveTab('vault')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'vault'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>🔐</span>
-          <span>Brand & OAuth Vault</span>
-          {activeBrand && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
-              {activeBrand.name}
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('calendar')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'calendar'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>🗓️</span>
-          <span>Calendar & Planner</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('publishing')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'publishing'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>🚀</span>
-          <span>Publishing & Autolists</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('records')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'records'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>📋</span>
-          <span>Campaign Records</span>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
-            {marketing.data?.items.length ?? 0}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('campaigns')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'campaigns'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>🎯</span>
-          <span>Campaigns & Attribution</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('leadgen')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'leadgen'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>🧲</span>
-          <span>Inbound & CRM</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('inbox')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'inbox'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>💬</span>
-          <span>Social Inbox & DMs</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('analytics')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'analytics'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>📊</span>
-          <span>Tracking & Analytics</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('queue')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 transition ${
-            activeTab === 'queue'
-              ? 'border-slate-900 font-semibold text-slate-900'
-              : 'border-transparent hover:border-slate-300 hover:text-slate-800'
-          }`}
-        >
-          <span>⚡</span>
-          <span>Queue & Tasks</span>
-        </button>
-      </div>
+      <TabStrip
+        tabs={TABS}
+        activeId={activeTab}
+        onSelect={(id) => navigate(goTo(id as TabId, activeBrand?.id ?? null))}
+        label="Marketing sections"
+        panelId={PANEL_ID}
+      />
 
-      {/* Tab 1: Brand & OAuth Vault */}
-      {activeTab === 'vault' && (
-        <>
-          {activeBrand ? (
+      <div
+        id={PANEL_ID}
+        role="tabpanel"
+        aria-labelledby={`marketing-tab-${activeTab}`}
+        tabIndex={0}
+        className="focus:outline-none"
+      >
+        {activeTab === 'vault' &&
+          (activeBrand ? (
             <SocialAccountsVault brand={activeBrand} />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
-              <span className="text-3xl">🏢</span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">No Brand Workspaces Yet</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                Create your first client Brand workspace above to manage connected social accounts and OAuth credentials securely.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+            <EmptyState icon="🏢" title="No Brand Workspaces Yet">
+              Create your first client Brand workspace above to manage connected social accounts
+              and OAuth credentials securely.
+            </EmptyState>
+          ))}
 
-      {/* Tab: Calendar & Planner */}
-      {activeTab === 'calendar' && (
-        <>
-          {activeBrand ? (
+        {activeTab === 'calendar' &&
+          (activeBrand ? (
             <SocialCalendarPage brand={activeBrand} />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
-              <span className="text-3xl">🗓️</span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">No Brand Selected</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                Select or create a Brand workspace above to view the publishing calendar and drag-and-drop schedule.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+            <EmptyState icon="🗓️" title="No Brand Selected">
+              Select or create a Brand workspace above to view the publishing calendar and
+              drag-and-drop schedule.
+            </EmptyState>
+          ))}
 
-      {/* Tab 2: Publishing & Autolists */}
-      {activeTab === 'publishing' && (
-        <>
-          {activeBrand ? (
+        {activeTab === 'publishing' &&
+          (activeBrand ? (
             <PublishingManager brand={activeBrand} />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
-              <span className="text-3xl">🚀</span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                Select a Brand workspace above to manage scheduled posts and recurring Autolists.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+            <EmptyState icon="🚀" title="Select or Create a Brand">
+              Select a Brand workspace above to manage scheduled posts and recurring Autolists.
+            </EmptyState>
+          ))}
 
-      {/* Tab: Campaigns & Attribution */}
-      {activeTab === 'campaigns' && (
-        <>
-          {activeBrand ? (
+        {activeTab === 'campaigns' &&
+          (activeBrand ? (
             <CampaignsManager brandId={activeBrand.id} brandName={activeBrand.name} />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
-              <span className="text-3xl">🎯</span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                Select a Brand workspace to create campaigns, generate UTM links, and manage SmartLinks.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+            <EmptyState icon="🎯" title="Select or Create a Brand">
+              Select a Brand workspace to create campaigns, generate UTM links, and manage
+              SmartLinks.
+            </EmptyState>
+          ))}
 
-      {/* Tab: Inbound & CRM Handoff (Ticket 07) */}
-      {activeTab === 'leadgen' && (
-        <>
-          {activeBrand ? (
+        {activeTab === 'leadgen' &&
+          (activeBrand ? (
             <LeadGenManager brandId={activeBrand.id} brandName={activeBrand.name} />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
-              <span className="text-3xl">🧲</span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                Select a Brand workspace to create web forms, ad lead webhooks, and nurture sequences.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+            <EmptyState icon="🧲" title="Select or Create a Brand">
+              Select a Brand workspace to create web forms, ad lead webhooks, and nurture
+              sequences.
+            </EmptyState>
+          ))}
 
-      {/* Tab: Social Inbox & DM Automation (Ticket 08) */}
-      {activeTab === 'inbox' && (
-        <>
-          {activeBrand ? (
+        {activeTab === 'inbox' &&
+          (activeBrand ? (
             <SocialInboxManager brandId={activeBrand.id} brandName={activeBrand.name} />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
-              <span className="text-3xl">💬</span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                Select a Brand workspace to view social direct messages, respond to customers, and configure keyword DM flows.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+            <EmptyState icon="💬" title="Select or Create a Brand">
+              Select a Brand workspace to view social direct messages, respond to customers, and
+              configure keyword DM flows.
+            </EmptyState>
+          ))}
 
-      {/* Tab: Tracking Pixel & Visitor Analytics (Ticket 09) */}
-      {activeTab === 'analytics' && (
-        <>
-          {activeBrand ? (
+        {activeTab === 'analytics' &&
+          (activeBrand ? (
             <TrackingManager brandId={activeBrand.id} brandName={activeBrand.name} />
           ) : (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
-              <span className="text-3xl">📊</span>
-              <h3 className="mt-3 text-base font-semibold text-slate-900">Select or Create a Brand</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                Select a Brand workspace to configure website tracking pixels and view visitor analytics.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+            <EmptyState icon="📊" title="Select or Create a Brand">
+              Select a Brand workspace to configure website tracking pixels and view visitor
+              analytics.
+            </EmptyState>
+          ))}
 
-      {/* Tab 3: Queue & Tasks */}
-      {activeTab === 'queue' && <JobQueueMonitor />}
+        {activeTab === 'queue' && <JobQueueMonitor />}
 
-      {/* Tab 4: Records Table & Form (preserves original scaffold & existing tests) */}
-      <div className={activeTab === 'records' ? 'flex flex-col gap-8' : 'hidden'}>
-        <AddMarketing
-          onAdded={() => {
-            void queryClient.invalidateQueries({ queryKey: ['marketing'] });
-            setQuery({});
-          }}
-        />
+        {/*
+          The scaffold's own table. Mounted rather than switched, because its tests read it from
+          the workspace's root path; hidden with CSS when another destination is showing.
+        */}
+        <div className={activeTab === 'records' ? 'flex flex-col gap-8' : 'hidden'}>
+          <AddMarketing
+            onAdded={() => {
+              void queryClient.invalidateQueries({ queryKey: ['marketing'] });
+              setQuery({});
+            }}
+          />
 
-        <DataTable
-          caption="Marketing"
-          columns={columns}
-          rows={marketing.data?.items ?? []}
-          rowId={(row) => row.id}
-          page={marketing.data?.page ?? emptyPage()}
-          query={query}
-          onQueryChange={setQuery}
-          status={marketing.isPending ? 'loading' : marketing.isError ? 'error' : 'ready'}
-          error={failure?.message}
-          onRetry={() => void marketing.refetch()}
-          searchLabel="Search by name"
-          empty={
-            <div className="flex flex-col gap-1">
-              <p className="font-medium text-slate-900">Nothing here yet.</p>
-              <p>Add your first marketing using the form above.</p>
-            </div>
-          }
-        />
+          <DataTable
+            caption="Marketing"
+            columns={columns}
+            rows={marketing.data?.items ?? []}
+            rowId={(row) => row.id}
+            page={marketing.data?.page ?? emptyPage()}
+            query={query}
+            onQueryChange={setQuery}
+            status={marketing.isPending ? 'loading' : marketing.isError ? 'error' : 'ready'}
+            error={failure?.message}
+            onRetry={() => void marketing.refetch()}
+            searchLabel="Search by name"
+            empty={
+              <div className="flex flex-col gap-1">
+                <p className="font-medium text-slate-900">Nothing here yet.</p>
+                <p>Add your first marketing using the form above.</p>
+              </div>
+            }
+          />
+        </div>
       </div>
+    </div>
+  );
+}
+
+/** The seven pasted "no brand selected" blocks, once. */
+function EmptyState({
+  icon,
+  title,
+  children,
+}: {
+  icon: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-xs">
+      <span className="text-3xl" aria-hidden="true">
+        {icon}
+      </span>
+      <h3 className="mt-3 text-base font-semibold text-slate-900">{title}</h3>
+      <p className="mx-auto mt-1 max-w-sm text-xs text-slate-500">{children}</p>
     </div>
   );
 }
@@ -431,13 +400,9 @@ function AddMarketing({ onAdded }: { onAdded: (created: MarketingResponse) => vo
       )}
 
       <div>
-        <button
-          type="submit"
-          disabled={add.isPending}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" size="lg" disabled={add.isPending}>
           {add.isPending ? 'Adding…' : 'Add marketing'}
-        </button>
+        </Button>
       </div>
     </form>
   );

@@ -377,7 +377,15 @@ export class SocialAccountsService {
     });
   }
 
-  private describeAccount(
+  /**
+   * The one place a stored social account becomes a DTO.
+   *
+   * Public because `brands.service` renders the same accounts on `GET /brands/:id` and used to
+   * build its own copy of this object — including its own mask, which read the ciphertext
+   * column directly. Two mappings meant one of them could be fixed and the other missed, and
+   * that is exactly what happened. There is one now.
+   */
+  describeAccount(
     row: {
       id: string;
       brandId: string;

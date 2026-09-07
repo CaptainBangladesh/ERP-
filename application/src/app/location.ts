@@ -27,6 +27,18 @@ export function currentSearchParams(): URLSearchParams {
   return new URLSearchParams(window.location.search);
 }
 
+/**
+ * The query string, reactive, unlike `currentSearchParams` above.
+ *
+ * Added when marketing put the active brand in the URL: a shared link carries `?brand=…`, and
+ * changing brand has to re-render the screens reading it — which the one-shot read cannot do.
+ * Returned as the raw string rather than a `URLSearchParams`, because `useSyncExternalStore`
+ * compares snapshots by identity and a fresh object every call is an infinite render loop.
+ */
+export function useLocationSearch(): string {
+  return useSyncExternalStore(subscribe, () => window.location.search);
+}
+
 function subscribe(onChange: () => void): () => void {
   // `popstate` covers back and forward; the custom event covers `navigate` below, because
   // pushState deliberately does not fire one.
@@ -39,7 +51,10 @@ function subscribe(onChange: () => void): () => void {
 }
 
 export function navigate(path: string, { replace = false } = {}): void {
-  if (window.location.pathname === path) return;
+  // Compared against path *and* query, because a caller may now pass one — marketing carries
+  // its active brand as `?brand=…`. Without the query in the comparison, changing only the
+  // brand looks like "already there" and the URL never moves.
+  if (window.location.pathname + window.location.search === path) return;
 
   // Replace, not push, when the app is correcting where somebody is — being sent to
   // sign-in should not leave a back button that returns to a screen they cannot see.

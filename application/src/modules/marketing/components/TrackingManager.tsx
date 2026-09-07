@@ -7,6 +7,7 @@ import {
   type TrackingAnalyticsResponse,
   type CreateTrackingSiteRequest,
 } from '@erp/shared';
+import { Button, Field, Modal } from '@erp/shared/ui';
 import { api } from '../../../api/client';
 
 export function TrackingManager({
@@ -62,6 +63,16 @@ export function TrackingManager({
       setSelectedSiteId(created.id);
     },
   });
+
+  const submitSite = () => {
+    if (!newSite.name || !newSite.domain) return;
+    createSiteMutation.mutate({
+      brandId,
+      name: newSite.name,
+      domain: newSite.domain,
+      isActive: true,
+    });
+  };
 
   // Delete Site Mutation
   const deleteSiteMutation = useMutation({
@@ -457,78 +468,53 @@ export function TrackingManager({
 
       {/* Add Tracked Site Modal */}
       {showAddSiteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-base font-semibold text-slate-900">Register Tracked Website</h3>
-              <button
-                onClick={() => setShowAddSiteModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg"
+        <Modal
+          onClose={() => setShowAddSiteModal(false)}
+          title="Register Tracked Website"
+          description="The pixel reports page views for this domain against this brand."
+          icon="📊"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setShowAddSiteModal(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => submitSite()}
+                disabled={createSiteMutation.isPending}
               >
-                &times;
-              </button>
-            </div>
+                {createSiteMutation.isPending ? 'Registering…' : 'Register Domain'}
+              </Button>
+            </>
+          }
+        >
+          <form
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitSite();
+            }}
+            className="flex flex-col gap-4"
+          >
+            <Field
+              id="tracking-site-name"
+              label="Site / application name"
+              value={newSite.name ?? ''}
+              onChange={(value) => setNewSite({ ...newSite, name: value })}
+              hint="e.g. Apex Athletics Online Store"
+            />
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (newSite.name && newSite.domain) {
-                  createSiteMutation.mutate({
-                    brandId,
-                    name: newSite.name,
-                    domain: newSite.domain,
-                    isActive: true,
-                  });
-                }
-              }}
-              className="mt-4 flex flex-col gap-4"
-            >
-              <div>
-                <label className="block text-xs font-semibold text-slate-700">Site / Application Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Apex Athletics Online Store"
-                  value={newSite.name}
-                  onChange={(e) => setNewSite({ ...newSite, name: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
+            <Field
+              id="tracking-site-domain"
+              label="Domain name"
+              value={newSite.domain ?? ''}
+              onChange={(value) => setNewSite({ ...newSite, domain: value })}
+              hint="e.g. store.apexathletics.com — no http:// and no slashes."
+            />
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700">Domain Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. store.apexathletics.com"
-                  value={newSite.domain}
-                  onChange={(e) => setNewSite({ ...newSite, domain: e.target.value })}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  Do not include http:// or slashes.
-                </p>
-              </div>
-
-              <div className="mt-3 flex items-center justify-end gap-3 border-t border-slate-200 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowAddSiteModal(false)}
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={createSiteMutation.isPending}
-                  className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {createSiteMutation.isPending ? 'Registering...' : 'Register Domain'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
+          </form>
+        </Modal>
       )}
     </div>
   );

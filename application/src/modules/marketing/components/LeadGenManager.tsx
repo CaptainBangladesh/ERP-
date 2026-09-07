@@ -11,6 +11,7 @@ import {
   type NurtureSequenceListResponse,
   type NurtureSequenceSummary,
 } from '@erp/shared';
+import { Button, Field, Modal, Select } from '@erp/shared/ui';
 import { api } from '../../../api/client';
 
 export function LeadGenManager({
@@ -604,57 +605,19 @@ export function LeadGenManager({
 
       {/* MODAL 1: CREATE FORM */}
       {showFormModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-bold text-slate-900">Create Inbound Lead Capture Form</h3>
-            <p className="mt-1 text-xs text-slate-500">
-              Form submissions automatically create and update Sales CRM Leads with UTM attribution.
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-medium text-slate-700">Form Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Free Consultation Request"
-                  value={newForm.name}
-                  onChange={(e) => setNewForm({ ...newForm, name: e.target.value })}
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-1.5 text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-700">Description</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Embedded on marketing landing page"
-                  value={newForm.description ?? ''}
-                  onChange={(e) => setNewForm({ ...newForm, description: e.target.value })}
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-1.5 text-xs"
-                />
-              </div>
-
-              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-                <span className="font-semibold text-slate-700">Included Form Fields:</span>
-                <ul className="mt-1 list-disc pl-4 space-y-0.5 text-slate-500">
-                  <li>Full Name (required)</li>
-                  <li>Work Email (required)</li>
-                  <li>Phone Number (optional)</li>
-                  <li>Company / Organization (optional)</li>
-                </ul>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowFormModal(false)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
+        <Modal
+          onClose={() => setShowFormModal(false)}
+          title="Create Inbound Lead Capture Form"
+          description="Form submissions automatically create and update Sales CRM leads with UTM attribution."
+          icon="🧲"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setShowFormModal(false)}>
                 Cancel
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!newForm.name || createFormMutation.isPending}
                 onClick={() =>
                   createFormMutation.mutate({
                     brandId,
@@ -662,60 +625,57 @@ export function LeadGenManager({
                     description: newForm.description,
                   })
                 }
-                disabled={!newForm.name || createFormMutation.isPending}
-                className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {createFormMutation.isPending ? 'Creating...' : 'Create Form'}
-              </button>
+                {createFormMutation.isPending ? 'Creating…' : 'Create Form'}
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <Field
+              id="leadgen-form-name"
+              label="Form name"
+              value={newForm.name ?? ''}
+              onChange={(value) => setNewForm({ ...newForm, name: value })}
+              hint="e.g. Free Consultation Request"
+            />
+
+            <Field
+              id="leadgen-form-description"
+              label="Description"
+              value={newForm.description ?? ''}
+              onChange={(value) => setNewForm({ ...newForm, description: value })}
+              hint="e.g. Embedded on marketing landing page"
+            />
+
+            <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+              <span className="font-semibold text-slate-700">Included form fields:</span>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-500">
+                <li>Full Name (required)</li>
+                <li>Work Email (required)</li>
+                <li>Phone Number (optional)</li>
+                <li>Company / Organization (optional)</li>
+              </ul>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* MODAL 2: CREATE NURTURE SEQUENCE */}
       {showNurtureModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-bold text-slate-900">Create Nurture Email Flow</h3>
-            <p className="mt-1 text-xs text-slate-500">
-              Set up automated email steps sent to leads after capture.
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="text-xs font-medium text-slate-700">Sequence Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Inbound Demo Nurture"
-                  value={newSequence.name}
-                  onChange={(e) => setNewSequence({ ...newSequence, name: e.target.value })}
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-1.5 text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-700">Trigger Event</label>
-                <select
-                  value={newSequence.triggerEvent}
-                  onChange={(e) => setNewSequence({ ...newSequence, triggerEvent: e.target.value })}
-                  className="mt-1 w-full rounded border border-slate-300 px-3 py-1.5 text-xs"
-                >
-                  <option value="marketing.lead.captured">marketing.lead.captured (Any Lead)</option>
-                  <option value="form_submit">Web Form Submit Only</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowNurtureModal(false)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
+        <Modal
+          onClose={() => setShowNurtureModal(false)}
+          title="Create Nurture Email Flow"
+          description="Automated email steps sent to leads after capture."
+          icon="📨"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setShowNurtureModal(false)}>
                 Cancel
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!newSequence.name || createNurtureMutation.isPending}
                 onClick={() =>
                   createNurtureMutation.mutate({
                     brandId,
@@ -723,77 +683,80 @@ export function LeadGenManager({
                     triggerEvent: newSequence.triggerEvent || 'marketing.lead.captured',
                   })
                 }
-                disabled={!newSequence.name || createNurtureMutation.isPending}
-                className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {createNurtureMutation.isPending ? 'Creating...' : 'Create Sequence'}
-              </button>
-            </div>
+                {createNurtureMutation.isPending ? 'Creating…' : 'Create Sequence'}
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <Field
+              id="nurture-name"
+              label="Sequence name"
+              value={newSequence.name ?? ''}
+              onChange={(value) => setNewSequence({ ...newSequence, name: value })}
+              hint="e.g. Inbound Demo Nurture"
+            />
+
+            <Select
+              id="nurture-trigger"
+              label="Trigger event"
+              value={newSequence.triggerEvent ?? 'marketing.lead.captured'}
+              onChange={(value) => setNewSequence({ ...newSequence, triggerEvent: value })}
+              options={[
+                { value: 'marketing.lead.captured', label: 'marketing.lead.captured (Any Lead)' },
+                { value: 'form_submit', label: 'Web Form Submit Only' },
+              ]}
+            />
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* DRAWER / MODAL: VIEW SUBMISSIONS */}
       {selectedFormForSubmissions && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  Submissions: {selectedFormForSubmissions.name}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Showing captured leads from this form handed off to CRM
-                </p>
+        <Modal
+          onClose={() => setSelectedFormForSubmissions(null)}
+          title={`Submissions: ${selectedFormForSubmissions.name}`}
+          description="Captured leads from this form, handed off to CRM."
+          icon="📝"
+          size="lg"
+        >
+          <div className="flex flex-col gap-3">
+            {submissions.length === 0 ? (
+              <div className="py-12 text-center text-xs text-slate-500">
+                No submissions captured for this form yet.
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedFormForSubmissions(null)}
-                className="text-slate-400 hover:text-slate-600 text-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mt-4 flex-1 overflow-y-auto space-y-3">
-              {submissions.length === 0 ? (
-                <div className="py-12 text-center text-xs text-slate-500">
-                  No submissions captured for this form yet.
-                </div>
-              ) : (
-                submissions.map((sub) => (
-                  <div
-                    key={sub.id}
-                    className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div>
-                      <span className="font-semibold text-slate-800">
-                        {(sub.mappedFields?.name as string) || (sub.rawPayload?.email as string) || 'Anonymous'}
-                      </span>
-                      <p className="text-slate-500">
-                        Email: {(sub.mappedFields?.email as string) || (sub.rawPayload?.email as string) || 'none'}
-                      </p>
-                      <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">
-                        <span>UTM: {sub.utmSource || 'direct'} / {sub.utmMedium || 'none'} / {sub.utmCampaign || 'none'}</span>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="text-[10px] text-slate-400">
-                        {new Date(sub.submittedAt).toLocaleDateString()}
-                      </span>
-                      {sub.crmLeadId && (
-                        <p className="mt-0.5 font-semibold text-emerald-600">
-                          CRM Lead Linked ✓
-                        </p>
-                      )}
+            ) : (
+              submissions.map((sub) => (
+                <div
+                  key={sub.id}
+                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <span className="font-semibold text-slate-800">
+                      {(sub.mappedFields?.name as string) || (sub.rawPayload?.email as string) || 'Anonymous'}
+                    </span>
+                    <p className="text-slate-500">
+                      Email: {(sub.mappedFields?.email as string) || (sub.rawPayload?.email as string) || 'none'}
+                    </p>
+                    <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">
+                      <span>UTM: {sub.utmSource || 'direct'} / {sub.utmMedium || 'none'} / {sub.utmCampaign || 'none'}</span>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
+
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400">
+                      {new Date(sub.submittedAt).toLocaleDateString()}
+                    </span>
+                    {sub.crmLeadId && (
+                      <p className="mt-0.5 font-semibold text-emerald-600">CRM Lead Linked ✓</p>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

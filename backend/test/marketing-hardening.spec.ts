@@ -576,8 +576,72 @@ describe('Marketing: unblocking the module and hardening the public surface', ()
         expect(JSON.stringify(response.body)).not.toContain('super_secret_access_token_abcd');
       }
     });
+
+    /**
+     * The assertion 11.4a should have shipped with, and the defect it would have caught.
+     *
+     * `brands.service` kept its own copy of the account mapping and masked the *stored column*,
+     * so `GET /brands/:id` — the one call the Brand Switcher and the vault screen make — showed
+     * the last four characters of a GCM auth tag. The field name was `maskedAccessToken` and the
+     * value contained no plaintext, so the check above passed the whole time.
+     *
+     * Two things close it: the mask on the brand detail has to be the same mask the accounts
+     * endpoints return, and no response field anywhere may carry a long opaque blob. The second
+     * is deliberately blunt — it does not know what ciphertext looks like, only that a base64ish
+     * run of that length is not something a DTO has any business containing.
+     */
+    it('masks the plaintext token on the brand detail, and ships no opaque blobs anywhere', async () => {
+      const tenant = await signUp();
+      const brand = await brandFor(tenant);
+      const account = await accountFor(tenant, brand);
+
+      const detail = await tenant.as(app.http.get(MARKETING_PATHS.brand(brand.id))).expect(200);
+
+      const listed = (detail.body.socialAccounts as SocialAccountSummary[]).find(
+        (row) => row.id === account.id,
+      );
+      // Not `••••••••` + four characters of the ciphertext, which is what this used to be.
+      expect(listed?.maskedAccessToken).toBe('••••••••abcd');
+
+      const surfaces = [
+        detail,
+        await tenant.as(app.http.get(MARKETING_PATHS.brands)).expect(200),
+        await tenant.as(app.http.get(MARKETING_PATHS.brandSocialAccounts(brand.id))).expect(200),
+        await tenant.as(app.http.get(MARKETING_PATHS.socialAccount(account.id))).expect(200),
+        await tenant.as(app.http.get(MARKETING_PATHS.expiringAccounts(brand.id))).expect(200),
+      ];
+
+      for (const response of surfaces) {
+        for (const [path, value] of leafValues(response.body)) {
+          expect({ path, value }).toEqual({ path, value: expect.not.stringMatching(BLOB) });
+        }
+      }
+    });
   });
 });
+
+/**
+ * A value that looks like something encrypted rather than something readable.
+ *
+ * Long enough that a name, a slug, a URL or an ISO timestamp cannot reach it, and restricted to
+ * the base64/hex alphabet plus the `.` this module's `kid.iv.ct.tag` format joins on — so a
+ * sentence of prose with spaces in it is not a false positive.
+ */
+const BLOB = /^[A-Za-z0-9+/=._-]{41,}$/;
+
+/** Every leaf value in a response body, with the path that reached it. */
+function leafValues(value: unknown, at = '$', seen: Array<[string, unknown]> = []): Array<[string, unknown]> {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => leafValues(item, `${at}[${index}]`, seen));
+    return seen;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, nested] of Object.entries(value)) leafValues(nested, `${at}.${key}`, seen);
+    return seen;
+  }
+  seen.push([at, value]);
+  return seen;
+}
 
 /** Every field name anywhere in a response body, however deeply nested. */
 function fieldNames(value: unknown, seen: string[] = []): string[] {
