@@ -12,8 +12,13 @@ import {
 } from '@nestjs/common';
 import type {
   PublicSmartLinkResponse,
+  ShoppableGridItem,
+  SmartLinkButton,
+  SmartLinkSocialItem,
 } from '@erp/shared';
 import { Public } from '../../platform/auth';
+import { CSP_NONCE, type NonceCarrier } from './bio-page-csp.middleware';
+import { Throttle } from '../../platform/throttling';
 import { validated, type Valid } from '../../platform/validation';
 import { RecordSmartLinkClickBody } from './schemas';
 import { SmartLinksService } from './smart-links.service';
@@ -26,9 +31,13 @@ export class PublicSmartLinksController {
   @Get('b/:slug')
   @Header('Content-Type', 'text/html; charset=utf-8')
   @Header('Cache-Control', 'public, max-age=60, s-maxage=300')
-  async getBioPageHtml(@Param('slug') slug: string): Promise<string> {
+  async getBioPageHtml(
+    @Param('slug') slug: string,
+    @Req() req: NonceCarrier,
+  ): Promise<string> {
+    // `BioPageCspMiddleware` has already set the policy naming this nonce.
     const link = await this.smartLinks.getPublicPage(slug);
-    return this.smartLinks.renderHtml(link);
+    return this.smartLinks.renderHtml(link, req[CSP_NONCE] ?? '');
   }
 
   @Public()
@@ -41,13 +50,25 @@ export class PublicSmartLinksController {
       bio: link.bio,
       avatarUrl: link.avatarUrl,
       theme: link.theme,
-      buttonLinks: (Array.isArray(link.buttonLinks) ? link.buttonLinks : []) as any,
-      shoppableGrid: (Array.isArray(link.shoppableGrid) ? link.shoppableGrid : []) as any,
-      socialLinks: (Array.isArray(link.socialLinks) ? link.socialLinks : []) as any,
+      buttonLinks: (Array.isArray(link.buttonLinks) ? link.buttonLinks : []) as SmartLinkButton[],
+      shoppableGrid: (Array.isArray(link.shoppableGrid)
+        ? link.shoppableGrid
+        : []) as ShoppableGridItem[],
+      socialLinks: (Array.isArray(link.socialLinks)
+        ? link.socialLinks
+        : []) as SmartLinkSocialItem[],
     };
   }
 
+  /**
+   * The click beacon — an unauthenticated write, so it is throttled per IP and per slug.
+   *
+   * Keyed by slug as well as by caller so that one page being hammered cannot spend another
+   * page's budget. See the module README for what the in-memory store does and does not
+   * promise once this runs on more than one instance.
+   */
   @Public()
+  @Throttle({ max: 60, ttl: 60_000, by: 'slug' })
   @Post('b/:slug/clicks')
   @HttpCode(HttpStatus.OK)
   async recordClick(
@@ -69,6 +90,7 @@ export class PublicSmartLinksController {
   }
 
   @Public()
+  @Throttle({ max: 60, ttl: 60_000, by: 'slug' })
   @Get('b/:slug/c/:buttonId')
   @Redirect()
   async redirectClick(

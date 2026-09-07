@@ -16,9 +16,20 @@ export const MARKETING_MODULE = 'marketing';
 /** No leading slash — Nest composes controller prefixes. */
 export const MARKETING_ROUTE = 'api/marketing';
 
+/**
+ * The scaffold CRUD's own segment.
+ *
+ * It used to sit directly on `MARKETING_ROUTE` with a bare `:id`, which — because Nest matches
+ * in registration order — swallowed every single-segment sibling the module added afterwards
+ * (`/brands`, `/posts`, `/campaigns`, ...). A dynamic segment at a module root is a trap armed
+ * for the next route somebody adds, so it lives under a literal noun instead. The conformance
+ * rule `no-bare-id-at-module-root` keeps it that way.
+ */
+export const MARKETING_RECORDS_ROUTE = `${MARKETING_ROUTE}/records`;
+
 export const MARKETING_PATHS = {
-  marketings: `/${MARKETING_ROUTE}`,
-  marketing: (id: string) => `/${MARKETING_ROUTE}/${id}`,
+  marketings: `/${MARKETING_RECORDS_ROUTE}`,
+  marketing: (id: string) => `/${MARKETING_RECORDS_ROUTE}/${id}`,
   // Brands
   brands: `/${MARKETING_ROUTE}/brands`,
   brand: (id: string) => `/${MARKETING_ROUTE}/brands/${id}`,
@@ -564,6 +575,9 @@ export const MARKETING_ERROR_CODES = {
   invalidUtmUrl: 'invalid_utm_url',
   trackingSiteNotFound: 'tracking_site_not_found',
   rateLimitExceeded: 'rate_limit_exceeded',
+  tooManyRequests: 'too_many_requests',
+  formSubmissionInvalid: 'invalid_form_submission',
+  formDailyCapReached: 'form_daily_cap_reached',
   messagingWindowExpired: 'messaging_window_expired',
 } as const;
 
@@ -668,12 +682,51 @@ export type MarketingCampaignListResponse = ListResponse<MarketingCampaignSummar
 
 // ─── SmartLinks (Link-in-Bio) ────────────────────────────────────────────────────────
 
+/**
+ * A bio page is public HTML the server assembles, so everything on it is closed rather than
+ * free-form.
+ *
+ * The theme used to be an untyped JSON object interpolated straight into a `<style>` block,
+ * which made a `primaryColor` of `red}</style><script>…` stored XSS on the same origin as the
+ * ERP app. Colours are hex and nothing else; the font is an *identifier* the renderer maps to
+ * a hard-coded stack, never a font-stack string the caller writes; the card style is its own
+ * union. A value that cannot contain a delimiter cannot escape the context it lands in, which
+ * is a stronger guarantee than escaping inside CSS — and escaping was already forgotten once.
+ */
+export const SMART_LINK_CARD_STYLES = ['flat', 'rounded', 'glassmorphism', 'shadow'] as const;
+
+export type SmartLinkCardStyle = (typeof SMART_LINK_CARD_STYLES)[number];
+
+/** Font *identifiers*. The stack each one means lives in the renderer, not in the database. */
+export const SMART_LINK_FONT_FAMILIES = [
+  'system',
+  'serif',
+  'mono',
+  'rounded',
+  'condensed',
+] as const;
+
+export type SmartLinkFontFamily = (typeof SMART_LINK_FONT_FAMILIES)[number];
+
+/** A colour a bio page will accept: `#rgb`, `#rrggbb`, `#rrggbbaa`. */
+export const SMART_LINK_COLOR_PATTERN = /^#[0-9a-f]{3,8}$/i;
+
+/**
+ * The URL schemes a public page may link to.
+ *
+ * `javascript:` is the one that matters: escaping an href makes it *look* inert and leaves it
+ * fully executable, which is the case OWASP calls out by name. `data:` and protocol-relative
+ * `//host` are refused for the same reason — the scheme is decided at write time, not guessed
+ * at render time.
+ */
+export const SMART_LINK_URL_SCHEMES = ['https:', 'http:', 'mailto:', 'tel:'] as const;
+
 export interface SmartLinkTheme {
   primaryColor: string;
   backgroundColor: string;
   textColor: string;
-  cardStyle?: 'flat' | 'rounded' | 'glassmorphism' | 'shadow';
-  fontFamily?: string;
+  cardStyle?: SmartLinkCardStyle;
+  fontFamily?: SmartLinkFontFamily;
 }
 
 export interface SmartLinkButton {
@@ -899,6 +952,12 @@ export type LeadCaptureSubmissionListResponse = ListResponse<LeadCaptureSubmissi
 
 export interface PublicFormSubmitRequest {
   fields: Record<string, unknown>;
+  /**
+   * The honeypot. Rendered, hidden, and empty for every human being; anything in it means the
+   * submission came from something filling in every input it found. May also travel inside
+   * `fields` as `_hp`.
+   */
+  honeypot?: string;
   utm?: {
     source?: string;
     medium?: string;

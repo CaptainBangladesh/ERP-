@@ -38,6 +38,7 @@ export function checkModule(input: ModuleConformanceInput): Violation[] {
     ...listShape(input),
     ...errorShape(input),
     ...validatedBodies(input),
+    ...noBareIdAtModuleRoot(input),
   ];
 }
 
@@ -343,6 +344,101 @@ function validatedBodies({ manifest, sources }: ModuleConformanceInput): Violati
   }
 
   return violations;
+}
+
+const CONTROLLER_ARGUMENT = /@Controller\(\s*([^)]*?)\s*\)/;
+const HANDLER_ROUTE = /^\s*@(?:Get|Post|Put|Patch|Delete)\(\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`)?\s*\)/;
+const EXPORTED_CONSTANT = /export const (\w+)\s*=\s*(?:'([^']*)'|`([^`]*)`)/g;
+
+/**
+ * A dynamic segment never sits at the top of a shared prefix.
+ *
+ * Nest matches routes in registration order, so `@Get(':id')` on a controller mounted at a
+ * prefix that siblings also mount on matches `/brands`, `/posts`, `/campaigns` — everything —
+ * and whichever controller was registered first wins. That is how eight of this module's list
+ * endpoints came to return 500 while Prisma tried to read the literal word "brands" as a UUID,
+ * and nothing caught it because the frontend tests answer from mocks and never reach the real
+ * router.
+ *
+ * Reordering the controller array fixes the symptom and leaves the trap armed for whoever adds
+ * the ninth route, which is precisely the class of mistake ADR 0005 says to enforce
+ * mechanically. So: the moment two controllers share a prefix, none of them may claim a bare
+ * `:param` directly beneath it — put the dynamic segment under a literal noun (`/records/:id`,
+ * `/brands/:id`) and the ambiguity cannot be expressed.
+ *
+ * Scoped to shared prefixes rather than to every module root, because a prefix one controller
+ * owns outright has nothing to shadow; the rule fires exactly where the hazard is.
+ */
+function noBareIdAtModuleRoot({ manifest, sources, contract }: ModuleConformanceInput): Violation[] {
+  const constants = new Map<string, string>();
+  if (contract) {
+    for (const [, name, single, template] of contract.text.matchAll(EXPORTED_CONSTANT)) {
+      constants.set(name!, single ?? template ?? '');
+    }
+  }
+
+  const resolve = (expression: string): string => {
+    const literal = /^(?:'([^']*)'|"([^"]*)"|`([^`]*)`)$/.exec(expression.trim());
+    let text = literal ? (literal[1] ?? literal[2] ?? literal[3] ?? '') : expression.trim();
+    // `${MARKETING_ROUTE}/records`, and plain `MARKETING_ROUTE`, both reduce to a path.
+    text = text.replace(/\$\{\s*(\w+)\s*\}/g, (whole, name: string) => constants.get(name) ?? whole);
+    if (constants.has(text)) text = constants.get(text)!;
+    return text.replace(/^\/+|\/+$/g, '');
+  };
+
+  interface Mounted {
+    readonly source: SourceFile;
+    readonly prefix: string;
+    /** 1-based line, and the route the handler declared, for every bare dynamic segment. */
+    readonly bare: Array<{ readonly line: number; readonly segment: string }>;
+  }
+
+  const mounted: Mounted[] = [];
+
+  for (const source of sources) {
+    const text = withoutComments(source.text);
+    const declared = CONTROLLER_ARGUMENT.exec(text);
+    if (!declared) continue;
+
+    const prefix = resolve(declared[1] ?? '');
+    const bare: Array<{ line: number; segment: string }> = [];
+
+    for (const [index, line] of text.split('\n').entries()) {
+      const handler = HANDLER_ROUTE.exec(line);
+      if (!handler) continue;
+      const route = (handler[1] ?? handler[2] ?? handler[3] ?? '').replace(/^\/+|\/+$/g, '');
+      if (route.startsWith(':') && !route.includes('/')) {
+        bare.push({ line: index + 1, segment: route });
+      }
+    }
+
+    mounted.push({ source, prefix, bare });
+  }
+
+  const sharing = new Set(
+    mounted
+      .map((one) => one.prefix)
+      .filter((prefix, index, all) => all.indexOf(prefix) !== index),
+  );
+
+  return mounted
+    .filter((one) => sharing.has(one.prefix) && one.bare.length > 0)
+    .flatMap((one) =>
+      one.bare.map((bare) => ({
+        rule: 'no-bare-id-at-module-root',
+        module: manifest.name,
+        path: one.source.path,
+        line: bare.line,
+        message:
+          `Module '${manifest.name}' declares '${bare.segment}' directly on '${one.prefix || '/'}', ` +
+          `a prefix ${mounted.filter((other) => other.prefix === one.prefix).length} controllers ` +
+          `share. A single dynamic segment there matches every literal sibling route — ` +
+          `'/brands', '/posts', '/campaigns' — and Nest gives it to whichever controller was ` +
+          `registered first, so the siblings 500 instead of answering. Mount this controller ` +
+          `under a literal noun of its own ('${one.prefix}/records') so the dynamic segment ` +
+          `sits at '${one.prefix}/records/${bare.segment}' and can shadow nothing.`,
+      })),
+    );
 }
 
 const CONTROLLER_DECORATOR = /^\s*@Controller\(/m;

@@ -1702,6 +1702,10 @@ model ScheduledPost {
   platformConfig  Json?          @map("platform_config")
   scheduledAt     DateTime       @map("scheduled_at")
   publishedAt     DateTime?      @map("published_at")
+  /// When this post's content was handed to the platform's API. A failed attempt that got this
+  /// far still spent the platform's publishing quota, so the quota counts it — recorded rather
+  /// than inferred from whatever the failure message happened to say.
+  networkAttemptedAt DateTime?   @map("network_attempted_at")
   status          String         @default("SCHEDULED")
   failureReason   String?        @map("failure_reason")
   externalPostId  String?        @map("external_post_id")
@@ -1713,6 +1717,7 @@ model ScheduledPost {
   @@index([brandId])
   @@index([socialAccountId])
   @@index([status, scheduledAt])
+  @@index([socialAccountId, status, publishedAt])
   @@map("scheduled_posts")
 }
 

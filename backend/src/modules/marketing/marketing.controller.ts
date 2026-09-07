@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
 import {
-  MARKETING_ROUTE,
+  MARKETING_RECORDS_ROUTE,
   type MarketingListResponse,
   type MarketingResponse,
 } from '@erp/shared';
@@ -20,11 +20,17 @@ import { CreateMarketingBody, UpdateMarketingBody } from './schemas';
  * There is no 'DELETE'. A record is deactivated rather than deleted, so that anything naming
  * it later still means something — see the service.
  *
+ * Mounted at 'api/marketing/records' rather than at the module root. A bare ':id' at depth 1
+ * matches any single segment, and Nest matches in registration order, so this controller used
+ * to swallow '/brands', '/posts', '/campaigns' and five more — every one of them a 500 while
+ * Prisma tried to read the literal word as a UUID. Conformance rule 'no-bare-id-at-module-root'
+ * now refuses the shape rather than trusting the next author to remember.
+ *
  * The list endpoint hands its whole query object to the service and names no parameter of its
  * own. 'page', 'sort', 'search' and 'filter.<field>' are the platform's convention, identical
  * in every module, and a controller with an opinion about them is a module inventing its own.
  */
-@Controller(MARKETING_ROUTE)
+@Controller(MARKETING_RECORDS_ROUTE)
 export class MarketingController {
   constructor(private readonly marketing: MarketingService) {}
 

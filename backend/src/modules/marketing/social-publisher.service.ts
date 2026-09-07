@@ -19,6 +19,7 @@ import { defined } from '../../prisma/columns';
 import { SocialAdapterResolver } from './adapters/social-adapter.resolver';
 import { CryptoService } from './crypto.service';
 import { IJobQueue, JOB_QUEUE_TOKEN } from './job-queue.interface';
+import { countAgainstQuota, publishingWindowFor } from './publishing-quota';
 import {
   CreateScheduledPostBody,
   POST_LIST,
@@ -167,12 +168,31 @@ export class SocialPublisherService implements OnModuleInit {
       post.socialAccount.platform as SocialPlatform,
     );
 
-    // Set status to PUBLISHING
-    await this.prisma.scheduledPost.update({
-      where: { id: postId },
+    /**
+     * Claim the row, conditionally — the same move the job queue makes.
+     *
+     * Reading `post.status` and then writing `PUBLISHING` in a second statement lets two
+     * concurrent calls both pass the read and both reach the network, which is a duplicate post
+     * on a client's real account: externally visible, and not undoable. The update's own `where`
+     * is the check, so exactly one caller can win it.
+     *
+     * A `count === 0` means somebody else already has it. That is an ordinary outcome, not an
+     * error — return what the other caller is in the middle of producing.
+     */
+    const claimed = await this.prisma.scheduledPost.updateMany({
+      where: { id: postId, status: { in: PUBLISHABLE_STATES } },
       data: { status: 'PUBLISHING', failureReason: null },
     });
 
+    if (claimed.count !== 1) {
+      return {
+        published: post.status === 'PUBLISHED',
+        post: this.toSummary(post),
+        externalPostId: post.externalPostId ?? undefined,
+      };
+    }
+
+    // No network call above this line.
     try {
       // Decrypt access token
       const accessToken = this.crypto.decrypt(post.socialAccount.encryptedAccessToken);
@@ -181,6 +201,13 @@ export class SocialPublisherService implements OnModuleInit {
 
       const mediaUrls = Array.isArray(post.mediaUrls) ? (post.mediaUrls as string[]) : [];
       const platformConfig = (post.platformConfig as Record<string, unknown>) ?? undefined;
+
+      // Recorded before the call, not after: an attempt that reaches the platform spends the
+      // quota whether or not a response ever comes back.
+      await this.prisma.scheduledPost.update({
+        where: { id: postId },
+        data: { networkAttemptedAt: new Date() },
+      });
 
       const result = await adapter.publishPost({
         account: {
@@ -480,46 +507,42 @@ export class SocialPublisherService implements OnModuleInit {
     };
   }
 
+  /**
+   * Refuses a publish that would breach the platform's own quota.
+   *
+   * There used to be a guard above this line — `if (typeof this.prisma.scheduledPost?.count !==
+   * 'function') return;` — added so a test could inject a mock without a `count`. It also
+   * disabled the limit in production for any shape of client that happened not to have one. A
+   * production limit that a mock can switch off is not a limit; the tests that relied on it
+   * carry a real stub instead.
+   */
   private async enforcePublishingRateLimit(
     socialAccountId: string,
     platform: SocialPlatform,
   ): Promise<void> {
-    if (typeof this.prisma.scheduledPost?.count !== 'function') {
-      return;
-    }
-    const now = Date.now();
-    if (platform === 'instagram' || platform === 'facebook') {
-      const twentyFourHoursAgo = new Date(now - 24 * 60 * 60 * 1000);
-      const recentPostsCount = await this.prisma.scheduledPost.count({
-        where: {
-          socialAccountId,
-          status: { in: ['PUBLISHED', 'SCHEDULED'] },
-          createdAt: { gte: twentyFourHoursAgo },
-        },
-      });
-      if (recentPostsCount >= 50) {
-        throw new ApiException(
-          MARKETING_ERROR_CODES.rateLimitExceeded,
-          'Publishing rate limit exceeded: maximum 50 posts per 24 hours for Meta accounts.',
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-    } else if (platform === 'x') {
-      const fifteenMinutesAgo = new Date(now - 15 * 60 * 1000);
-      const recentPostsCount = await this.prisma.scheduledPost.count({
-        where: {
-          socialAccountId,
-          status: { in: ['PUBLISHED', 'SCHEDULED'] },
-          createdAt: { gte: fifteenMinutesAgo },
-        },
-      });
-      if (recentPostsCount >= 100) {
-        throw new ApiException(
-          MARKETING_ERROR_CODES.rateLimitExceeded,
-          'Publishing rate limit exceeded: maximum 100 posts per 15-minute window for X accounts.',
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
+    const window = publishingWindowFor(platform);
+    if (!window) return;
+
+    const spent = await countAgainstQuota(
+      this.prisma.scheduledPost,
+      socialAccountId,
+      window.windowSeconds,
+    );
+
+    if (spent >= window.cap) {
+      throw new ApiException(
+        MARKETING_ERROR_CODES.rateLimitExceeded,
+        window.refusal,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
   }
 }
+
+/**
+ * The states a post may be claimed from.
+ *
+ * `PUBLISHING` is not among them: a post already claimed belongs to whoever claimed it, and
+ * including it here would reinstate exactly the double publish the claim exists to prevent.
+ */
+const PUBLISHABLE_STATES: ScheduledPostStatus[] = ['DRAFT', 'SCHEDULED', 'FAILED'];

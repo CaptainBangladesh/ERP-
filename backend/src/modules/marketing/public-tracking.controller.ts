@@ -10,6 +10,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { Public } from '../../platform/auth';
+import { Throttle } from '../../platform/throttling';
 import { validated, type Valid } from '../../platform/validation';
 import { CollectEventBody } from './schemas';
 import { TrackingService } from './tracking.service';
@@ -34,6 +35,7 @@ export class PublicTrackingController {
    * Returns HTTP 204 No Content.
    */
   @Public()
+  @Throttle({ max: 120, ttl: 60_000, by: 'pixelKey' })
   @Post('collect')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Header('Access-Control-Allow-Origin', '*')

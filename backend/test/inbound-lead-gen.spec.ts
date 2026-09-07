@@ -75,6 +75,9 @@ describe('Inbound Lead Gen & CRM Handoff (Ticket 07)', () => {
     } as unknown as DomainEvents;
 
     mockPrisma = {
+      // The submit path is one transaction since ticket 11 — the counter, the CRM lead and the
+      // submission row commit together or not at all.
+      $transaction: jest.fn(async (run: any) => run(mockPrisma)),
       marketingBrand: {
         findUnique: jest.fn(async ({ where }) => {
           return mockBrands.find((b) => b.id === where.id) || null;
@@ -131,7 +134,7 @@ describe('Inbound Lead Gen & CRM Handoff (Ticket 07)', () => {
         findMany: jest.fn(async ({ where }) => {
           return mockSubmissions.filter((s) => !where?.formId || s.formId === where.formId);
         }),
-        count: jest.fn(async ({ where }) => {
+        count: jest.fn(async ({ where }: any) => {
           return mockSubmissions.filter((s) => !where?.formId || s.formId === where.formId).length;
         }),
       },

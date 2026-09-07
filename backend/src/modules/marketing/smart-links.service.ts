@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type {
   PublicSmartLinkResponse,
@@ -11,23 +11,45 @@ import type {
   SmartLinkSummary,
   SmartLinkTheme,
 } from '@erp/shared';
-import { MARKETING_ERROR_CODES } from '@erp/shared';
+import { MARKETING_ERROR_CODES, SMART_LINK_COLOR_PATTERN } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, Tenancy, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
-import { SMART_LINK_LIST, type CreateSmartLinkBody, type UpdateSmartLinkBody } from './schemas';
+import {
+  readLinkUrl,
+  SMART_LINK_LIST,
+  type CreateSmartLinkBody,
+  type UpdateSmartLinkBody,
+} from './schemas';
 
 const DEFAULT_THEME: SmartLinkTheme = {
   primaryColor: '#6366f1',
   backgroundColor: '#0f172a',
   textColor: '#f8fafc',
   cardStyle: 'glassmorphism',
-  fontFamily: 'system-ui, -apple-system, sans-serif',
+  fontFamily: 'system',
+};
+
+/**
+ * What each font *identifier* means, decided here and never by the caller.
+ *
+ * The database stores `'system'`; the CSS lives in this file. That is the whole point of the
+ * indirection — a stored value can name a stack but can never be one, so nothing a user typed
+ * reaches a `<style>` block even if every other guard fails.
+ */
+const FONT_STACKS: Record<string, string> = {
+  system: 'system-ui, -apple-system, sans-serif',
+  serif: 'Georgia, Cambria, "Times New Roman", serif',
+  mono: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  rounded: 'ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif',
+  condensed: '"Roboto Condensed", "Arial Narrow", system-ui, sans-serif',
 };
 
 @Injectable()
 export class SmartLinksService {
+  private readonly logger = new Logger(SmartLinksService.name);
+
   constructor(
     @InjectPrisma() private readonly prisma: ScopedPrisma,
     private readonly tenancy: Tenancy,
@@ -311,15 +333,25 @@ export class SmartLinksService {
     );
   }
 
-  renderHtml(smartLink: any): string {
-    const theme: SmartLinkTheme = {
-      ...DEFAULT_THEME,
-      ...(smartLink.theme || {}),
-    };
+  /**
+   * The public page, assembled.
+   *
+   * Two rules hold this together, and they are ordered. First, everything here was validated at
+   * the *write* boundary, so the renderer is not the control — it is the last line. Second, the
+   * renderer still trusts nothing it reads back: these are JSON columns that were untyped until
+   * this ticket, so rows predating the validation exist and one of them must not be able to take
+   * the page down. A malformed entry costs its own card and nothing else.
+   *
+   * `nonce` comes from the controller, one CSPRNG value per response. It is the only thing
+   * standing between a future escaping mistake and a working script, which is exactly why it
+   * sits behind the validation rather than in place of it.
+   */
+  renderHtml(smartLink: any, nonce = ''): string {
+    const theme = this.safeTheme(smartLink.theme);
 
-    const buttons = (Array.isArray(smartLink.buttonLinks) ? smartLink.buttonLinks : []) as SmartLinkButton[];
-    const grid = (Array.isArray(smartLink.shoppableGrid) ? smartLink.shoppableGrid : []) as ShoppableGridItem[];
-    const socials = (Array.isArray(smartLink.socialLinks) ? smartLink.socialLinks : []) as SmartLinkSocialItem[];
+    const buttons = this.safeButtons(smartLink.buttonLinks);
+    const grid = this.safeGrid(smartLink.shoppableGrid);
+    const socials = this.safeSocials(smartLink.socialLinks);
 
     const buttonsHtml = buttons
       .map((b) => {
@@ -375,12 +407,12 @@ export class SmartLinksService {
   <meta property="og:title" content="${this.escapeHtml(smartLink.title)}">
   <meta property="og:description" content="${this.escapeHtml(smartLink.bio || '')}">
   ${smartLink.avatarUrl ? `<meta property="og:image" content="${this.escapeHtml(smartLink.avatarUrl)}">` : ''}
-  <style>
+  <style${nonce ? ` nonce="${this.escapeHtml(nonce)}"` : ''}>
     :root {
       --primary: ${theme.primaryColor};
       --bg: ${theme.backgroundColor};
       --text: ${theme.textColor};
-      --font: ${theme.fontFamily};
+      --font: ${FONT_STACKS[theme.fontFamily ?? 'system'] ?? FONT_STACKS.system};
     }
     * {
       box-sizing: border-box;
@@ -564,7 +596,7 @@ export class SmartLinksService {
     </div>
   </div>
 
-  <script>
+  <script${nonce ? ` nonce="${this.escapeHtml(nonce)}"` : ''}>
     // Real-time click beaconing
     document.querySelectorAll('.smart-btn').forEach(function(el) {
       el.addEventListener('click', function() {
@@ -585,13 +617,120 @@ export class SmartLinksService {
 </html>`;
   }
 
-  private escapeHtml(str: string): string {
-    return str
+  /**
+   * Escapes anything, including things that are not strings.
+   *
+   * It used to take `string` and call `.replace` on it, which is a 500 on a public page the
+   * moment one legacy JSON row holds a number or a `null` — and legacy rows exist precisely
+   * because these columns were never typed. Coercing costs nothing and removes a whole class of
+   * outage from a page nobody has to be signed in to reach.
+   */
+  private escapeHtml(value: unknown): string {
+    return String(value ?? '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  /**
+   * The read path's assertions.
+   *
+   * These are not the control — `schemas.ts` is, at write time. What they do is refuse to render
+   * a row that predates it. A URL that no longer passes drops its own card; a colour that does
+   * not falls back to the default. Nothing here coerces a *new* write into acceptability,
+   * because nothing here runs on the write path.
+   */
+  private safeUrl(value: unknown): string | undefined {
+    const read = readLinkUrl(value, 'url');
+    if (read.ok) return read.value;
+    this.logger.warn(`Bio page dropped a link that is not a permitted URL: ${String(value)}`);
+    return undefined;
+  }
+
+  private safeTheme(stored: unknown): SmartLinkTheme {
+    const given =
+      typeof stored === 'object' && stored !== null && !Array.isArray(stored)
+        ? (stored as Record<string, unknown>)
+        : {};
+
+    const colour = (key: 'primaryColor' | 'backgroundColor' | 'textColor'): string => {
+      const value = given[key];
+      return typeof value === 'string' && SMART_LINK_COLOR_PATTERN.test(value.trim())
+        ? value.trim()
+        : DEFAULT_THEME[key];
+    };
+
+    const fontFamily =
+      typeof given.fontFamily === 'string' && given.fontFamily in FONT_STACKS
+        ? (given.fontFamily as SmartLinkTheme['fontFamily'])
+        : DEFAULT_THEME.fontFamily;
+
+    const cardStyle =
+      given.cardStyle === 'flat' ||
+      given.cardStyle === 'rounded' ||
+      given.cardStyle === 'glassmorphism' ||
+      given.cardStyle === 'shadow'
+        ? given.cardStyle
+        : DEFAULT_THEME.cardStyle;
+
+    return {
+      primaryColor: colour('primaryColor'),
+      backgroundColor: colour('backgroundColor'),
+      textColor: colour('textColor'),
+      cardStyle,
+      fontFamily,
+    };
+  }
+
+  private safeButtons(stored: unknown): SmartLinkButton[] {
+    if (!Array.isArray(stored)) return [];
+    return stored.flatMap((item) => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) return [];
+      const entry = item as Record<string, unknown>;
+      const url = this.safeUrl(entry.url);
+      if (!url || typeof entry.title !== 'string') return [];
+      return [
+        {
+          id: typeof entry.id === 'string' ? entry.id : '',
+          title: entry.title,
+          url,
+          ...(typeof entry.icon === 'string' ? { icon: entry.icon } : {}),
+        } as SmartLinkButton,
+      ];
+    });
+  }
+
+  private safeGrid(stored: unknown): ShoppableGridItem[] {
+    if (!Array.isArray(stored)) return [];
+    return stored.flatMap((item) => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) return [];
+      const entry = item as Record<string, unknown>;
+      const productUrl = this.safeUrl(entry.productUrl);
+      const imageUrl = this.safeUrl(entry.imageUrl);
+      if (!productUrl || !imageUrl) return [];
+      return [
+        {
+          id: typeof entry.id === 'string' ? entry.id : '',
+          productUrl,
+          imageUrl,
+          ...(typeof entry.title === 'string' ? { title: entry.title } : {}),
+          ...(typeof entry.price === 'string' ? { price: entry.price } : {}),
+        } as ShoppableGridItem,
+      ];
+    });
+  }
+
+  private safeSocials(stored: unknown): SmartLinkSocialItem[] {
+    if (!Array.isArray(stored)) return [];
+    return stored.flatMap((item) => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) return [];
+      const entry = item as Record<string, unknown>;
+      const url = this.safeUrl(entry.url);
+      if (!url || typeof entry.platform !== 'string') return [];
+      return [{ platform: entry.platform, url }];
+    });
   }
 
   private toSummary(l: any): SmartLinkSummary {

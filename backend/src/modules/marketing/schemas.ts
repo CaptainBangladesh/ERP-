@@ -10,6 +10,10 @@ import {
   SOCIAL_PLATFORMS,
   MARKETING_CAMPAIGN_STATUSES,
   AD_PLATFORMS,
+  SMART_LINK_CARD_STYLES,
+  SMART_LINK_COLOR_PATTERN,
+  SMART_LINK_FONT_FAMILIES,
+  SMART_LINK_URL_SCHEMES,
   type AutolistRepeatMode,
   type AutolistSlot,
   type AutolistStatus,
@@ -21,6 +25,12 @@ import {
   type SocialPlatform,
   type MarketingCampaignStatus,
   type AdPlatform,
+  type ShoppableGridItem,
+  type SmartLinkButton,
+  type SmartLinkCardStyle,
+  type SmartLinkFontFamily,
+  type SmartLinkSocialItem,
+  type SmartLinkTheme,
 } from '@erp/shared';
 import type { ListSpec } from '../../platform/list';
 import {
@@ -499,6 +509,245 @@ function jsonArray(fieldDesc: string) {
   });
 }
 
+// --- The public bio page's closed shapes -------------------------------------------------
+//
+// Everything a bio page renders is validated here, at the write boundary, and rejected rather
+// than sanitised. The renderer may then assume it was given what it asked for -- and still
+// escapes, because defence in depth is cheap and one of these fields already got past an
+// escaping pass once (`smart-links.service.ts` interpolated the theme straight into `<style>`).
+//
+// Reject, never coerce: a stripped value leaves the caller believing their page says something
+// it does not, and a fallback render is how a bad value becomes acceptable by habit.
+
+type ReadResult<T> = { ok: true; value: T } | { ok: false; message: string };
+
+function readTheme(value: unknown): ReadResult<SmartLinkTheme> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { ok: false, message: 'Theme must be an object.' };
+  }
+
+  const given = value as Record<string, unknown>;
+  const colourKeys = ['primaryColor', 'backgroundColor', 'textColor'] as const;
+  const known = new Set<string>([...colourKeys, 'cardStyle', 'fontFamily']);
+
+  const unknownKey = Object.keys(given).find((key) => !known.has(key));
+  if (unknownKey !== undefined) {
+    return {
+      ok: false,
+      message:
+        `'${unknownKey}' is not a theme setting. A bio page renders a closed set — ` +
+        `${[...known].join(', ')} — because every one of them lands in a stylesheet.`,
+    };
+  }
+
+  const theme: Partial<SmartLinkTheme> = {};
+
+  for (const key of colourKeys) {
+    const colour = given[key];
+    if (colour === undefined || colour === null) continue;
+    if (typeof colour !== 'string' || !SMART_LINK_COLOR_PATTERN.test(colour.trim())) {
+      return { ok: false, message: `'${key}' must be a hex colour such as '#6366f1'.` };
+    }
+    theme[key] = colour.trim();
+  }
+
+  if (given.cardStyle !== undefined && given.cardStyle !== null) {
+    if (
+      typeof given.cardStyle !== 'string' ||
+      !(SMART_LINK_CARD_STYLES as readonly string[]).includes(given.cardStyle)
+    ) {
+      return {
+        ok: false,
+        message: `'cardStyle' must be one of: ${SMART_LINK_CARD_STYLES.join(', ')}.`,
+      };
+    }
+    theme.cardStyle = given.cardStyle as SmartLinkCardStyle;
+  }
+
+  if (given.fontFamily !== undefined && given.fontFamily !== null) {
+    if (
+      typeof given.fontFamily !== 'string' ||
+      !(SMART_LINK_FONT_FAMILIES as readonly string[]).includes(given.fontFamily)
+    ) {
+      return {
+        ok: false,
+        message:
+          `'fontFamily' names one of the built-in font stacks: ` +
+          `${SMART_LINK_FONT_FAMILIES.join(', ')}. A free-form font stack is CSS the page ` +
+          `would have to trust.`,
+      };
+    }
+    theme.fontFamily = given.fontFamily as SmartLinkFontFamily;
+  }
+
+  return { ok: true, value: theme as SmartLinkTheme };
+}
+
+function smartLinkTheme() {
+  return rule<SmartLinkTheme>('Provide theme settings.', (value) => {
+    const read = readTheme(value);
+    return read.ok ? accepted(read.value) : refused(read.message);
+  });
+}
+
+/**
+ * A link a public page will actually render.
+ *
+ * Parsed with `new URL()` rather than pattern-matched, because the question is what a browser
+ * will do with the value, and the browser's own parser is the only honest answer. Anything that
+ * fails to parse — including a protocol-relative `//host` — is refused.
+ */
+export function readLinkUrl(value: unknown, field: string): ReadResult<string> {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return { ok: false, message: `'${field}' must be a URL.` };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    return {
+      ok: false,
+      message: `'${field}' is not a URL a browser could follow. Include the scheme, e.g. 'https://…'.`,
+    };
+  }
+
+  if (!(SMART_LINK_URL_SCHEMES as readonly string[]).includes(parsed.protocol)) {
+    return {
+      ok: false,
+      message:
+        `'${field}' uses the '${parsed.protocol}' scheme. A public page links only to ` +
+        `${SMART_LINK_URL_SCHEMES.join(', ')} — an escaped 'javascript:' href still runs.`,
+    };
+  }
+
+  return { ok: true, value: value.trim() };
+}
+
+function shortText(value: unknown, field: string, maxLength: number): ReadResult<string> {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return { ok: false, message: `'${field}' must be text.` };
+  }
+  if (value.trim().length > maxLength) {
+    return { ok: false, message: `'${field}' must be ${maxLength} characters or fewer.` };
+  }
+  return { ok: true, value: value.trim() };
+}
+
+function objectEntriesOf(value: unknown): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (value.some((item) => typeof item !== 'object' || item === null || Array.isArray(item))) {
+    return undefined;
+  }
+  return value as Record<string, unknown>[];
+}
+
+function smartLinkButtons() {
+  return rule<SmartLinkButton[]>('Provide button links.', (value) => {
+    const items = objectEntriesOf(value);
+    if (!items) return refused('Button links must be an array of objects.');
+
+    const buttons: SmartLinkButton[] = [];
+    for (const [index, item] of items.entries()) {
+      const id = shortText(item.id, `buttonLinks[${index}].id`, 100);
+      if (!id.ok) return refused(id.message);
+      const title = shortText(item.title, `buttonLinks[${index}].title`, 150);
+      if (!title.ok) return refused(title.message);
+      const url = readLinkUrl(item.url, `buttonLinks[${index}].url`);
+      if (!url.ok) return refused(url.message);
+
+      let icon: string | undefined;
+      if (item.icon !== undefined && item.icon !== null) {
+        const read = shortText(item.icon, `buttonLinks[${index}].icon`, 16);
+        if (!read.ok) return refused(read.message);
+        icon = read.value;
+      }
+
+      if (item.clicks !== undefined && item.clicks !== null && typeof item.clicks !== 'number') {
+        return refused(`'buttonLinks[${index}].clicks' must be a number.`);
+      }
+      if (item.order !== undefined && item.order !== null && typeof item.order !== 'number') {
+        return refused(`'buttonLinks[${index}].order' must be a number.`);
+      }
+
+      buttons.push({
+        id: id.value,
+        title: title.value,
+        url: url.value,
+        ...(icon !== undefined ? { icon } : {}),
+        ...(typeof item.clicks === 'number' ? { clicks: item.clicks } : {}),
+        ...(typeof item.order === 'number' ? { order: item.order } : {}),
+      });
+    }
+
+    return accepted(buttons);
+  });
+}
+
+function smartLinkGrid() {
+  return rule<ShoppableGridItem[]>('Provide shoppable grid items.', (value) => {
+    const items = objectEntriesOf(value);
+    if (!items) return refused('Shoppable grid must be an array of objects.');
+
+    const grid: ShoppableGridItem[] = [];
+    for (const [index, item] of items.entries()) {
+      const id = shortText(item.id, `shoppableGrid[${index}].id`, 100);
+      if (!id.ok) return refused(id.message);
+      const imageUrl = readLinkUrl(item.imageUrl, `shoppableGrid[${index}].imageUrl`);
+      if (!imageUrl.ok) return refused(imageUrl.message);
+      const productUrl = readLinkUrl(item.productUrl, `shoppableGrid[${index}].productUrl`);
+      if (!productUrl.ok) return refused(productUrl.message);
+
+      let title: string | undefined;
+      if (item.title !== undefined && item.title !== null) {
+        const read = shortText(item.title, `shoppableGrid[${index}].title`, 150);
+        if (!read.ok) return refused(read.message);
+        title = read.value;
+      }
+
+      let price: string | undefined;
+      if (item.price !== undefined && item.price !== null) {
+        const read = shortText(item.price, `shoppableGrid[${index}].price`, 24);
+        if (!read.ok) return refused(read.message);
+        price = read.value;
+      }
+
+      if (item.clicks !== undefined && item.clicks !== null && typeof item.clicks !== 'number') {
+        return refused(`'shoppableGrid[${index}].clicks' must be a number.`);
+      }
+
+      grid.push({
+        id: id.value,
+        imageUrl: imageUrl.value,
+        productUrl: productUrl.value,
+        ...(title !== undefined ? { title } : {}),
+        ...(price !== undefined ? { price } : {}),
+        ...(typeof item.clicks === 'number' ? { clicks: item.clicks } : {}),
+      });
+    }
+
+    return accepted(grid);
+  });
+}
+
+function smartLinkSocials() {
+  return rule<SmartLinkSocialItem[]>('Provide social links.', (value) => {
+    const items = objectEntriesOf(value);
+    if (!items) return refused('Social links must be an array of objects.');
+
+    const socials: SmartLinkSocialItem[] = [];
+    for (const [index, item] of items.entries()) {
+      const platform = shortText(item.platform, `socialLinks[${index}].platform`, 40);
+      if (!platform.ok) return refused(platform.message);
+      const url = readLinkUrl(item.url, `socialLinks[${index}].url`);
+      if (!url.ok) return refused(url.message);
+      socials.push({ platform: platform.value, url: url.value });
+    }
+
+    return accepted(socials);
+  });
+}
+
 export const CreateSmartLinkBody = validator({
   brandId: identifier({ missing: 'Select a brand.', invalid: 'Invalid brand ID.' }),
   campaignId: optional(identifier({ missing: 'Select campaign.', invalid: 'Invalid campaign ID.' })),
@@ -506,10 +755,10 @@ export const CreateSmartLinkBody = validator({
   title: text(SMART_LINK_TITLE),
   bio: optional(text({ missing: 'Enter bio text.', maxLength: 500, tooLong: 'Bio is too long.' })),
   avatarUrl: optional(text(URL_FIELD)),
-  theme: optional(jsonObject('theme settings')),
-  buttonLinks: optional(jsonArray('button links')),
-  shoppableGrid: optional(jsonArray('shoppable grid items')),
-  socialLinks: optional(jsonArray('social links')),
+  theme: optional(smartLinkTheme()),
+  buttonLinks: optional(smartLinkButtons()),
+  shoppableGrid: optional(smartLinkGrid()),
+  socialLinks: optional(smartLinkSocials()),
 });
 
 export const UpdateSmartLinkBody = validator({
@@ -518,10 +767,10 @@ export const UpdateSmartLinkBody = validator({
   title: optional(text(SMART_LINK_TITLE)),
   bio: optional(text({ missing: 'Enter bio text.', maxLength: 500, tooLong: 'Bio is too long.' })),
   avatarUrl: optional(text(URL_FIELD)),
-  theme: optional(jsonObject('theme settings')),
-  buttonLinks: optional(jsonArray('button links')),
-  shoppableGrid: optional(jsonArray('shoppable grid items')),
-  socialLinks: optional(jsonArray('social links')),
+  theme: optional(smartLinkTheme()),
+  buttonLinks: optional(smartLinkButtons()),
+  shoppableGrid: optional(smartLinkGrid()),
+  socialLinks: optional(smartLinkSocials()),
   isActive: optional(rule<boolean>('Invalid active status.', (v) => typeof v === 'boolean' ? accepted(v) : refused('Must be boolean.'))),
 });
 
@@ -603,6 +852,13 @@ export const UpdateLeadCaptureFormBody = validator({
 export const SubmitPublicFormBody = validator({
   fields: jsonObject('form fields'),
   utm: optional(jsonObject('UTM parameters')),
+  // The honeypot may also travel inside `fields` as '_hp'; either place is checked. Optional
+  // and free-form on purpose — refusing a malformed honeypot would tell a bot it found one.
+  honeypot: optional(
+    rule<string>('Leave this field empty.', (value) =>
+      typeof value === 'string' ? accepted(value) : accepted(String(value ?? '')),
+    ),
+  ),
 });
 
 export const CreateNurtureSequenceBody = validator({

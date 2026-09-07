@@ -102,15 +102,28 @@ describe('Social API Rate Limits, Permissions & Messaging Windows (Ticket 10)', 
         }),
       },
       scheduledPost: {
-        count: jest.fn().mockImplementation(({ where }) => {
-          const since = where.createdAt?.gte;
-          const matching = mockPosts.filter((p) => {
+        // The quota query since ticket 11: published rows by publish time, plus failed rows
+        // that reached the network. A stub that still filtered on `createdAt` would agree with
+        // the bug rather than with the code.
+        count: jest.fn().mockImplementation(({ where }: any) => {
+          const spent = (p: any) => {
             if (where.socialAccountId && p.socialAccountId !== where.socialAccountId) return false;
-            if (where.status?.in && !where.status.in.includes(p.status)) return false;
-            if (since && p.createdAt < since) return false;
-            return true;
-          });
-          return Promise.resolve(matching.length);
+            if (!where.OR) return true;
+            return where.OR.some((clause: any) => {
+              if (clause.status && p.status !== clause.status) return false;
+              if (clause.publishedAt?.gte && !(p.publishedAt && p.publishedAt >= clause.publishedAt.gte)) {
+                return false;
+              }
+              if (
+                clause.networkAttemptedAt?.gte &&
+                !(p.networkAttemptedAt && p.networkAttemptedAt >= clause.networkAttemptedAt.gte)
+              ) {
+                return false;
+              }
+              return true;
+            });
+          };
+          return Promise.resolve(mockPosts.filter(spent).length);
         }),
         create: jest.fn().mockImplementation(({ data }) => {
           const post = {
@@ -252,6 +265,7 @@ describe('Social API Rate Limits, Permissions & Messaging Windows (Ticket 10)', 
           id: `p-${i}`,
           socialAccountId: 'acc-meta-1',
           status: 'PUBLISHED',
+          publishedAt: new Date(Date.now() - 3600000),
           createdAt: new Date(Date.now() - 3600000),
         });
       }
@@ -283,6 +297,7 @@ describe('Social API Rate Limits, Permissions & Messaging Windows (Ticket 10)', 
           id: `p-${i}`,
           socialAccountId: 'acc-meta-1',
           status: 'PUBLISHED',
+          publishedAt: new Date(Date.now() - 1000 * 60 * 60),
           createdAt: new Date(Date.now() - 1000 * 60 * 60),
         });
       }
@@ -305,6 +320,7 @@ describe('Social API Rate Limits, Permissions & Messaging Windows (Ticket 10)', 
           id: `p-${i}`,
           socialAccountId: 'acc-x-1',
           status: 'PUBLISHED',
+          publishedAt: new Date(Date.now() - 1000 * 60 * 5),
           createdAt: new Date(Date.now() - 1000 * 60 * 5),
         });
       }

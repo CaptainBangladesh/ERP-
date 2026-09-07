@@ -13,6 +13,7 @@ import {
   type SocialRateLimitStatus,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
+import { countAgainstQuota, publishingWindowFor, UNLIMITED_WINDOW } from './publishing-quota';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
@@ -404,7 +405,7 @@ export class SocialAccountsService {
       platform: row.platform as SocialPlatform,
       accountName: row.accountName,
       platformAccountId: row.platformAccountId,
-      maskedAccessToken: this.crypto.maskToken(row.encryptedAccessToken),
+      maskedAccessToken: this.maskStoredToken(row.encryptedAccessToken),
       hasRefreshToken: Boolean(row.encryptedRefreshToken),
       tokenExpiresAt: expiresAt ? expiresAt.toISOString() : null,
       isTokenExpired,
@@ -414,6 +415,26 @@ export class SocialAccountsService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * The last four characters of the *token*, never of the ciphertext.
+   *
+   * This used to mask `encryptedAccessToken` directly, so the UI showed four characters of a
+   * GCM authentication tag: meaningless to the person reading it, and a leaked fragment of the
+   * tag. Ciphertext, IVs and auth tags do not leave this service — not in a DTO, not in a log
+   * line, not in an error message — so the plaintext is produced here, used for four characters,
+   * and left to fall out of scope with the call frame.
+   *
+   * A row that cannot be decrypted still renders: a key rotation should not turn the accounts
+   * list into an error page, and the mask is not the place to discover it.
+   */
+  private maskStoredToken(stored: string): string {
+    try {
+      return this.crypto.maskToken(this.crypto.decrypt(stored));
+    } catch {
+      return this.crypto.maskToken('');
+    }
   }
 
   private signState(payload: string): string {
@@ -470,71 +491,30 @@ export class SocialAccountsService {
     const account = await this.prisma.socialAccount.findFirst({ where: { id } });
     if (!account) throw accountNotFound();
 
-    const platform = account.platform;
+    const platform = account.platform as SocialPlatform;
     const now = Date.now();
 
-    if (platform === 'instagram' || platform === 'facebook') {
-      const windowSeconds = 86400; // 24 hours
-      const since = new Date(now - windowSeconds * 1000);
-      const used = await this.prisma.scheduledPost.count({
-        where: {
-          socialAccountId: id,
-          status: { in: ['PUBLISHED', 'SCHEDULED'] },
-          createdAt: { gte: since },
-        },
-      });
-      const limit = 50;
-      return {
-        platform,
-        publishing: {
-          limit,
-          windowSeconds,
-          used,
-          remaining: Math.max(0, limit - used),
-          resetAt: new Date(now + windowSeconds * 1000).toISOString(),
-        },
-        messaging: {
-          maxInboundWindowHours: 24,
-          extendedHumanAgentWindowDays: 7,
-        },
-      };
-    }
+    // The same helper the publisher enforces with, so the number on screen and the number that
+    // refuses a post cannot say different things.
+    const window = publishingWindowFor(platform) ?? UNLIMITED_WINDOW;
+    const used = await countAgainstQuota(
+      this.prisma.scheduledPost,
+      id,
+      window.windowSeconds,
+      now,
+    );
 
-    if (platform === 'x') {
-      const windowSeconds = 900; // 15 minutes
-      const since = new Date(now - windowSeconds * 1000);
-      const used = await this.prisma.scheduledPost.count({
-        where: {
-          socialAccountId: id,
-          status: { in: ['PUBLISHED', 'SCHEDULED'] },
-          createdAt: { gte: since },
-        },
-      });
-      const limit = 100;
-      return {
-        platform,
-        publishing: {
-          limit,
-          windowSeconds,
-          used,
-          remaining: Math.max(0, limit - used),
-          resetAt: new Date(now + windowSeconds * 1000).toISOString(),
-        },
-        messaging: {
-          maxInboundWindowHours: 24,
-          extendedHumanAgentWindowDays: 7,
-        },
-      };
-    }
+    const limit = window.cap;
+    const windowSeconds = window.windowSeconds;
 
     return {
       platform,
       publishing: {
-        limit: 1000,
-        windowSeconds: 86400,
-        used: 0,
-        remaining: 1000,
-        resetAt: new Date(now + 86400 * 1000).toISOString(),
+        limit,
+        windowSeconds,
+        used,
+        remaining: Math.max(0, limit - used),
+        resetAt: new Date(now + windowSeconds * 1000).toISOString(),
       },
       messaging: {
         maxInboundWindowHours: 24,

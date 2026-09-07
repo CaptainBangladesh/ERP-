@@ -474,6 +474,61 @@ describe('what every module has to get right', () => {
     ).toEqual([]);
   });
 
+  it('refuses a bare ‘:id’ on a prefix other controllers also mount', () => {
+    const marketing = manifest('marketing');
+
+    // The shape that made eight list endpoints return 500: the scaffold's ':id' matches
+    // '/brands' before BrandsController is ever consulted.
+    const scaffold: SourceFile = {
+      path: 'backend/src/modules/marketing/marketing.controller.ts',
+      text: [
+        `@Controller(MARKETING_ROUTE)`,
+        `class MarketingController {`,
+        `  @Get(':id')`,
+        `  @RequirePermission('marketing:marketing:read')`,
+        `  one() {}`,
+        `}`,
+      ].join('\n'),
+    };
+    const sibling: SourceFile = {
+      path: 'backend/src/modules/marketing/brands.controller.ts',
+      text: [
+        `@Controller(MARKETING_ROUTE)`,
+        `class BrandsController {`,
+        `  @Get('brands')`,
+        `  @RequirePermission('marketing:brand:read')`,
+        `  list() {}`,
+        `}`,
+      ].join('\n'),
+    };
+    const contract: SourceFile = {
+      path: 'packages/src/modules/marketing/contract.ts',
+      text: `export const MARKETING_ROUTE = 'api/marketing';`,
+    };
+
+    const violations = checkConformance(repository([marketing], [scaffold, sibling, contract]));
+    expect(rules(violations)).toContain('no-bare-id-at-module-root');
+
+    // The message has to name the way out, not just the offence.
+    const said = message(violations, 'no-bare-id-at-module-root');
+    expect(said).toContain('api/marketing/records');
+
+    // Under a literal noun of its own the same handler is fine — nothing left to shadow.
+    const moved: SourceFile = {
+      ...scaffold,
+      text: scaffold.text.replace('MARKETING_ROUTE', 'MARKETING_RECORDS_ROUTE'),
+    };
+    const withRecords: SourceFile = {
+      ...contract,
+      text:
+        `export const MARKETING_ROUTE = 'api/marketing';\n` +
+        'export const MARKETING_RECORDS_ROUTE = `${MARKETING_ROUTE}/records`;',
+    };
+    expect(
+      rules(checkConformance(repository([marketing], [moved, sibling, withRecords]))),
+    ).not.toContain('no-bare-id-at-module-root');
+  });
+
   it('refuses a handler with no permission check at all', () => {
     const violations = checkConformance(
       repository([parties], [

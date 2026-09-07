@@ -21,9 +21,33 @@ export interface LeadHandoffParams {
   rawPayload?: Record<string, unknown>;
 }
 
+/**
+ * Everything a caller can vary about *how* the handoff runs, as opposed to what it says.
+ *
+ * `client` lets a caller enrol the lead in a transaction it already owns — the public form
+ * submit path does, so that a failure after the lead is created cannot leave an orphan in the
+ * sales pipeline with no submission to explain it.
+ *
+ * `deferEmit` moves `marketing.lead.captured` out of the write and into the caller's hands, to
+ * be fired once the transaction has actually committed. Emitting inside a transaction publishes
+ * an event for a lead that a rollback then un-creates, and a consumer cannot un-consume it.
+ */
+export interface LeadHandoffOptions {
+  readonly client?: TransactionalPrisma;
+  readonly deferEmit?: boolean;
+}
+
+/** A Prisma client inside a transaction, exactly as `$transaction` hands it to a callback. */
+export type TransactionalPrisma = Parameters<Parameters<ScopedPrisma['$transaction']>[0]>[0];
+
 export interface LeadHandoffResult {
   leadId: string;
   isNew: boolean;
+  /**
+   * Fires `marketing.lead.captured`, when the caller asked to defer it. Call it after commit;
+   * calling it never is how a rolled-back submission stays silent.
+   */
+  emitCaptured?: () => void;
   lead: {
     id: string;
     name: string;
@@ -51,7 +75,11 @@ export class CrmBridgeService {
    * creates or finds CRM Lead, logs timeline activity, creates CRM lead_submissions entry,
    * and emits `marketing.lead.captured`.
    */
-  async handoffLead(params: LeadHandoffParams): Promise<LeadHandoffResult> {
+  async handoffLead(
+    params: LeadHandoffParams,
+    options: LeadHandoffOptions = {},
+  ): Promise<LeadHandoffResult> {
+    const db = (options.client ?? this.prisma) as ScopedPrisma;
     const email = params.email?.trim();
     const phone = params.phone?.trim();
     const name = params.name?.trim() || email || 'Inbound Lead';
@@ -67,7 +95,7 @@ export class CrmBridgeService {
 
     let existingLead = null;
     if (searchConditions.length > 0) {
-      existingLead = await this.prisma.lead.findFirst({
+      existingLead = await db.lead.findFirst({
         where: { OR: searchConditions },
       });
     }
@@ -110,7 +138,7 @@ export class CrmBridgeService {
       }
 
       if (Object.keys(updatePayload).length > 0) {
-        const updated = await this.prisma.lead.update({
+        const updated = await db.lead.update({
           where: { id: leadId },
           data: updatePayload,
         });
@@ -133,7 +161,7 @@ export class CrmBridgeService {
     } else {
       // 3. Create new CRM Lead
       isNew = true;
-      const created = await this.prisma.lead.create({
+      const created = await db.lead.create({
         data: companyApplied<Prisma.LeadUncheckedCreateInput>({
           name,
           email: email ?? null,
@@ -154,7 +182,7 @@ export class CrmBridgeService {
 
     // 4. Create CRM LeadSubmission record
     try {
-      await this.prisma.leadSubmission.create({
+      await db.leadSubmission.create({
         data: companyApplied<Prisma.LeadSubmissionUncheckedCreateInput>({
           leadId,
           formName: params.sourceName,
@@ -180,7 +208,7 @@ export class CrmBridgeService {
     }${params.utm?.content ? `, content=${params.utm.content}` : ''}`;
 
     try {
-      await this.prisma.activity.create({
+      await db.activity.create({
         data: companyApplied<Prisma.ActivityUncheckedCreateInput>({
           type: 'note',
           leadId,
@@ -193,27 +221,32 @@ export class CrmBridgeService {
       this.logger.warn(`Could not create crm.activity timeline entry: ${(err as Error).message}`);
     }
 
-    // 6. Emit decoupled domain event
-    this.events.emit('marketing.lead.captured', {
-      leadId,
-      isNew,
-      name: finalLead.name,
-      email: finalLead.email,
-      phone: finalLead.phone,
-      sourceName: params.sourceName,
-      utm: params.utm ?? {},
-      brandId: params.brandId,
-    });
+    // 6. Emit the decoupled domain event — after the caller commits, if it asked to defer.
+    const emitCaptured = (): void => {
+      this.events.emit('marketing.lead.captured', {
+        leadId,
+        isNew,
+        name: finalLead.name,
+        email: finalLead.email,
+        phone: finalLead.phone,
+        sourceName: params.sourceName,
+        utm: params.utm ?? {},
+        brandId: params.brandId,
+      });
+    };
+
+    if (!options.deferEmit) emitCaptured();
 
     // 7. Check for Nurture Sequences triggered by lead capture
     if (params.brandId) {
-      await this.checkNurtureTriggers(params.brandId, finalLead, params.sourceName);
+      await this.checkNurtureTriggers(params.brandId, finalLead, params.sourceName, db);
     }
 
     return {
       leadId,
       isNew,
       lead: finalLead,
+      ...(options.deferEmit ? { emitCaptured } : {}),
     };
   }
 
@@ -221,9 +254,10 @@ export class CrmBridgeService {
     brandId: string,
     lead: { id: string; email: string | null; name: string },
     triggerSource: string,
+    db: ScopedPrisma,
   ): Promise<void> {
     try {
-      const sequences = await this.prisma.nurtureSequence.findMany({
+      const sequences = await db.nurtureSequence.findMany({
         where: {
           brandId,
           status: 'ACTIVE',

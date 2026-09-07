@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
+import { BioPageCspMiddleware } from './bio-page-csp.middleware';
 import { BrandsController } from './brands.controller';
 import { BrandsService } from './brands.service';
 import { CryptoService } from './crypto.service';
@@ -133,5 +134,14 @@ import { PublicTrackingController } from './public-tracking.controller';
     TrackingService,
   ],
 })
-export class MarketingModule {}
+export class MarketingModule implements NestModule {
+  /**
+   * Every public bio-page response carries its nonce CSP, including ones nobody has written yet.
+   * Putting it here rather than on each handler means a new route under '/b' cannot be added
+   * without the policy.
+   */
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(BioPageCspMiddleware).forRoutes('b');
+  }
+}
 
