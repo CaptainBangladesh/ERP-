@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { SMTP_TIMEOUTS } from '../../platform/mail';
 import { mailSettingsRejected } from './errors';
 
 /** Enough to open a connection and authenticate, before anything is stored. */
@@ -30,6 +31,7 @@ export class SmtpMailHostVerifier extends MailHostVerifier {
       port: credentials.port,
       secure: credentials.secure,
       auth: { user: credentials.username, pass: credentials.password },
+      ...SMTP_TIMEOUTS,
     });
 
     try {

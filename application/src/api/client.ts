@@ -94,6 +94,31 @@ export function apiUrl(path: string): string {
   return resolveUrl(path);
 }
 
+/**
+ * What to say about a refusal that did not come from this API.
+ *
+ * The API answers every refusal with a code and a sentence, so a body without one means the
+ * response was written by something in between — a proxy timing the request out, a gateway
+ * whose upstream died mid-request. Those look identical to a genuine server bug from here and
+ * are nothing alike to fix, and "Something went wrong. Please try again." for both is how a
+ * request that hung for two minutes and a request that crashed instantly came to read the
+ * same. The status is the one fact available that tells them apart, so it goes in the
+ * sentence rather than only into a network tab nobody has open.
+ */
+function unrecognisedFailure(status: number): ApiError {
+  if (status === 502 || status === 503 || status === 504 || status === 524) {
+    return {
+      code: 'internal_error',
+      message: `The server did not finish this request in time (HTTP ${status}). It may still be working — check before trying again.`,
+    };
+  }
+
+  return {
+    code: 'internal_error',
+    message: `Something went wrong. Please try again. (HTTP ${status})`,
+  };
+}
+
 function resolveUrl(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
   const baseUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';
@@ -130,9 +155,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const failure = new ApiFailure(
       response.status,
-      isApiError(body)
-        ? body
-        : { code: 'internal_error', message: 'Something went wrong. Please try again.' },
+      isApiError(body) ? body : unrecognisedFailure(response.status),
     );
 
     if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code, sentWith);
@@ -206,9 +229,7 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   if (!response.ok) {
     const failure = new ApiFailure(
       response.status,
-      isApiError(body)
-        ? body
-        : { code: 'internal_error', message: 'Something went wrong. Please try again.' },
+      isApiError(body) ? body : unrecognisedFailure(response.status),
     );
 
     if (isAuthenticationFailure(failure.code)) onSessionUnusable?.(failure.code, sentWith);

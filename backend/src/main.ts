@@ -3,9 +3,12 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureApp } from './app.config';
+import { reportDeploymentConfiguration } from './deployment-check';
 
 async function bootstrap(): Promise<void> {
   try {
+    reportDeploymentConfiguration();
+
     const app = await NestFactory.create(AppModule);
     configureApp(app);
 

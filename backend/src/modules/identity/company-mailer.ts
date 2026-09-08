@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
-import { Mailer, type MailMessage } from '../../platform/mail';
+import { Mailer, SMTP_TIMEOUTS, type MailMessage } from '../../platform/mail';
 import { CompanyMailService } from './company-mail.service';
 import { mailSendFailed } from './errors';
 
@@ -60,6 +60,7 @@ export class CompanyMailer extends Mailer {
       port: company.port,
       secure: company.secure,
       auth: { user: company.username, pass: company.password },
+      ...SMTP_TIMEOUTS,
     });
 
     try {
