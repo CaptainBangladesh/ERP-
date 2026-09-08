@@ -1,31 +1,48 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   MARKETING_PATHS,
   OUTBOUND_FETCH_REASON_LABELS,
   SOCIAL_PLATFORMS,
+  emptyPage,
+  listPath,
   type CompetitorListResponse,
   type CompetitorSummary,
   type ContentFeedEntryListResponse,
+  type ContentFeedEntrySummary,
   type ContentFeedListResponse,
   type ContentFeedSummary,
+  type ListQuery,
   type SocialPlatform,
 } from '@erp/shared';
-import { Button, Field, Select } from '@erp/shared/ui';
+import { Button, DataTable, Field, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 
 /**
  * External content sources: the feeds a brand watches, and the handles it benchmarks against.
  *
- * Two things about this panel are load-bearing rather than cosmetic.
+ * Four things about this panel are load-bearing rather than cosmetic.
  *
- * Feed text is **text** (16d). Every title and excerpt below is a React child, never
+ * **Every list is scoped by `filter.brandId`, not `brandId`.** The list convention reads
+ * `filter.<field>` and *ignores* unknown keys, so a bare `?brandId=` is not a narrowed list —
+ * it is every brand's feeds, entries and competitors rendered under one brand's heading, with
+ * nothing on screen to say so. This panel drives credentialed reads, which makes that the
+ * difference between a brand workspace and a leak.
+ *
+ * **Every list is a `DataTable`.** Which brings paging with it: a hand-rolled `<ul>` over
+ * `items` shows the first twenty-five rows of a list of two hundred and offers no way to the
+ * rest, and the operator cannot tell the difference between "twenty-five feeds" and "the
+ * first twenty-five". It also brings the four renderings — loading, error, empty, no matches —
+ * that a single "No feeds yet." collapses into one wrong answer three times out of four.
+ *
+ * **Feed text is text (16d).** Every title and excerpt below is a React child, never
  * `dangerouslySetInnerHTML` and never handed to a markdown renderer — a stranger's `<script>`
  * in a headline renders as the characters `<script>`, which is what the ingest test asserts.
  *
- * A failing feed shows its reason **code**, translated to our own words (14-17.0d). Nothing the
- * remote host said reaches this screen: no status line, no header, no body fragment, no
- * resolved address. An error panel that echoed them would be blind SSRF with a UI.
+ * **A failing feed shows its reason code, in our own words (14-17.0d).** Nothing the remote
+ * host said reaches this screen: no status line, no header, no body fragment, no resolved
+ * address. An error panel that echoed them would be blind SSRF with a UI.
  */
 export function ContentSourcesManager({
   brandId,
@@ -42,36 +59,42 @@ export function ContentSourcesManager({
   const [network, setNetwork] = useState<SocialPlatform>('instagram');
   const [competitorError, setCompetitorError] = useState<string | null>(null);
 
+  const [feedQuery, setFeedQuery] = useState<ListQuery>({});
+  const [entryQuery, setEntryQuery] = useState<ListQuery>({});
+  const [competitorQuery, setCompetitorQuery] = useState<ListQuery>({});
+
+  /** The brand narrows every one of these, and it narrows them the way the API reads. */
+  const scopedTo = (query: ListQuery): ListQuery => ({
+    ...query,
+    filters: { ...query.filters, brandId },
+  });
+
   const feedsQuery = useQuery({
-    queryKey: ['marketing', 'content-feeds', brandId],
+    queryKey: ['marketing', 'content-feeds', brandId, feedQuery],
     queryFn: () =>
       api.get<ContentFeedListResponse>(
-        `${MARKETING_PATHS.contentFeeds}?brandId=${encodeURIComponent(brandId)}`,
+        listPath(MARKETING_PATHS.contentFeeds, scopedTo(feedQuery)),
       ),
     enabled: Boolean(brandId),
   });
 
   const entriesQuery = useQuery({
-    queryKey: ['marketing', 'content-feed-entries', brandId],
+    queryKey: ['marketing', 'content-feed-entries', brandId, entryQuery],
     queryFn: () =>
       api.get<ContentFeedEntryListResponse>(
-        `${MARKETING_PATHS.contentFeedEntries}?brandId=${encodeURIComponent(brandId)}`,
+        listPath(MARKETING_PATHS.contentFeedEntries, scopedTo(entryQuery)),
       ),
     enabled: Boolean(brandId),
   });
 
   const competitorsQuery = useQuery({
-    queryKey: ['marketing', 'competitors', brandId],
+    queryKey: ['marketing', 'competitors', brandId, competitorQuery],
     queryFn: () =>
       api.get<CompetitorListResponse>(
-        `${MARKETING_PATHS.competitors}?brandId=${encodeURIComponent(brandId)}`,
+        listPath(MARKETING_PATHS.competitors, scopedTo(competitorQuery)),
       ),
     enabled: Boolean(brandId),
   });
-
-  const feeds = feedsQuery.data?.items ?? [];
-  const entries = entriesQuery.data?.items ?? [];
-  const competitors = competitorsQuery.data?.items ?? [];
 
   const refreshFeeds = () => {
     void queryClient.invalidateQueries({ queryKey: ['marketing', 'content-feeds', brandId] });
@@ -79,6 +102,9 @@ export function ContentSourcesManager({
       queryKey: ['marketing', 'content-feed-entries', brandId],
     });
   };
+
+  const refreshCompetitors = () =>
+    void queryClient.invalidateQueries({ queryKey: ['marketing', 'competitors', brandId] });
 
   const addFeed = useMutation({
     mutationFn: () =>
@@ -120,7 +146,7 @@ export function ContentSourcesManager({
     onSuccess: () => {
       setHandle('');
       setCompetitorError(null);
-      void queryClient.invalidateQueries({ queryKey: ['marketing', 'competitors', brandId] });
+      refreshCompetitors();
     },
     onError: (error: unknown) => {
       setCompetitorError(
@@ -132,15 +158,178 @@ export function ContentSourcesManager({
   const snapshotCompetitor = useMutation({
     mutationFn: (id: string) =>
       api.post<CompetitorSummary>(MARKETING_PATHS.snapshotCompetitor(id), {}),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['marketing', 'competitors', brandId] }),
+    onSuccess: refreshCompetitors,
+    onError: (error: unknown) => {
+      setCompetitorError(
+        error instanceof ApiFailure ? error.message : 'That snapshot could not be requested.',
+      );
+    },
   });
 
   const removeCompetitor = useMutation({
     mutationFn: (id: string) => api.delete(MARKETING_PATHS.competitor(id)),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: ['marketing', 'competitors', brandId] }),
+    onSuccess: refreshCompetitors,
   });
+
+  const feedColumns: Array<ColumnDef<ContentFeedSummary, unknown>> = [
+    {
+      id: 'name',
+      header: 'Feed',
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          <span className="font-medium text-slate-900">{row.original.name}</span>
+          <span className="text-xs text-slate-500">{row.original.url}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          <span>{row.original.status === 'DISABLED' ? 'Paused after repeated failures' : 'Watching'}</span>
+          {row.original.lastReason && (
+            <span className="text-xs text-rose-700">
+              {OUTBOUND_FETCH_REASON_LABELS[row.original.lastReason]}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: 'entryCount',
+      header: 'Entries',
+      enableSorting: false,
+      cell: ({ row }) => row.original.entryCount,
+    },
+    {
+      id: 'actions',
+      header: 'Actions',
+      enableSorting: false,
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2">
+          {row.original.status === 'DISABLED' ? (
+            <Button variant="secondary" onClick={() => enableFeed.mutate(row.original.id)}>
+              Re-enable
+            </Button>
+          ) : (
+            <Button variant="secondary" onClick={() => pollFeed.mutate(row.original.id)}>
+              Check now
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => removeFeed.mutate(row.original.id)}>
+            Remove
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  const entryColumns: Array<ColumnDef<ContentFeedEntrySummary, unknown>> = [
+    {
+      id: 'title',
+      header: 'Headline',
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          {/* Text, always. A headline from a stranger is never markup here (16d). */}
+          <span className="font-medium text-slate-900">{row.original.title}</span>
+          <span className="text-slate-600">{row.original.excerpt}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'feedId',
+      header: 'Source',
+      enableSorting: false,
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          <span>{row.original.feedName}</span>
+          <a
+            className="text-xs underline"
+            href={row.original.link}
+            rel="noreferrer noopener nofollow"
+            target="_blank"
+          >
+            source
+          </a>
+        </div>
+      ),
+    },
+    {
+      id: 'status',
+      header: 'Draft',
+      enableSorting: false,
+      cell: ({ row }) =>
+        row.original.status === 'DRAFT' ? (
+          'In the composer'
+        ) : (
+          // Honest about why nothing is draftable yet, rather than showing an empty column.
+          <span className="text-slate-600">Waiting for a connected account</span>
+        ),
+    },
+    {
+      id: 'fetchedAt',
+      header: 'Fetched',
+      cell: ({ row }) => new Date(row.original.fetchedAt).toLocaleDateString(),
+    },
+  ];
+
+  const competitorColumns: Array<ColumnDef<CompetitorSummary, unknown>> = [
+    {
+      id: 'label',
+      header: 'Competitor',
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          <span className="font-medium text-slate-900">{row.original.label}</span>
+          <span className="text-xs text-slate-500">{row.original.network}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'latestSnapshot',
+      header: 'Latest snapshot',
+      enableSorting: false,
+      cell: ({ row }) => {
+        const competitor = row.original;
+        if (!competitor.metricsSupported) {
+          // The honest empty state (15a). There is no scraper behind a flag, so this is the
+          // whole answer for this network rather than a "coming soon".
+          return (
+            <span className="text-slate-600">
+              Not supported on this network — its API publishes no public profile metrics.
+            </span>
+          );
+        }
+        const latest = competitor.latestSnapshot;
+        if (!latest) return <span className="text-slate-600">No snapshot yet.</span>;
+
+        return (
+          <span className="text-slate-600">
+            {latest.followerCount ?? '—'} followers · {latest.postCount ?? '—'} posts ·{' '}
+            {/* A decimal string straight through — never `Number(…)` on the way to a screen. */}
+            {latest.engagementRate ?? '—'} engagement · captured {latest.captureDate}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'competitorActions',
+      header: 'Actions',
+      enableSorting: false,
+      cell: ({ row }) => (
+        <div className="flex items-center gap-2">
+          {row.original.metricsSupported && (
+            <Button variant="secondary" onClick={() => snapshotCompetitor.mutate(row.original.id)}>
+              Snapshot
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => removeCompetitor.mutate(row.original.id)}>
+            Remove
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-8">
@@ -149,7 +338,7 @@ export function ContentSourcesManager({
         <p className="text-sm text-slate-600">
           Feeds arrive as drafts for a person to schedule — nothing here publishes on its own.
           Competitor numbers come from each network’s own API through this brand’s connected
-          account.
+          account, and spend the same publishing quota a post does.
         </p>
       </header>
 
@@ -185,71 +374,53 @@ export function ContentSourcesManager({
           </p>
         )}
 
-        {feeds.length === 0 ? (
-          <p className="text-sm text-slate-600">No feeds yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {feeds.map((feed) => (
-              <li
-                key={feed.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 px-3 py-2"
-              >
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-900">{feed.name}</span>
-                  <span className="text-xs text-slate-500">{feed.url}</span>
-                  <span className="text-xs text-slate-600">
-                    {feed.entryCount} draft{feed.entryCount === 1 ? '' : 's'}
-                    {feed.status === 'DISABLED' ? ' · paused after repeated failures' : ''}
-                  </span>
-                  {feed.lastReason && (
-                    <span className="text-xs text-rose-700">
-                      {OUTBOUND_FETCH_REASON_LABELS[feed.lastReason]}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {feed.status === 'DISABLED' ? (
-                    <Button variant="secondary" onClick={() => enableFeed.mutate(feed.id)}>
-                      Re-enable
-                    </Button>
-                  ) : (
-                    <Button variant="secondary" onClick={() => pollFeed.mutate(feed.id)}>
-                      Check now
-                    </Button>
-                  )}
-                  <Button variant="secondary" onClick={() => removeFeed.mutate(feed.id)}>
-                    Remove
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        <DataTable
+          caption="Content feeds"
+          columns={feedColumns}
+          rows={feedsQuery.data?.items ?? []}
+          rowId={(feed) => feed.id}
+          page={feedsQuery.data?.page ?? emptyPage()}
+          query={feedQuery}
+          onQueryChange={setFeedQuery}
+          status={feedsQuery.isPending ? 'loading' : feedsQuery.isError ? 'error' : 'ready'}
+          error={failureText(feedsQuery.error, 'The feeds could not be loaded.')}
+          onRetry={() => void feedsQuery.refetch()}
+          searchLabel="Search feeds by name"
+          empty={
+            <div className="flex flex-col gap-1">
+              <p className="font-medium text-slate-900">No feeds yet.</p>
+              <p>Add an https:// feed address above to start collecting drafts.</p>
+            </div>
+          }
+          noMatches="No feed matches that search. Clear it to see them all."
+        />
       </section>
 
       <section aria-labelledby="drafts-heading" className="flex flex-col gap-3">
         <h3 id="drafts-heading" className="text-sm font-semibold text-slate-900">
           Drafts from feeds
         </h3>
-        {entries.length === 0 ? (
-          <p className="text-sm text-slate-600">Nothing ingested yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {entries.map((entry) => (
-              <li key={entry.id} className="rounded-md border border-slate-200 px-3 py-2">
-                {/* Text, always. A headline from a stranger is never markup here (16d). */}
-                <p className="text-sm font-medium text-slate-900">{entry.title}</p>
-                <p className="text-sm text-slate-600">{entry.excerpt}</p>
-                <p className="text-xs text-slate-500">
-                  {entry.feedName} ·{' '}
-                  <a className="underline" href={entry.link} rel="noreferrer noopener nofollow" target="_blank">
-                    source
-                  </a>
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
+
+        <DataTable
+          caption="Entries ingested from content feeds"
+          columns={entryColumns}
+          rows={entriesQuery.data?.items ?? []}
+          rowId={(entry) => entry.id}
+          page={entriesQuery.data?.page ?? emptyPage()}
+          query={entryQuery}
+          onQueryChange={setEntryQuery}
+          status={entriesQuery.isPending ? 'loading' : entriesQuery.isError ? 'error' : 'ready'}
+          error={failureText(entriesQuery.error, 'The drafts could not be loaded.')}
+          onRetry={() => void entriesQuery.refetch()}
+          searchLabel="Search headlines"
+          empty={
+            <div className="flex flex-col gap-1">
+              <p className="font-medium text-slate-900">Nothing ingested yet.</p>
+              <p>Add a feed above, or use “Check now” on one you already watch.</p>
+            </div>
+          }
+          noMatches="No headline matches that search. Clear it to see them all."
+        />
       </section>
 
       <section aria-labelledby="competitors-heading" className="flex flex-col gap-3">
@@ -277,7 +448,7 @@ export function ContentSourcesManager({
             label="Handle"
             value={handle}
             onChange={setHandle}
-            hint="The name on the profile, not a link."
+            hint="The name on the profile, not a link. Each network has its own rules."
           />
           <Button type="submit" disabled={addCompetitor.isPending}>
             Track competitor
@@ -290,54 +461,35 @@ export function ContentSourcesManager({
           </p>
         )}
 
-        {competitors.length === 0 ? (
-          <p className="text-sm text-slate-600">No competitors tracked yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {competitors.map((competitor) => (
-              <li
-                key={competitor.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 px-3 py-2"
-              >
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-slate-900">
-                    {competitor.label} · {competitor.network}
-                  </span>
-                  {!competitor.metricsSupported ? (
-                    // The honest empty state (15a). There is no scraper behind a flag, so
-                    // this is the whole answer for this network rather than a "coming soon".
-                    <span className="text-xs text-slate-600">
-                      Not supported on this network — its API publishes no public profile
-                      metrics.
-                    </span>
-                  ) : competitor.latestSnapshot ? (
-                    <span className="text-xs text-slate-600">
-                      {competitor.latestSnapshot.followerCount ?? '—'} followers ·{' '}
-                      {competitor.latestSnapshot.postCount ?? '—'} posts · captured{' '}
-                      {competitor.latestSnapshot.captureDate}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-slate-600">No snapshot yet.</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {competitor.metricsSupported && (
-                    <Button
-                      variant="secondary"
-                      onClick={() => snapshotCompetitor.mutate(competitor.id)}
-                    >
-                      Snapshot
-                    </Button>
-                  )}
-                  <Button variant="secondary" onClick={() => removeCompetitor.mutate(competitor.id)}>
-                    Remove
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        <DataTable
+          caption="Competitor handles"
+          columns={competitorColumns}
+          rows={competitorsQuery.data?.items ?? []}
+          rowId={(competitor) => competitor.id}
+          page={competitorsQuery.data?.page ?? emptyPage()}
+          query={competitorQuery}
+          onQueryChange={setCompetitorQuery}
+          status={
+            competitorsQuery.isPending ? 'loading' : competitorsQuery.isError ? 'error' : 'ready'
+          }
+          error={failureText(competitorsQuery.error, 'The competitors could not be loaded.')}
+          onRetry={() => void competitorsQuery.refetch()}
+          searchLabel="Search competitors"
+          empty={
+            <div className="flex flex-col gap-1">
+              <p className="font-medium text-slate-900">No competitors tracked yet.</p>
+              <p>Add a public business handle above to start a daily benchmark.</p>
+            </div>
+          }
+          noMatches="No competitor matches that search. Clear it to see them all."
+        />
       </section>
     </div>
   );
+}
+
+/** The failure's own message where there is one, and our words where there is not. */
+function failureText(error: unknown, fallback: string): string | undefined {
+  if (error === null || error === undefined) return undefined;
+  return error instanceof ApiFailure ? error.message : fallback;
 }

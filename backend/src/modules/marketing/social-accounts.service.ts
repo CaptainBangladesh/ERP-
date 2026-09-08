@@ -13,7 +13,7 @@ import {
   type SocialRateLimitStatus,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
-import { countAgainstQuota, publishingWindowFor, UNLIMITED_WINDOW } from './publishing-quota';
+import { publishingWindowFor, quotaSpentInWindow, UNLIMITED_WINDOW } from './publishing-quota';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
@@ -514,12 +514,7 @@ export class SocialAccountsService {
     // The same helper the publisher enforces with, so the number on screen and the number that
     // refuses a post cannot say different things.
     const window = publishingWindowFor(platform) ?? UNLIMITED_WINDOW;
-    const used = await countAgainstQuota(
-      this.prisma.scheduledPost,
-      id,
-      window.windowSeconds,
-      now,
-    );
+    const used = await quotaSpentInWindow(this.prisma, id, window, now);
 
     const limit = window.cap;
     const windowSeconds = window.windowSeconds;

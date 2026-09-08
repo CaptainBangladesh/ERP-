@@ -9,8 +9,10 @@ import {
   type ContentFeedListResponse,
   type ContentFeedSummary,
   type SocialAccountSummary,
+  type SocialRateLimitStatus,
 } from '@erp/shared';
 import { StubSocialNetworkAdapter } from '../src/modules/marketing/adapters/stub.adapter';
+import { publishingWindowFor, quotaSpentInWindow } from '../src/modules/marketing/publishing-quota';
 import { SocialAdapterResolver } from '../src/modules/marketing/adapters/social-adapter.resolver';
 import {
   COMPETITOR_SNAPSHOT_JOB_TYPE,
@@ -280,6 +282,7 @@ describe('Marketing: RSS ingest and competitor benchmarking', () => {
     it('stores a title containing markup as text', async () => {
       const tenant = await signUp();
       const brand = await brandFor(tenant);
+      await accountFor(tenant, brand, 'instagram');
 
       const url = 'https://feeds.example.test/rss';
       outbound().serve(
@@ -342,6 +345,63 @@ describe('Marketing: RSS ingest and competitor benchmarking', () => {
     });
   });
 
+  // ── 16b / 16h — an entry becomes a draft a person can open ──────────────────────
+
+  describe('a feed entry', () => {
+    it('becomes one DRAFT post carrying its provenance, however often the feed is polled', async () => {
+      const tenant = await signUp();
+      const brand = await brandFor(tenant);
+      await accountFor(tenant, brand, 'instagram');
+
+      const url = 'https://feeds.example.test/rss';
+      outbound().serve(url, rss([{ title: 'Ten trends', link: 'https://news.test/1', guid: 'urn:1' }]));
+      const feed = await feedFor(tenant, brand, url);
+      await drainQueue();
+
+      const posts = await app.prisma.scheduledPost.findMany({ where: { brandId: brand.id } });
+      expect(posts).toHaveLength(1);
+      // A draft, never a schedule: nothing publishes without a human (16b).
+      expect(posts[0]?.status).toBe('DRAFT');
+      expect(posts[0]?.sourceFeedId).toBe(feed.id);
+      expect(posts[0]?.sourceLink).toBe('https://news.test/1');
+      expect(posts[0]?.sourceEntryKey).toHaveLength(64);
+      expect(posts[0]?.sourceFetchedAt).toBeInstanceOf(Date);
+      expect(posts[0]?.content).toContain('https://news.test/1');
+
+      // The entry now says where it got to, and the serialiser reports the row's own value.
+      const entries = await entriesFor(tenant);
+      expect(entries[0]?.status).toBe('DRAFT');
+
+      // Poll it again, renumbered: the unique index is the whole mechanism (16b).
+      outbound().serve(url, rss([{ title: 'Ten trends', link: 'https://news.test/1', guid: 'urn:1' }]));
+      await tenant.as(app.http.post(MARKETING_PATHS.pollContentFeed(feed.id))).expect(201);
+      await drainQueue();
+
+      expect(await app.prisma.scheduledPost.count({ where: { brandId: brand.id } })).toBe(1);
+    });
+
+    it('waits for a connected account rather than dropping, and drafts on a later poll', async () => {
+      const tenant = await signUp();
+      const brand = await brandFor(tenant);
+
+      const url = 'https://feeds.example.test/rss';
+      outbound().serve(url, rss([{ title: 'Ten trends', link: 'https://news.test/1', guid: 'urn:1' }]));
+      const feed = await feedFor(tenant, brand, url);
+      await drainQueue();
+
+      expect(await app.prisma.scheduledPost.count({ where: { brandId: brand.id } })).toBe(0);
+      expect((await entriesFor(tenant))[0]?.status).toBe('AWAITING_ACCOUNT');
+
+      await accountFor(tenant, brand, 'instagram');
+      outbound().serve(url, rss([{ title: 'Ten trends', link: 'https://news.test/1', guid: 'urn:1' }]));
+      await tenant.as(app.http.post(MARKETING_PATHS.pollContentFeed(feed.id))).expect(201);
+      await drainQueue();
+
+      expect(await app.prisma.scheduledPost.count({ where: { brandId: brand.id } })).toBe(1);
+      expect((await entriesFor(tenant))[0]?.status).toBe('DRAFT');
+    });
+  });
+
   // ── 16c — one poller per feed ────────────────────────────────────────────────────
 
   it('keeps one live poll job per feed however many times polling is asked for', async () => {
@@ -380,6 +440,31 @@ describe('Marketing: RSS ingest and competitor benchmarking', () => {
         .expect(422);
     });
 
+    it('validates the handle against the network it belongs to (15d)', async () => {
+      const tenant = await signUp();
+      const brand = await brandFor(tenant);
+
+      // Legal on Instagram, where dots are part of a username; not on X, where they are not.
+      await tenant
+        .as(app.http.post(MARKETING_PATHS.competitors))
+        .send({ brandId: brand.id, network: 'instagram', handle: 'rival.co_official' })
+        .expect(201);
+
+      const refusal = await tenant
+        .as(app.http.post(MARKETING_PATHS.competitors))
+        .send({ brandId: brand.id, network: 'x', handle: 'rival.co_official' })
+        .expect(422);
+      expect((refusal.body as { fields?: Record<string, string> }).fields?.['handle']).toContain(
+        'underscores',
+      );
+
+      // And the same value one character too long for X's own limit.
+      await tenant
+        .as(app.http.post(MARKETING_PATHS.competitors))
+        .send({ brandId: brand.id, network: 'x', handle: 'sixteencharacter' })
+        .expect(422);
+    });
+
     it('captures aggregates, and only aggregates, for a connected network', async () => {
       const tenant = await signUp();
       const brand = await brandFor(tenant);
@@ -393,6 +478,12 @@ describe('Marketing: RSS ingest and competitor benchmarking', () => {
       expect(competitor.metricsSupported).toBe(true);
 
       await drainQueue();
+
+      const listed = await tenant.as(app.http.get(MARKETING_PATHS.competitors)).expect(200);
+      const latest = (listed.body as CompetitorListResponse).items[0]?.latestSnapshot;
+      // A `numeric(8,4)` crosses the wire as its canonical string, never as a JSON number.
+      expect(typeof latest?.engagementRate).toBe('string');
+      expect(latest?.engagementRate).toMatch(/^\d+\.\d{4}$/);
 
       const snapshots = await app.prisma.competitorSnapshot.findMany({
         where: { competitorId: competitor.id },
@@ -480,10 +571,19 @@ describe('Marketing: RSS ingest and competitor benchmarking', () => {
       expect(snapshots).toBe(0);
     });
 
-    it('spends the same quota ledger as publishing', async () => {
+    it('shrinks the publishing budget, because it is the same budget (15b)', async () => {
       const tenant = await signUp();
       const brand = await brandFor(tenant);
       const account = await accountFor(tenant, brand, 'instagram');
+      const companyId = tenant.session.company.id;
+
+      const window = publishingWindowFor('instagram');
+      if (!window) throw new Error('Meta has a modelled publishing window');
+
+      const before = await tenant
+        .as(app.http.get(`${MARKETING_PATHS.socialAccount(account.id)}/rate-limits`))
+        .expect(200);
+      expect((before.body as SocialRateLimitStatus).publishing.remaining).toBe(window.cap);
 
       await tenant
         .as(app.http.post(MARKETING_PATHS.competitors))
@@ -492,10 +592,111 @@ describe('Marketing: RSS ingest and competitor benchmarking', () => {
 
       await drainQueue();
 
-      const reservation = await app.prisma.socialQuotaReservation.findFirst({
-        where: { socialAccountId: account.id },
+      // The number the publisher enforces with and the number on the account screen are the
+      // same number, and a benchmark read has just come out of it. A reservation row nobody
+      // reads would satisfy the old assertion and none of this.
+      const after = await tenant
+        .as(app.http.get(`${MARKETING_PATHS.socialAccount(account.id)}/rate-limits`))
+        .expect(200);
+      const status = after.body as SocialRateLimitStatus;
+      expect(status.publishing.used).toBe(1);
+      expect(status.publishing.remaining).toBe(window.cap - 1);
+
+      const spent = await app.tenancy.runInCompany({ companyId, grants: 'all' }, () =>
+        quotaSpentInWindow(app.scoped, account.id, window),
+      );
+      expect(spent).toBe(1);
+    });
+
+    it('counts the first read of a window, rather than seeding it away', async () => {
+      const tenant = await signUp();
+      const brand = await brandFor(tenant);
+      const account = await accountFor(tenant, brand, 'instagram');
+      const companyId = tenant.session.company.id;
+
+      const window = publishingWindowFor('instagram');
+      if (!window) throw new Error('Meta has a modelled publishing window');
+
+      const created = await tenant
+        .as(app.http.post(MARKETING_PATHS.competitors))
+        .send({ brandId: brand.id, network: 'instagram', handle: 'rival_co' })
+        .expect(201);
+      const competitor = created.body as CompetitorSummary;
+
+      const competitors = app.nest.get(CompetitorsService);
+      const capture = () =>
+        app.tenancy.runInCompany({ companyId, grants: 'all' }, () =>
+          runInWorker(() => competitors.captureSnapshot(competitor.id)),
+        );
+
+      // Seeded a window in the past, the counter rolled itself on the very next reservation
+      // and the first read of every window was free — spent against the platform, invisible
+      // to us. Two reads, two units, and the second one proves the first survived.
+      await capture();
+      await capture();
+
+      const spent = await app.tenancy.runInCompany({ companyId, grants: 'all' }, () =>
+        quotaSpentInWindow(app.scoped, account.id, window),
+      );
+      expect(spent).toBe(2);
+    });
+
+    it('waits out the platform window after a 429 rather than retrying tomorrow (15f)', async () => {
+      const tenant = await signUp();
+      const brand = await brandFor(tenant);
+      const account = await accountFor(tenant, brand, 'instagram');
+      const companyId = tenant.session.company.id;
+
+      const created = await tenant
+        .as(app.http.post(MARKETING_PATHS.competitors))
+        .send({ brandId: brand.id, network: 'instagram', handle: 'rival_co' })
+        .expect(201);
+      const competitor = created.body as CompetitorSummary;
+
+      // Clear the job the create enqueued, so what is scheduled next is the backoff's doing.
+      await app.prisma.marketingJob.deleteMany({
+        where: { companyId, type: COMPETITOR_SNAPSHOT_JOB_TYPE },
       });
-      expect(reservation?.reserved).toBe(1);
+
+      stubAdapter().rateLimitNext('instagram', 3 * 24 * 60 * 60);
+
+      const competitors = app.nest.get(CompetitorsService);
+      const outcome = await app.tenancy.runInCompany({ companyId, grants: 'all' }, () =>
+        runInWorker(() => competitors.captureSnapshot(competitor.id)),
+      );
+
+      expect(outcome).toBe('rate_limited');
+
+      const next = await app.prisma.marketingJob.findFirst({
+        where: { companyId, type: COMPETITOR_SNAPSHOT_JOB_TYPE },
+      });
+      // Three days, because that is what the vendor asked for — not the flat day the call site
+      // used to invent, and not an immediate retry against a token that is being throttled.
+      expect(next?.scheduledAt.getTime()).toBeGreaterThan(Date.now() + 2 * 24 * 60 * 60 * 1000);
+
+      // The platform counted the request it refused, so the reservation stands.
+      const window = publishingWindowFor('instagram');
+      if (!window) throw new Error('Meta has a modelled publishing window');
+      const spent = await app.tenancy.runInCompany({ companyId, grants: 'all' }, () =>
+        quotaSpentInWindow(app.scoped, account.id, window),
+      );
+      expect(spent).toBe(1);
+    });
+
+    it('refuses a hand-made snapshot when the brand has connected nothing (15b)', async () => {
+      const tenant = await signUp();
+      const brand = await brandFor(tenant);
+
+      const created = await tenant
+        .as(app.http.post(MARKETING_PATHS.competitors))
+        .send({ brandId: brand.id, network: 'instagram', handle: 'rival_co' })
+        .expect(201);
+      const competitor = created.body as CompetitorSummary;
+
+      const refusal = await tenant
+        .as(app.http.post(MARKETING_PATHS.snapshotCompetitor(competitor.id)))
+        .expect(409);
+      expect((refusal.body as { code: string }).code).toBe('competitor_account_missing');
     });
 
     it('skips the read rather than eating the budget publishing needs', async () => {

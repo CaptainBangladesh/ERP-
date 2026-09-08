@@ -7,6 +7,7 @@ import {
   MARKETING_ERROR_CODES,
   MAX_FEEDS_PER_BRAND,
   type ContentFeedEntryListResponse,
+  type ContentFeedEntryStatus,
   type ContentFeedEntrySummary,
   type ContentFeedListResponse,
   type ContentFeedStatus,
@@ -17,13 +18,34 @@ import { ApiException } from '../../http/api-exception';
 import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma, Tenancy } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
+import { boundedRead } from './bounded-read';
 import { parseFeed, type ParsedFeedEntry } from './feed-parser';
 import { OutboundFetchService } from './outbound-fetch.service';
 import { PostgresJobQueueService } from './postgres-job-queue.service';
+import {
+  enqueueOnePerRow,
+  registerRowPoller,
+  requireBrand,
+  SCHEDULER_SELECT,
+  scheduleEveryRow,
+  type RowJobPolicy,
+} from './row-pollers';
 import { CONTENT_FEED_ENTRY_LIST, CONTENT_FEED_LIST, CreateContentFeedBody, readLinkUrl } from './schemas';
 
 /** The one job type this service registers. One poll job per feed, and never a second (16c). */
 export const FEED_POLL_JOB_TYPE = 'marketing.feeds.poll';
+
+const POLL_POLICY: RowJobPolicy = { type: FEED_POLL_JOB_TYPE, key: 'feedId' };
+
+/**
+ * Entries turned into drafts in one pass.
+ *
+ * A bound rather than "all of them" because a first poll of a busy feed can carry hundreds,
+ * and a worker holding a transaction open across all of them is the lock 12.1's lease reaper
+ * then has to clean up after. What is left over is drafted on the next poll — the entry rows
+ * are already stored, so nothing is lost by waiting.
+ */
+const DRAFTS_PER_PASS = 100;
 
 /** How often a healthy feed is re-read. */
 export const FEED_POLL_INTERVAL_MS = 30 * 60 * 1000;
@@ -63,17 +85,13 @@ export class ContentFeedsService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.queue.registerHandler(FEED_POLL_JOB_TYPE, async (job) => {
-      const feedId = job.payload['feedId'];
-      if (typeof feedId === 'string') await this.pollFeed(feedId);
-    });
-
-    if (process.env.NODE_ENV === 'test') return;
-
-    void this.ensureScheduled().catch((err: unknown) => {
-      this.logger.error(
-        `Could not schedule feed polling: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    registerRowPoller({
+      queue: this.queue,
+      policy: POLL_POLICY,
+      logger: this.logger,
+      run: (feedId) => this.pollFeed(feedId),
+      scheduleAll: () => this.ensureScheduled(),
+      describe: 'feed polling',
     });
   }
 
@@ -94,7 +112,7 @@ export class ContentFeedsService implements OnModuleInit {
   }
 
   async createFeed(input: Valid<typeof CreateContentFeedBody>): Promise<ContentFeedSummary> {
-    await this.requireBrand(input.brandId);
+    await requireBrand(this.prisma, input.brandId);
 
     // 14-17.0e: a plain count check, refusing with a message rather than silently. A list of
     // operator-supplied URLs with no ceiling is a small DoS engine pointed at a third party.
@@ -195,35 +213,21 @@ export class ContentFeedsService implements OnModuleInit {
    * no `setInterval` beside the queue.
    */
   async enqueuePoll(feedId: string, scheduledAt: Date): Promise<void> {
-    const live = await this.prisma.marketingJob.findFirst({
-      where: {
-        type: FEED_POLL_JOB_TYPE,
-        status: { in: ['PENDING', 'PROCESSING'] },
-        payload: { path: ['feedId'], equals: feedId },
-      },
-      select: { id: true },
-    });
-    if (live) return;
-
-    await this.queue.schedule({ type: FEED_POLL_JOB_TYPE, payload: { feedId }, scheduledAt });
+    await enqueueOnePerRow(this.prisma, this.queue, POLL_POLICY, feedId, scheduledAt);
   }
 
   /** At boot: every active feed gets a poller if it does not already have one. */
   async ensureScheduled(): Promise<void> {
-    const feeds = await this.tenancy.withoutCompanyScope(
+    await scheduleEveryRow(
+      this.tenancy,
       'marketing.feeds.enumerate_active_feeds_to_schedule_polling',
-      async () =>
+      () =>
         this.prisma.contentFeed.findMany({
           where: { status: 'ACTIVE' },
-          select: { id: true, companyId: true },
+          select: SCHEDULER_SELECT,
         }),
+      (feedId) => this.enqueuePoll(feedId, new Date(Date.now() + FEED_POLL_INTERVAL_MS)),
     );
-
-    for (const feed of feeds) {
-      await this.tenancy.runInCompany({ companyId: feed.companyId, grants: 'all' }, async () => {
-        await this.enqueuePoll(feed.id, new Date(Date.now() + FEED_POLL_INTERVAL_MS));
-      });
-    }
   }
 
   /**
@@ -259,6 +263,10 @@ export class ContentFeedsService implements OnModuleInit {
       if (await this.ingestEntry(feed.brandId, feed.id, entry)) ingested += 1;
     }
 
+    // Storing the entry is only half of 16b: an entry nobody can act on is not a draft. This
+    // is the half that reaches a person.
+    const drafted = await this.draftWaitingEntries(feed.brandId, feed.id);
+
     await this.prisma.contentFeed.update({
       where: { id: feed.id },
       data: {
@@ -269,7 +277,10 @@ export class ContentFeedsService implements OnModuleInit {
       },
     });
 
-    this.logger.log(`Feed ${feed.id}: ${ingested} new draft(s) from ${parsed.feed.entries.length} entries`);
+    this.logger.log(
+      `Feed ${feed.id}: ${ingested} new entr(ies) from ${parsed.feed.entries.length}, ` +
+        `${drafted} drafted`,
+    );
     await this.enqueuePoll(feed.id, new Date(Date.now() + FEED_POLL_INTERVAL_MS));
   }
 
@@ -302,7 +313,9 @@ export class ContentFeedsService implements OnModuleInit {
           link: link.value,
           enclosureUrl: enclosure?.ok ? enclosure.value : null,
           publishedAt: entry.publishedAt ?? null,
-          status: 'DRAFT',
+          // Not `DRAFT` yet: a draft is a `ScheduledPost` a person can open, and there is no
+          // account to write one against until this brand has connected one.
+          status: 'AWAITING_ACCOUNT',
         }),
       });
       return true;
@@ -312,6 +325,77 @@ export class ContentFeedsService implements OnModuleInit {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return false;
       throw err;
     }
+  }
+
+  /**
+   * Every stored entry that has no draft yet becomes one (16b, 16h).
+   *
+   * A `DRAFT` `ScheduledPost` is what "lands as `DRAFT`" actually means — the row a person
+   * opens in the composer, schedules and publishes deliberately. Nothing here publishes: the
+   * status is `DRAFT`, never `SCHEDULED`, because "auto-enqueue into scheduling queues" plus
+   * at-least-once delivery is a double-publish generator and this module has shipped that bug
+   * once already.
+   *
+   * The idempotency is 16b's, moved onto the post: `(brandId, sourceFeedId, sourceEntryKey)`
+   * is unique, so a re-poll, a retry after the 12.1b fence rejects a stale worker, or a feed
+   * that renumbers its items can never produce a second post for the same entry. The
+   * constraint violation *is* the success path, here as at ingest.
+   *
+   * A brand with nothing connected keeps its entries and drafts them on a later poll, rather
+   * than dropping them or inventing an account to hang them on.
+   */
+  private async draftWaitingEntries(brandId: string, feedId: string): Promise<number> {
+    const waiting = await this.prisma.contentFeedEntry.findMany({
+      where: { brandId, feedId, status: 'AWAITING_ACCOUNT' },
+      orderBy: { fetchedAt: 'asc' },
+      ...boundedRead<Prisma.ContentFeedEntryFindManyArgs>(DRAFTS_PER_PASS),
+    });
+    if (waiting.length === 0) return 0;
+
+    // Whichever account the brand connected first: the person who opens the draft chooses the
+    // real channel and the real time. Picking one here is what makes the draft openable at all.
+    const account = await this.prisma.socialAccount.findFirst({
+      where: { brandId, status: 'active' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (!account) return 0;
+
+    let drafted = 0;
+    for (const entry of waiting) {
+      try {
+        await this.prisma.scheduledPost.create({
+          data: companyApplied<Prisma.ScheduledPostUncheckedCreateInput>({
+            brandId,
+            socialAccountId: account.id,
+            content: draftBodyOf(entry),
+            scheduledAt: new Date(),
+            status: 'DRAFT',
+            // 16h's provenance, as columns: a feed entry is somebody else's copyrighted text
+            // arriving on a path that ends at a publish button, and a draft that looks like
+            // original copy invites republishing it whole under the brand's name.
+            sourceFeedId: feedId,
+            sourceEntryKey: entry.entryKey,
+            sourceLink: entry.link,
+            sourceFetchedAt: entry.fetchedAt,
+          }),
+        });
+        drafted += 1;
+      } catch (err: unknown) {
+        // The unique index answered: this entry already has its draft. Fall through and mark
+        // the entry, because the invariant it records is true either way.
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+          throw err;
+        }
+      }
+
+      await this.prisma.contentFeedEntry.update({
+        where: { id: entry.id },
+        data: { status: 'DRAFT' },
+      });
+    }
+
+    return drafted;
   }
 
   /** Backoff, then a visible disable — never a deletion of the operator's row (16f). */
@@ -344,16 +428,17 @@ export class ContentFeedsService implements OnModuleInit {
     await this.enqueuePoll(feed.id, new Date(Date.now() + delay));
   }
 
-  private async requireBrand(brandId: string): Promise<void> {
-    const brand = await this.prisma.marketingBrand.findFirst({ where: { id: brandId } });
-    if (!brand) {
-      throw new ApiException(
-        MARKETING_ERROR_CODES.brandNotFound,
-        'That brand does not exist.',
-        HttpStatus.NOT_FOUND,
-      );
-    }
-  }
+}
+
+/**
+ * What the draft says (16h).
+ *
+ * The stored excerpt and the canonical link, never a reproduction — the excerpt was already
+ * truncated at ingest, and the link is what a reader should be sent to. It is plain text on
+ * its way to a textarea; nothing renders it as markup anywhere (16d).
+ */
+function draftBodyOf(entry: { title: string; excerpt: string; link: string }): string {
+  return [entry.title, entry.excerpt, entry.link].filter((part) => part !== '').join('\n\n');
 }
 
 /**
@@ -439,6 +524,7 @@ function describeEntry(row: {
   enclosureUrl: string | null;
   publishedAt: Date | null;
   fetchedAt: Date;
+  status: string;
   feed?: { name: string };
 }): ContentFeedEntrySummary {
   return {
@@ -452,7 +538,9 @@ function describeEntry(row: {
     ...(row.enclosureUrl ? { enclosureUrl: row.enclosureUrl } : {}),
     ...(row.publishedAt ? { publishedAt: row.publishedAt.toISOString() } : {}),
     fetchedAt: row.fetchedAt.toISOString(),
-    status: 'DRAFT',
+    // The row's own value. `status` is a filterable field on this list, and a serialiser that
+    // hardcoded one of its two states made every `?filter.status=` answer the same list.
+    status: row.status as ContentFeedEntryStatus,
   };
 }
 

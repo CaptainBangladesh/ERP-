@@ -1666,7 +1666,7 @@ model SocialAccount {
 
   scheduledPosts        ScheduledPost[]
   socialMessages        SocialMessage[]
-  quotaReservation      SocialQuotaReservation?
+  quotaLedger           SocialQuotaLedger?
 
   @@unique([brandId, platform, platformAccountId])
   @@index([companyId])
@@ -1720,9 +1720,17 @@ model ScheduledPost {
   failureReason   String?        @map("failure_reason")
   externalPostId  String?        @map("external_post_id")
   metrics         Json?
+  /// Provenance for a draft an RSS feed produced (16h) — null on everything a person wrote.
+  /// `(brandId, sourceFeedId, sourceEntryKey)` is unique, which is what makes 16b's promise
+  /// ("never a second `ScheduledPost` for the same entry") a constraint rather than a hope.
+  sourceFeedId    String?        @map("source_feed_id") @db.Uuid
+  sourceEntryKey  String?        @map("source_entry_key")
+  sourceLink      String?        @map("source_link")
+  sourceFetchedAt DateTime?      @map("source_fetched_at")
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")
 
+  @@unique([brandId, sourceFeedId, sourceEntryKey])
   @@index([companyId])
   @@index([brandId])
   @@index([socialAccountId])
@@ -2239,8 +2247,9 @@ model ContentFeedEntry {
   enclosureUrl String?  @map("enclosure_url")
   publishedAt  DateTime? @map("published_at")
   fetchedAt    DateTime @default(now()) @map("fetched_at")
-  /// Always 'DRAFT'. Auto-publishing from a feed is out of scope, not a config flag (16b).
-  status       String   @default("DRAFT")
+  /// `AWAITING_ACCOUNT` until a `DRAFT` ScheduledPost exists for it, then `DRAFT` (16b).
+  /// Never anything else: auto-publishing from a feed is out of scope, not a config flag.
+  status       String   @default("AWAITING_ACCOUNT")
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@unique([brandId, feedId, entryKey])
@@ -2304,23 +2313,30 @@ model CompetitorSnapshot {
   @@map("competitor_snapshots")
 }
 
-/// The reservation counter competitor reads draw on before calling a network (15b, 15e).
+/// The half of the publishing ledger that is not a post (15b, 15e).
 ///
 /// Benchmarking spends the *publishing* quota, because Meta and X count both against the same
-/// limit. A background poll that read a balance and then spent it would have the same
-/// two-concurrent-readers hole 14p was written to close, so `reserved` is a real column moved
-/// by a conditional `UPDATE ... WHERE reserved <= headroom` whose zero-rows answer is the
-/// refusal. `windowStartedAt` is what makes the counter roll rather than accumulate forever.
-model SocialQuotaReservation {
+/// limit — so `publishing-quota.ts` adds `competitorReads` in the live window to the posts it
+/// counts, and the guard that refuses a publish, the number on the account screen and the
+/// reservation a snapshot takes are all reading one total. The predecessor of this table was a
+/// second counter no publishing path ever read, which is a ledger only in name.
+///
+/// `competitorReads` is a real column moved by a conditional `UPDATE ... WHERE
+/// competitor_reads < headroom` whose zero-rows answer is the refusal, because a background
+/// poll that read a balance and then spent it would have the same two-concurrent-readers hole
+/// 14p was written to close. `windowStartedAt` is what makes the counter roll rather than
+/// accumulate forever, and it is seeded at *now* — seeded a window in the past, the very next
+/// roll would reset the reservation that had just been taken.
+model SocialQuotaLedger {
   id              String   @id @default(uuid()) @db.Uuid
   companyId       String   @map("company_id") @db.Uuid
   socialAccountId String   @unique @map("social_account_id") @db.Uuid
   socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
   windowStartedAt DateTime @map("window_started_at")
-  reserved        Int      @default(0)
+  competitorReads Int      @default(0) @map("competitor_reads")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@index([companyId])
-  @@map("social_quota_reservations")
+  @@map("social_quota_ledger")
 }

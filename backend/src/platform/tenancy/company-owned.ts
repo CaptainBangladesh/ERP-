@@ -268,7 +268,7 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
    * `RetentionService`, and `immutable` refuses delete as well as update.
    */
   CompetitorSnapshot: { kind: 'company-owned' },
-  SocialQuotaReservation: { kind: 'company-owned' },
+  SocialQuotaLedger: { kind: 'company-owned' },
 };
 
 /**

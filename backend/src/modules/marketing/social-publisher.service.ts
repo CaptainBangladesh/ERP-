@@ -20,7 +20,7 @@ import { defined } from '../../prisma/columns';
 import { SocialAdapterResolver } from './adapters/social-adapter.resolver';
 import { CryptoService } from './crypto.service';
 import { IJobQueue, JOB_QUEUE_TOKEN } from './job-queue.interface';
-import { countAgainstQuota, publishingWindowFor } from './publishing-quota';
+import { publishingWindowFor, quotaSpentInWindow } from './publishing-quota';
 import {
   CreateScheduledPostBody,
   POST_LIST,
@@ -561,6 +561,10 @@ export class SocialPublisherService implements OnModuleInit {
     failureReason: string | null;
     externalPostId: string | null;
     metrics: Prisma.JsonValue | null;
+    sourceFeedId?: string | null;
+    sourceEntryKey?: string | null;
+    sourceLink?: string | null;
+    sourceFetchedAt?: Date | null;
     createdAt: Date;
     updatedAt: Date;
     socialAccount?: {
@@ -591,6 +595,18 @@ export class SocialPublisherService implements OnModuleInit {
       failureReason: row.failureReason,
       externalPostId: row.externalPostId,
       metrics: (row.metrics as Record<string, unknown>) ?? null,
+      // Present only on a draft an RSS feed produced (16h). The composer renders the source
+      // link beside it, so nobody publishes somebody else's writing thinking it is their own.
+      ...(row.sourceFeedId && row.sourceEntryKey && row.sourceLink && row.sourceFetchedAt
+        ? {
+            source: {
+              feedId: row.sourceFeedId,
+              entryKey: row.sourceEntryKey,
+              link: row.sourceLink,
+              fetchedAt: row.sourceFetchedAt.toISOString(),
+            },
+          }
+        : {}),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -612,11 +628,9 @@ export class SocialPublisherService implements OnModuleInit {
     const window = publishingWindowFor(platform);
     if (!window) return;
 
-    const spent = await countAgainstQuota(
-      this.prisma.scheduledPost,
-      socialAccountId,
-      window.windowSeconds,
-    );
+    // Posts *and* competitor reads: Meta and X count a profile read against the same limit as
+    // a post (15b), so a benchmarking poll that ran this morning is already in this number.
+    const spent = await quotaSpentInWindow(this.prisma, socialAccountId, window);
 
     if (spent >= window.cap) {
       throw new ApiException(

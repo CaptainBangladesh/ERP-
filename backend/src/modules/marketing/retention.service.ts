@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { InjectPrisma, type ScopedPrisma, Tenancy } from '../../platform/tenancy';
+import { boundedRead } from './bounded-read';
 import { PostgresJobQueueService } from './postgres-job-queue.service';
 
 /** The job type, and the only handler this service registers. */
@@ -140,7 +141,7 @@ export class RetentionService implements OnModuleInit {
       where: { timestamp: { lt: cutoff } },
       orderBy: { timestamp: 'asc' },
       select: { id: true },
-      ...batchOf(PURGE_BATCH),
+      ...boundedRead<Prisma.PageViewEventFindManyArgs>(PURGE_BATCH),
     });
 
     let removed = 0;
@@ -180,7 +181,7 @@ export class RetentionService implements OnModuleInit {
       where: { capturedAt: { lt: cutoff } },
       orderBy: { capturedAt: 'asc' },
       select: { id: true },
-      ...snapshotBatchOf(PURGE_BATCH),
+      ...boundedRead<Prisma.CompetitorSnapshotFindManyArgs>(PURGE_BATCH),
     });
 
     if (expiring.length === 0) return;
@@ -193,21 +194,4 @@ export class RetentionService implements OnModuleInit {
       `Purged ${result.count} competitor snapshot(s) older than ${cutoff.toISOString()}`,
     );
   }
-}
-
-/** The same bounded-read declaration as `batchOf`, for the snapshot table. */
-function snapshotBatchOf(count: number): Pick<Prisma.CompetitorSnapshotFindManyArgs, 'take'> {
-  const args: Pick<Prisma.CompetitorSnapshotFindManyArgs, 'take'> = {};
-  args['take'] = count;
-  return args;
-}
-
-/**
- * A bounded read that is not a paged list — see the same helper in `smart-links.service.ts`.
- * The conformance pack refuses a bare `take:`, and this says which of the two it is.
- */
-function batchOf(count: number): Pick<Prisma.PageViewEventFindManyArgs, 'take'> {
-  const args: Pick<Prisma.PageViewEventFindManyArgs, 'take'> = {};
-  args['take'] = count;
-  return args;
 }

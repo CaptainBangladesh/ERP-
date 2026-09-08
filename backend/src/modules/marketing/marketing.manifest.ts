@@ -70,7 +70,7 @@ export const manifest: ModuleManifest = {
     'ContentFeedEntry',
     'Competitor',
     'CompetitorSnapshot',
-    'SocialQuotaReservation',
+    'SocialQuotaLedger',
   ],
 
   permissions: [

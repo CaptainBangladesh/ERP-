@@ -321,6 +321,27 @@ export function PublishingManager({ brand }: PublishingManagerProps) {
                       <tr key={post.id} className="hover:bg-slate-50 transition">
                         <td className="px-4 py-3 max-w-xs">
                           <p className="line-clamp-2 font-medium text-slate-900">{post.content}</p>
+                          {/*
+                            16h: a draft an RSS feed produced carries its provenance, and the
+                            composer renders the source link beside it. A feed entry is
+                            somebody else's copyrighted text arriving on a path that ends at a
+                            publish button — a draft that looks like original copy is how it
+                            gets republished whole under the brand's name.
+                          */}
+                          {post.source && (
+                            <p className="mt-0.5 text-[11px] text-slate-500">
+                              From a feed ·{' '}
+                              <a
+                                className="underline"
+                                href={post.source.link}
+                                rel="noreferrer noopener nofollow"
+                                target="_blank"
+                              >
+                                source
+                              </a>{' '}
+                              · fetched {new Date(post.source.fetchedAt).toLocaleDateString()}
+                            </p>
+                          )}
                           {post.externalPostId && (
                             <span className="text-[10px] text-blue-600 font-mono">
                               Ext ID: {post.externalPostId}

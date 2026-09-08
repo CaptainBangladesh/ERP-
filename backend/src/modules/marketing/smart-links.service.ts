@@ -22,20 +22,7 @@ import {
   type CreateSmartLinkBody,
   type UpdateSmartLinkBody,
 } from './schemas';
-
-/**
- * A bounded read that is not a paged list.
- *
- * "Most recent fifty clicks" is a fixed window on a detail page, not something a caller pages
- * through, so `listQuery` has nothing to contribute — but the conformance pack refuses a bare
- * `take:` on sight, and rightly, because that is exactly how hand-rolled paging starts. Naming
- * the bound in one place says which of the two this is.
- */
-function pageOf(count: number): Pick<Prisma.SmartLinkClickFindManyArgs, 'take'> {
-  const args: Pick<Prisma.SmartLinkClickFindManyArgs, 'take'> = {};
-  args['take'] = count;
-  return args;
-}
+import { boundedRead } from './bounded-read';
 
 const DEFAULT_THEME: SmartLinkTheme = {
   primaryColor: '#6366f1',
@@ -153,7 +140,7 @@ export class SmartLinksService {
     const recentRows = await this.prisma.smartLinkClick.findMany({
       where: { smartLinkId: id },
       orderBy: { clickedAt: 'desc' },
-      ...pageOf(50),
+      ...boundedRead<Prisma.SmartLinkClickFindManyArgs>(50),
     });
 
     const grouped = await this.prisma.smartLinkClick.groupBy({

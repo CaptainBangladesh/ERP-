@@ -12,6 +12,7 @@ import {
 import { ApiException } from '../../http/api-exception';
 import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/tenancy';
 import { IJobQueue, JOB_QUEUE_TOKEN } from './job-queue.interface';
+import { boundedRead } from './bounded-read';
 
 /** The job type, and the only handler this service registers. */
 export const BEST_TIME_JOB_TYPE = 'marketing.insights.best_times';
@@ -274,7 +275,7 @@ export class InsightsService implements OnModuleInit {
       where,
       select: { publishedAt: true, metrics: true },
       orderBy: { publishedAt: 'desc' },
-      ...boundedTo(5_000),
+      ...boundedRead<Prisma.ScheduledPostFindManyArgs>(5_000),
     });
 
     const sample: Array<{ publishedAt: Date; engagement: number }> = [];
@@ -440,16 +441,6 @@ function globalBuckets(platform: SocialPlatform): PostingTimeBucket[] {
     });
   }
   return buckets;
-}
-
-/**
- * A bounded read that is not a paged list — the same helper `retention.service.ts` uses.
- * The conformance pack refuses a bare `take:`, and this says which of the two it is.
- */
-function boundedTo(count: number): Pick<Prisma.ScheduledPostFindManyArgs, 'take'> {
-  const args: Pick<Prisma.ScheduledPostFindManyArgs, 'take'> = {};
-  args['take'] = count;
-  return args;
 }
 
 function brandNotFound(): ApiException {

@@ -17,6 +17,7 @@ import {
   SMART_LINK_COLOR_PATTERN,
   SMART_LINK_FONT_FAMILIES,
   SMART_LINK_URL_SCHEMES,
+  COMPETITOR_HANDLE_RULES,
   isCompetitorHandle,
   MARKETING_ERROR_CODES,
   type AutolistRepeatMode,
@@ -1463,19 +1464,23 @@ export const CONTENT_FEED_ENTRY_LIST: ListSpec = {
 };
 
 /**
- * A competitor handle (15d).
+ * A competitor handle, shape-checked before the network is known (15d).
  *
  * An identifier, not a URL, and **rejected** rather than sanitized when it is not one: a
  * "handle" field that quietly accepts `https://…` is how the scraper path 15a closed reopens
  * as a convenience. A leading `@` is the one thing trimmed, because that is how every network
  * writes a handle on screen and nobody means it as part of the identifier.
+ *
+ * This pass only bounds the field and strips the `@`; the charset and length that actually
+ * decide are the *network's*, applied below once both values are in hand. Two passes rather
+ * than one because a field rule cannot see a sibling field, and 15d's rule is about the pair.
  */
 const COMPETITOR_HANDLE = rule<string>('Enter the competitor handle.', (value) => {
   const raw = typeof value === 'string' ? value.trim().replace(/^@/, '') : '';
-  if (!isCompetitorHandle(raw)) {
+  if (raw === '' || raw.length > 253) {
     return refused(
-      'A handle is the name on the profile — letters, digits, dots, dashes and underscores. ' +
-        'Not a link: this reads the network’s own API, it does not visit pages.',
+      'A handle is the name on the profile — not a link: this reads the network’s own API, ' +
+        'it does not visit pages.',
     );
   }
   return accepted(raw);
@@ -1498,6 +1503,20 @@ export const CreateCompetitorBody = validator({
       tooLong: 'Use 120 characters or fewer.',
     }),
   ),
+}).and((values, report) => {
+  // 15d: "validated **per network**". One union of every network's charset accepts `a.b-c` on
+  // X, where dots and dashes are not legal at all, and calls that validated — so each network
+  // brings its own rule and a handle that fails it is refused rather than trimmed into shape.
+  const { network, handle } = values;
+  if (network === undefined || handle === undefined) return;
+
+  if (!isCompetitorHandle(network, handle)) {
+    report(
+      'handle',
+      `A ${network} handle is ${COMPETITOR_HANDLE_RULES[network].describes}. ` +
+        'Not a link: this reads the network’s own API, it does not visit pages.',
+    );
+  }
 });
 
 export const COMPETITOR_LIST: ListSpec = {

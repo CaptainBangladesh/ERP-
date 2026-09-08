@@ -455,8 +455,26 @@ export interface ScheduledPostSummary {
   failureReason: string | null;
   externalPostId: string | null;
   metrics: Record<string, unknown> | null;
+  /** Present only on a draft an RSS feed produced (16h). */
+  source?: ScheduledPostSource;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Where a draft came from, when it is somebody else's writing (16h).
+ *
+ * A feed entry is copyrighted text arriving on a path that ends at a publish button, so a
+ * draft that looks like original copy invites republishing it whole under the brand's name.
+ * These four values are columns rather than a note in the body: the composer renders the
+ * source link beside the draft, and `feedId` + `entryKey` are the pair the unique index uses
+ * to guarantee one draft per entry (16b).
+ */
+export interface ScheduledPostSource {
+  readonly feedId: string;
+  readonly entryKey: string;
+  readonly link: string;
+  readonly fetchedAt: string;
 }
 
 export type ScheduledPostResponse = ScheduledPostSummary;
@@ -646,10 +664,17 @@ export const MARKETING_ERROR_CODES = {
   externalSourceLimitReached: 'external_source_limit_reached',
   competitorNotFound: 'competitor_not_found',
   competitorAlreadyExists: 'competitor_already_exists',
-  /** No connected account for that network on this brand — never an app-level token (15b). */
+  /**
+   * No connected account for that network on this brand (15b).
+   *
+   * Thrown when an operator asks for a snapshot by hand, because that question has an answer
+   * they can act on — connect the account. The *scheduled* poll has no caller to refuse, so it
+   * records `no_connected_account` as an outcome instead. There is deliberately no companion
+   * code for the quota floor: 15e settles an exhausted benchmark budget as "snapshot skipped,
+   * quota reserved for publishing" — an outcome, not a failure — so a code for it would be a
+   * name nothing is ever allowed to throw.
+   */
   competitorAccountMissing: 'competitor_account_missing',
-  /** The window's publishing floor is reserved; a benchmark read may not draw on it (15e). */
-  competitorQuotaReserved: 'competitor_quota_reserved',
 } as const;
 
 // ─── External content sources (ticket 15) ─────────────────────────────────────────
@@ -737,8 +762,18 @@ export interface ContentFeedEntrySummary {
   readonly enclosureUrl?: string;
   readonly publishedAt?: string;
   readonly fetchedAt: string;
-  readonly status: 'DRAFT';
+  readonly status: ContentFeedEntryStatus;
 }
+
+/**
+ * Where an ingested entry has got to on its way to a person (16b).
+ *
+ * Two states, because the draft an entry becomes needs an account to be drafted *against*:
+ * a brand that has connected nothing yet still ingests, and the entry waits rather than
+ * disappearing. Neither state publishes anything — that is the whole point of 16b.
+ */
+export const CONTENT_FEED_ENTRY_STATUSES = ['AWAITING_ACCOUNT', 'DRAFT'] as const;
+export type ContentFeedEntryStatus = (typeof CONTENT_FEED_ENTRY_STATUSES)[number];
 
 export type ContentFeedEntryListResponse = ListResponse<ContentFeedEntrySummary>;
 
@@ -774,22 +809,54 @@ export interface CompetitorSnapshotSummary {
   readonly captureDate: string;
   readonly followerCount?: number;
   readonly postCount?: number;
-  readonly engagementRate?: number;
+  /**
+   * A canonical decimal **string**, never a JS `number`.
+   *
+   * The column is `numeric(8,4)` and a JSON number is an IEEE 754 double, so the conversion
+   * that looks harmless here is the one `docs/api-conventions.md` forbids at every layer. It
+   * crosses the boundary as text — `Prisma.Decimal.toFixed()` out, rendered as-is — and never
+   * through `Number(…)` or `toString()`, which prints large decimals in exponential notation.
+   */
+  readonly engagementRate?: string;
   readonly capturedAt: string;
 }
 
 export type CompetitorSnapshotListResponse = ListResponse<CompetitorSnapshotSummary>;
 
 /**
- * A handle's shape, per 15d — letters, digits, `_`, `.`, `-`, and nothing else.
+ * A handle's shape, **per network** (15d).
+ *
+ * One global pattern was the wrong shape for this rule: 15d says "validated per network
+ * against a conservative charset and length", and the networks genuinely disagree — Instagram
+ * allows dots and 30 characters, X allows neither dots nor dashes and stops at 15, LinkedIn's
+ * vanity name is dashed and never dotted. A single union of all of them accepts `a.b-c` on X,
+ * which the network itself will reject, and calls it validated.
  *
  * Rejected rather than sanitized when it fails, because "sanitize a handle" is how a field
- * that quietly accepts `https://…` reopens the scraper path 15a closed.
+ * that quietly accepts `https://…` reopens the scraper path 15a closed. No rule here admits
+ * `:`, `/`, whitespace or a scheme on any network, which is the invariant 15d is really after.
  */
-export const COMPETITOR_HANDLE_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+export interface CompetitorHandleRule {
+  readonly pattern: RegExp;
+  /** How this network writes a handle, for the refusal message. */
+  readonly describes: string;
+}
 
-export function isCompetitorHandle(value: string): boolean {
-  return COMPETITOR_HANDLE_PATTERN.test(value);
+export const COMPETITOR_HANDLE_RULES: Record<SocialPlatform, CompetitorHandleRule> = {
+  instagram: { pattern: /^[A-Za-z0-9._]{1,30}$/, describes: 'letters, digits, dots and underscores, up to 30 characters' },
+  facebook: { pattern: /^[A-Za-z0-9.]{5,50}$/, describes: 'letters, digits and dots, 5 to 50 characters' },
+  tiktok: { pattern: /^[A-Za-z0-9._]{2,24}$/, describes: 'letters, digits, dots and underscores, 2 to 24 characters' },
+  linkedin: { pattern: /^[A-Za-z0-9-]{3,100}$/, describes: 'letters, digits and dashes, 3 to 100 characters' },
+  x: { pattern: /^[A-Za-z0-9_]{1,15}$/, describes: 'letters, digits and underscores, up to 15 characters' },
+  youtube: { pattern: /^[A-Za-z0-9._-]{3,30}$/, describes: 'letters, digits, dots, dashes and underscores, 3 to 30 characters' },
+  pinterest: { pattern: /^[A-Za-z0-9_]{3,30}$/, describes: 'letters, digits and underscores, 3 to 30 characters' },
+  threads: { pattern: /^[A-Za-z0-9._]{1,30}$/, describes: 'letters, digits, dots and underscores, up to 30 characters' },
+  bluesky: { pattern: /^[A-Za-z0-9.-]{3,253}$/, describes: 'a handle like `name.bsky.social` — letters, digits, dots and dashes' },
+  google_business: { pattern: /^[A-Za-z0-9._-]{1,64}$/, describes: 'letters, digits, dots, dashes and underscores' },
+};
+
+export function isCompetitorHandle(network: SocialPlatform, value: string): boolean {
+  return COMPETITOR_HANDLE_RULES[network].pattern.test(value);
 }
 
 // ─── Campaigns & UTM Tracking ──────────────────────────────────────────────────────

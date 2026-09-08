@@ -14,20 +14,36 @@ import { listQuery } from '../../platform/list';
 import { companyApplied, InjectPrisma, type ScopedPrisma, Tenancy } from '../../platform/tenancy';
 import type { Valid } from '../../platform/validation';
 import { SocialAdapterResolver } from './adapters/social-adapter.resolver';
+import { SocialRateLimitError } from './adapters/social-adapter.interface';
 import type { PublicProfileMetrics } from './adapters/social-adapter.interface';
+import { boundedRead } from './bounded-read';
 import { CryptoService } from './crypto.service';
 import { PostgresJobQueueService } from './postgres-job-queue.service';
 import {
   UNLIMITED_WINDOW,
-  competitorHeadroom,
-  countAgainstQuota,
   publishingWindowFor,
+  rateLimitBackoffMs,
+  releaseCompetitorRead,
+  reserveCompetitorRead,
   type PublishingWindow,
 } from './publishing-quota';
+import {
+  enqueueOnePerRow,
+  registerRowPoller,
+  requireBrand,
+  SCHEDULER_SELECT,
+  scheduleEveryRow,
+  type RowJobPolicy,
+} from './row-pollers';
 import { COMPETITOR_LIST, COMPETITOR_SNAPSHOT_LIST, CreateCompetitorBody } from './schemas';
 
 /** One snapshot job per competitor, on the queue that already exists (15f, 16c's pattern). */
 export const COMPETITOR_SNAPSHOT_JOB_TYPE = 'marketing.competitors.snapshot';
+
+const SNAPSHOT_POLICY: RowJobPolicy = {
+  type: COMPETITOR_SNAPSHOT_JOB_TYPE,
+  key: 'competitorId',
+};
 
 const A_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -38,6 +54,7 @@ export type SnapshotOutcome =
   | 'unsupported_network'
   | 'no_connected_account'
   | 'quota_reserved_for_publishing'
+  | 'rate_limited'
   | 'network_error';
 
 /**
@@ -68,20 +85,17 @@ export class CompetitorsService implements OnModuleInit {
     private readonly crypto: CryptoService,
   ) {}
 
+  /** What a vendor's last `429` asked us to wait, when it asked for anything usable (15f). */
+  private lastRetryAfterSeconds?: number;
+
   onModuleInit(): void {
-    this.queue.registerHandler(COMPETITOR_SNAPSHOT_JOB_TYPE, async (job) => {
-      const competitorId = job.payload['competitorId'];
-      if (typeof competitorId === 'string') await this.captureSnapshot(competitorId);
-    });
-
-    if (process.env.NODE_ENV === 'test') return;
-
-    void this.ensureScheduled().catch((err: unknown) => {
-      this.logger.error(
-        `Could not schedule competitor snapshots: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+    registerRowPoller({
+      queue: this.queue,
+      policy: SNAPSHOT_POLICY,
+      logger: this.logger,
+      run: (competitorId) => this.captureSnapshot(competitorId),
+      scheduleAll: () => this.ensureScheduled(),
+      describe: 'competitor snapshots',
     });
   }
 
@@ -102,7 +116,7 @@ export class CompetitorsService implements OnModuleInit {
   }
 
   async createCompetitor(input: Valid<typeof CreateCompetitorBody>): Promise<CompetitorSummary> {
-    await this.requireBrand(input.brandId);
+    await requireBrand(this.prisma, input.brandId);
 
     // 14-17.0e's other half: a plain count check at create time, refusing with a message.
     const existing = await this.prisma.competitor.count({ where: { brandId: input.brandId } });
@@ -145,13 +159,32 @@ export class CompetitorsService implements OnModuleInit {
     await this.prisma.competitor.delete({ where: { id: competitor.id } });
   }
 
-  /** "Snapshot now" enqueues; the network call happens on the queue, as everything does. */
+  /**
+   * "Snapshot now" enqueues; the network call happens on the queue, as everything does.
+   *
+   * The one thing it answers immediately is 15b's authorization question: a brand with no
+   * connected account on that network can never produce a snapshot, and saying so to the
+   * person who asked beats enqueueing a job that records `no_connected_account` where nobody
+   * is looking. The *scheduled* poll has no caller to refuse and so keeps the outcome. There
+   * is deliberately no companion refusal for the quota floor: 15e settles that case as
+   * "snapshot skipped, quota reserved for publishing" — an outcome, not a failure.
+   */
   async requestSnapshot(id: string): Promise<CompetitorSummary> {
     const competitor = await this.prisma.competitor.findFirst({
       where: { id },
       include: { snapshots: latestSnapshotOnly() },
     });
     if (!competitor) throw competitorNotFound();
+
+    const account = await this.connectedAccount(competitor.brandId, competitor.network);
+    if (!account) {
+      throw new ApiException(
+        MARKETING_ERROR_CODES.competitorAccountMissing,
+        `Connect this brand's ${competitor.network} account first — a competitor read is ` +
+          'authorized and metered as that account, never as an app-level token.',
+        HttpStatus.CONFLICT,
+      );
+    }
 
     await this.enqueueSnapshot(competitor.id, new Date());
     return this.describeCompetitor(competitor);
@@ -174,37 +207,16 @@ export class CompetitorsService implements OnModuleInit {
 
   /** 16c's pattern, applied to competitors: one live job per row, never N per deploy. */
   async enqueueSnapshot(competitorId: string, scheduledAt: Date): Promise<void> {
-    const live = await this.prisma.marketingJob.findFirst({
-      where: {
-        type: COMPETITOR_SNAPSHOT_JOB_TYPE,
-        status: { in: ['PENDING', 'PROCESSING'] },
-        payload: { path: ['competitorId'], equals: competitorId },
-      },
-      select: { id: true },
-    });
-    if (live) return;
-
-    await this.queue.schedule({
-      type: COMPETITOR_SNAPSHOT_JOB_TYPE,
-      payload: { competitorId },
-      scheduledAt,
-    });
+    await enqueueOnePerRow(this.prisma, this.queue, SNAPSHOT_POLICY, competitorId, scheduledAt);
   }
 
   async ensureScheduled(): Promise<void> {
-    const competitors = await this.tenancy.withoutCompanyScope(
+    await scheduleEveryRow(
+      this.tenancy,
       'marketing.competitors.enumerate_rows_to_schedule_snapshots',
-      async () => this.prisma.competitor.findMany({ select: { id: true, companyId: true } }),
+      () => this.prisma.competitor.findMany({ select: SCHEDULER_SELECT }),
+      (competitorId) => this.enqueueSnapshot(competitorId, new Date(Date.now() + A_DAY_MS)),
     );
-
-    for (const competitor of competitors) {
-      await this.tenancy.runInCompany(
-        { companyId: competitor.companyId, grants: 'all' },
-        async () => {
-          await this.enqueueSnapshot(competitor.id, new Date(Date.now() + A_DAY_MS));
-        },
-      );
-    }
   }
 
   /**
@@ -220,11 +232,25 @@ export class CompetitorsService implements OnModuleInit {
     if (!competitor) return 'network_error';
 
     const network = competitor.network as SocialPlatform;
-    const outcome = await this.snapshotOnce(competitor.id, competitor.brandId, network, competitor.handle);
+    const window = publishingWindowFor(network) ?? UNLIMITED_WINDOW;
+    const outcome = await this.snapshotOnce(
+      competitor.id,
+      competitor.brandId,
+      network,
+      competitor.handle,
+      window,
+    );
 
     // A network with no endpoint is not retried daily for an answer that will not change.
     if (outcome !== 'unsupported_network') {
-      await this.enqueueSnapshot(competitor.id, new Date(Date.now() + A_DAY_MS));
+      // 15f: the throttled token belongs to the brand's real publishing account, so the next
+      // window comes from the limiter this module already owns rather than from a flat day
+      // somebody typed at the call site.
+      const delay =
+        outcome === 'rate_limited'
+          ? Math.max(A_DAY_MS, rateLimitBackoffMs(window, this.lastRetryAfterSeconds))
+          : A_DAY_MS;
+      await this.enqueueSnapshot(competitor.id, new Date(Date.now() + delay));
     }
 
     this.logger.log(`Competitor ${competitor.id} (${network}): ${outcome}`);
@@ -236,17 +262,16 @@ export class CompetitorsService implements OnModuleInit {
     brandId: string,
     network: SocialPlatform,
     handle: string,
+    window: PublishingWindow,
   ): Promise<SnapshotOutcome> {
-    // 15b: by `(companyId, brandId, network)` — the company comes from the scoped client, so
-    // there is no id-only lookup here and no path to another tenant's token.
-    const account = await this.prisma.socialAccount.findFirst({
-      where: { brandId, platform: network, status: 'active' },
-    });
+    this.lastRetryAfterSeconds = undefined;
+
+    const account = await this.connectedAccount(brandId, network);
     if (!account) return 'no_connected_account';
 
-    const window = publishingWindowFor(network) ?? UNLIMITED_WINDOW;
-
-    const reserved = await this.reserve(account.id, window);
+    // 15b/15e: committed *before* the adapter call, against the ledger publishing draws on,
+    // by a conditional update whose zero-rows answer is the refusal.
+    const reserved = await reserveCompetitorRead(this.prisma, account.id, window);
     if (!reserved) return 'quota_reserved_for_publishing';
 
     let metrics: PublicProfileMetrics | undefined;
@@ -259,14 +284,21 @@ export class CompetitorsService implements OnModuleInit {
         },
         handle,
       });
-    } catch {
-      // The reservation comes back: a vendor outage must not eat the brand's publish budget.
-      await this.release(account.id);
+    } catch (err: unknown) {
+      if (err instanceof SocialRateLimitError) {
+        // The request reached the platform and the platform counted it — exactly as a `FAILED`
+        // post that got as far as the network is counted — so the reservation stands.
+        this.lastRetryAfterSeconds = err.retryAfterSeconds;
+        return 'rate_limited';
+      }
+
+      // Otherwise the reservation comes back: a vendor outage must not eat the publish budget.
+      await releaseCompetitorRead(this.prisma, account.id);
       return 'network_error';
     }
 
     if (!metrics) {
-      await this.release(account.id);
+      await releaseCompetitorRead(this.prisma, account.id);
       return 'unsupported_network';
     }
 
@@ -294,68 +326,16 @@ export class CompetitorsService implements OnModuleInit {
   }
 
   /**
-   * Reserve one unit of the brand's publishing window, or refuse (15e).
+   * The brand's own connected account for this network (15b).
    *
-   * The refusal is a zero-rows-affected conditional update and not a read followed by a
-   * decision — that difference is the whole of 14p. The floor is what keeps an unattended
-   * benchmark poll from eating the budget a 9am scheduled post needs.
+   * By `(companyId, brandId, network)` and never by id alone: the company comes from the
+   * scoped client, so there is no id-only lookup anywhere on this path, no route to another
+   * tenant's token, and no fallback to an app-level one.
    */
-  private async reserve(socialAccountId: string, window: PublishingWindow): Promise<boolean> {
-    const now = Date.now();
-    const windowStart = new Date(now - window.windowSeconds * 1000);
-
-    const published = await countAgainstQuota(
-      this.prisma.scheduledPost,
-      socialAccountId,
-      window.windowSeconds,
-      now,
-    );
-
-    const headroom = competitorHeadroom(window, published);
-    if (headroom <= 0) return false;
-
-    await this.ensureCounter(socialAccountId, windowStart);
-
-    // Roll the window first, so yesterday's reservations do not count against today.
-    await this.prisma.socialQuotaReservation.updateMany({
-      where: { socialAccountId, windowStartedAt: { lt: windowStart } },
-      data: { windowStartedAt: new Date(now), reserved: 0 },
+  private async connectedAccount(brandId: string, network: string) {
+    return this.prisma.socialAccount.findFirst({
+      where: { brandId, platform: network, status: 'active' },
     });
-
-    const claimed = await this.prisma.socialQuotaReservation.updateMany({
-      where: { socialAccountId, reserved: { lt: headroom } },
-      data: { reserved: { increment: 1 } },
-    });
-
-    return claimed.count > 0;
-  }
-
-  /** Reconcile to zero: the call did not reach the network, so nothing was spent. */
-  private async release(socialAccountId: string): Promise<void> {
-    await this.prisma.socialQuotaReservation.updateMany({
-      where: { socialAccountId, reserved: { gt: 0 } },
-      data: { reserved: { decrement: 1 } },
-    });
-  }
-
-  private async ensureCounter(socialAccountId: string, windowStart: Date): Promise<void> {
-    const existing = await this.prisma.socialQuotaReservation.findFirst({
-      where: { socialAccountId },
-      select: { id: true },
-    });
-    if (existing) return;
-
-    try {
-      await this.prisma.socialQuotaReservation.create({
-        data: companyApplied<Prisma.SocialQuotaReservationUncheckedCreateInput>({
-          socialAccountId,
-          windowStartedAt: windowStart,
-          reserved: 0,
-        }),
-      });
-    } catch {
-      // Two first reads of the window racing. The unique index decided; either row will do.
-    }
   }
 
   private describeCompetitor(row: {
@@ -391,33 +371,9 @@ export class CompetitorsService implements OnModuleInit {
    * cannot drift away from what the adapter actually implements.
    */
   private supportsProfileMetrics(network: SocialPlatform): boolean {
-    return PROFILE_METRIC_NETWORKS.has(network);
-  }
-
-  private async requireBrand(brandId: string): Promise<void> {
-    const brand = await this.prisma.marketingBrand.findFirst({ where: { id: brandId } });
-    if (!brand) {
-      throw new ApiException(
-        MARKETING_ERROR_CODES.brandNotFound,
-        'That brand does not exist.',
-        HttpStatus.NOT_FOUND,
-      );
-    }
+    return this.adapters.getAdapter(network).supportsProfileMetrics(network);
   }
 }
-
-/**
- * The networks whose official API exposes public profile metrics (15a).
- *
- * LinkedIn answers only for organizations the caller administers and TikTok's Display API only
- * for the authorized user's own account, so both store the row and render "not supported on
- * this network" — which is the settled answer, not a gap waiting for a scraper.
- */
-const PROFILE_METRIC_NETWORKS: ReadonlySet<SocialPlatform> = new Set<SocialPlatform>([
-  'instagram',
-  'facebook',
-  'x',
-]);
 
 /** Midnight UTC of the given instant — what makes "one per day" an index, not a convention. */
 export function utcDateOf(when: Date): Date {
@@ -443,9 +399,10 @@ function describeSnapshot(row: {
     ...(row.postCount !== null ? { postCount: row.postCount } : {}),
     // `toFixed`, never `toString`: a Prisma decimal stringifies in exponential notation past a
     // certain size, and a rate that reads `5e-2` on a chart is a rate nobody believes.
-    ...(row.engagementRate !== null
-      ? { engagementRate: Number(row.engagementRate.toFixed(4)) }
-      : {}),
+    // The canonical string, never `Number(…)`: the column is `numeric(8,4)`, and a decimal is
+    // not a JS number at any layer. `toFixed`, never `toString`, because decimal.js prints
+    // large values in exponential notation and `Decimal.parse` will not take one back.
+    ...(row.engagementRate !== null ? { engagementRate: row.engagementRate.toFixed(4) } : {}),
     capturedAt: row.capturedAt.toISOString(),
   };
 }
@@ -458,15 +415,7 @@ function competitorNotFound(): ApiException {
   );
 }
 
-/**
- * The newest snapshot only — a bounded read, not a page.
- *
- * Declared this way for the same reason `RetentionService.batchOf` is: the conformance pack
- * refuses a bare `take:` in a module because that is how hand-rolled paging gets in, and this
- * says which of the two it is.
- */
+/** The newest snapshot only — a bounded read, not a page. See `bounded-read.ts`. */
 function latestSnapshotOnly(): Prisma.Competitor$snapshotsArgs {
-  const args: Prisma.Competitor$snapshotsArgs = { orderBy: { captureDate: 'desc' } };
-  args['take'] = 1;
-  return args;
+  return boundedRead<Prisma.Competitor$snapshotsArgs>(1, { orderBy: { captureDate: 'desc' } });
 }
