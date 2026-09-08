@@ -1,9 +1,9 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import { MAILBOX_ERROR_CODES } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
-import { DevMailer, type MailMessage } from '../../platform/mail';
+import { DevMailer, SMTP_TIMEOUTS, type MailMessage } from '../../platform/mail';
 import { decryptSmtpPassword } from '../../platform/secrets';
 
 /**
@@ -64,6 +64,8 @@ export interface SmtpSettings {
 
 @Injectable()
 export class LiveMailboxSender extends MailboxSender {
+  private readonly logger = new Logger(LiveMailboxSender.name);
+
   async verifySmtp(settings: SmtpSettings): Promise<void> {
     const transport = smtpTransportFor(settings);
     try {
@@ -105,7 +107,12 @@ export class LiveMailboxSender extends MailboxSender {
         html: message.html,
       });
     } catch (cause) {
-      throw sendFailed(describeCause(cause));
+      this.logger.error(
+        `Failed to send "${message.subject}" to ${message.to} as ${mailbox.emailAddress} via ` +
+          `${mailbox.smtpHost}:${mailbox.smtpPort ?? 587}.`,
+        cause instanceof Error ? cause.stack : String(cause),
+      );
+      throw sendFailed(describeCause(cause, mailbox));
     } finally {
       transport.close();
     }
@@ -203,9 +210,36 @@ export function smtpTransportFor(mailbox: SmtpSettings): nodemailer.Transporter 
     secure: mailbox.smtpSecure ?? port === 465,
     auth: {
       user: mailbox.smtpUsername || mailbox.emailAddress,
-      pass: decryptSmtpPassword(mailbox.smtpPassword),
+      pass: storedPasswordOf(mailbox),
     },
+    ...SMTP_TIMEOUTS,
   });
+}
+
+/**
+ * The mailbox's password, or a refusal that says why it could not be read.
+ *
+ * `decryptSmtpPassword` throws a bare `Error` for a value the key will not open, and a bare
+ * error out of here becomes a 500 with no code on it — which every screen shows as "Something
+ * went wrong. Please try again.", the least useful sentence available for the one failure that
+ * has a precise cause and a precise fix.
+ *
+ * That cause is almost always a deployment: the row was encrypted under one `MAILBOX_SECRET`
+ * (or, unset, `SESSION_SECRET`) and is being read under another — which is exactly what
+ * happens when a hosted server shares a database with a laptop and the two hold different
+ * secrets. Reconnecting the mailbox re-encrypts it under the key the server actually has, so
+ * that is what the message says.
+ */
+function storedPasswordOf(mailbox: SmtpSettings): string {
+  try {
+    return decryptSmtpPassword(mailbox.smtpPassword!);
+  } catch {
+    throw sendFailed(
+      `The stored password for ${mailbox.emailAddress} could not be read on this server — ` +
+        'it was saved under a different encryption secret. Reconnect this mailbox to store it ' +
+        'again. Nothing was sent.',
+    );
+  }
 }
 
 /**
@@ -275,8 +309,33 @@ async function refreshGoogleAccessToken(refreshToken: string): Promise<string | 
   return tokens.access_token;
 }
 
-function describeCause(cause: unknown): string {
+/**
+ * What to tell somebody whose mail did not go out.
+ *
+ * "The mail server refused the message" is right for a 5xx from a host that answered and
+ * wrong for the failure this most often is on a hosting platform: nothing answered at all,
+ * because outbound SMTP is blocked there. Those two need different sentences — one is fixed
+ * by correcting the mailbox, the other only by the people who run the server — so the
+ * connection failures are named as connection failures rather than as a refusal.
+ */
+function describeCause(cause: unknown, mailbox: SmtpSettings): string {
   const detail = cause instanceof Error ? cause.message : String(cause);
+  const code = (cause as { code?: unknown })?.code;
+  const unreachable =
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ECONNRESET' ||
+    code === 'EDNS' ||
+    code === 'ESOCKET' ||
+    code === 'ENOTFOUND';
+
+  if (unreachable) {
+    return (
+      `Could not reach ${mailbox.smtpHost}:${mailbox.smtpPort ?? 587} from this server ` +
+      `(${detail}). Outbound SMTP may be blocked where this API is hosted. Nothing was sent.`
+    );
+  }
+
   return `The mail server refused the message: ${detail}`;
 }
 

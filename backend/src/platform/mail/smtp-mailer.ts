@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { Mailer, type MailMessage } from './mailer';
+import { SMTP_TIMEOUTS } from './smtp-timeouts';
 
 /**
  * Sends real internet emails using Nodemailer with SMTP credentials configured via environment variables:
@@ -34,6 +35,7 @@ export class SmtpMailer extends Mailer {
         port,
         secure,
         auth: user || pass ? { user, pass } : undefined,
+        ...SMTP_TIMEOUTS,
       });
       this.logger.log(`SMTP Mailer initialized using ${host}:${port}`);
     }

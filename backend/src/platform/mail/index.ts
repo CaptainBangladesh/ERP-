@@ -9,3 +9,4 @@ export { SmtpMailer } from './smtp-mailer';
 export { DeploymentMailer } from './deployment-mailer';
 export { UnconfiguredMailer } from './unconfigured-mailer';
 export { MailModule } from './mail.module';
+export { SMTP_TIMEOUTS } from './smtp-timeouts';

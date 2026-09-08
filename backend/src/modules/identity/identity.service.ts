@@ -329,11 +329,34 @@ export class IdentityService implements SessionAuthority {
       return undefined;
     });
 
-    if (!tokenResponse?.ok) {
-      const errBody = await tokenResponse?.text().catch(() => '');
+    if (!tokenResponse) {
+      throw googleExchangeFailed('this server could not reach Google');
+    }
+
+    if (!tokenResponse.ok) {
+      const errBody = await tokenResponse.text().catch(() => '');
+      const reason = googleErrorCode(errBody);
       // eslint-disable-next-line no-console
-      console.error('[Google OAuth Token Exchange Failure]:', tokenResponse?.status, errBody);
-      throw googleExchangeFailed(errBody);
+      console.error(
+        `[Google OAuth Token Exchange Failure] HTTP ${tokenResponse.status} for redirect_uri ` +
+          `${redirectUri}: ${errBody}`,
+      );
+
+      // `invalid_client` and `unauthorized_client` are not this user's failure and trying
+      // again cannot fix them: the client id and secret this deployment holds are not a pair
+      // Google recognises. Reported as the same "not configured on this server" the missing
+      // pair raises, so the sign-in screen says so instead of asking for another attempt that
+      // will fail identically. `redirect_uri_mismatch` is the same kind of thing — the
+      // registered address and `GOOGLE_AUTH_REDIRECT_URI` have drifted apart.
+      if (
+        reason === 'invalid_client' ||
+        reason === 'unauthorized_client' ||
+        reason === 'redirect_uri_mismatch'
+      ) {
+        throw googleUnconfigured();
+      }
+
+      throw googleExchangeFailed(reason);
     }
 
     const tokens = (await tokenResponse.json()) as { id_token?: string; access_token?: string };
@@ -487,6 +510,20 @@ function readIdTokenClaims(token: string): { email?: string; name?: string } | n
     return JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
   } catch {
     return null;
+  }
+}
+
+/**
+ * The `error` Google names in a refused token exchange — `invalid_grant`, `invalid_client`,
+ * and so on — which is the one word that says whether the deployment is misconfigured or the
+ * code simply expired. Undefined for a body that is not Google's JSON at all.
+ */
+function googleErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown };
+    return typeof parsed.error === 'string' ? parsed.error : undefined;
+  } catch {
+    return undefined;
   }
 }
 
