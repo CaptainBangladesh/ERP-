@@ -254,6 +254,10 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   PageViewEvent: { kind: 'company-owned' },
   PostingTimeInsight: { kind: 'company-owned' },
   ComposerSnippet: { kind: 'company-owned' },
+  AiGenerationAllowance: { kind: 'company-owned' },
+  /** Append-only: a correction to a reservation is a second row, never an edit (14p). */
+  AiGenerationLedger: { kind: 'company-owned', immutable: true },
+  TenantAiKey: { kind: 'company-owned' },
 };
 
 /**

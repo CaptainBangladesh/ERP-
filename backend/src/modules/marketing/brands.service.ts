@@ -60,6 +60,8 @@ export class BrandsService {
         customDomain: input.customDomain,
         storageQuotaMb: input.storageQuotaMb || 1000,
         settings: input.settings ? (input.settings as Prisma.InputJsonValue) : Prisma.JsonNull,
+        voiceTone: input.voiceTone,
+        productDescription: input.productDescription,
       }),
       include: {
         _count: { select: { socialAccounts: true } },
@@ -172,6 +174,8 @@ export class BrandsService {
           ? { brandColors: input.brandColors as Prisma.InputJsonValue }
           : {}),
         ...defined('timezone', input.timezone),
+        ...defined('voiceTone', input.voiceTone),
+        ...defined('productDescription', input.productDescription),
         ...defined('customDomain', input.customDomain),
         ...defined('storageQuotaMb', input.storageQuotaMb),
         ...(input.settings !== undefined
@@ -277,6 +281,8 @@ function describeBrand(
     timezone: string;
     customDomain: string | null;
     storageQuotaMb: number;
+    voiceTone: string | null;
+    productDescription: string | null;
     createdAt: Date;
     updatedAt: Date;
     _count?: { socialAccounts: number };
@@ -291,6 +297,8 @@ function describeBrand(
     timezone: row.timezone,
     customDomain: row.customDomain,
     storageQuotaMb: row.storageQuotaMb,
+    voiceTone: row.voiceTone,
+    productDescription: row.productDescription,
     socialAccountsCount: row._count?.socialAccounts ?? 0,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

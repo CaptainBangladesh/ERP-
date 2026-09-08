@@ -10,6 +10,9 @@ import {
   type ScheduledPostResponse,
   type SocialAccountListResponse,
   type SocialAccountSummary,
+  type AiAllowanceResponse,
+  type AiComposeResponse,
+  type AiComposeVariant,
   type SnippetListResponse,
   type SnippetSummary,
   type SocialPlatform,
@@ -306,6 +309,56 @@ export function PostComposerModal({
   });
 
   const snippets: SnippetSummary[] = snippetList?.items ?? [];
+
+  /**
+   * The writing assistant (14.6-14.9).
+   *
+   * The allowance is read *before* anything is generated, so the number of generations left
+   * is on screen while the user decides — not learned from a refusal (14q). The request says
+   * nothing about the model, the token budget or the cost: the server picks all of them, and
+   * a body that tried would be refused rather than trimmed.
+   */
+  const { data: aiAllowance } = useQuery({
+    queryKey: ['marketing-ai-allowance'],
+    queryFn: () => api.get<AiAllowanceResponse>(MARKETING_PATHS.aiAllowance),
+    enabled: isOpen,
+  });
+
+  const [aiVariants, setAiVariants] = useState<AiComposeVariant[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const composeWithAi = useMutation({
+    mutationFn: () =>
+      api.post<AiComposeResponse>(MARKETING_PATHS.aiCompose, {
+        brandId: brand.id,
+        draft: currentTabContent,
+        platform: insightPlatform,
+        variants: 3,
+      }),
+    onSuccess: (result) => {
+      setAiVariants([...result.variants]);
+      setAiError(null);
+      void queryClient.invalidateQueries({ queryKey: ['marketing-ai-allowance'] });
+    },
+    onError: (err) => {
+      setAiVariants([]);
+      setAiError(
+        err instanceof ApiFailure ? err.message : 'The writing assistant is unavailable.',
+      );
+    },
+  });
+
+  /**
+   * Accepting a variant is the only way one reaches a post (14c).
+   *
+   * Nothing generated is applied, scheduled, published or sent on its own: a variant sits in
+   * a read-only preview until a person presses this, and even then it only fills the editable
+   * draft field they are still free to rewrite.
+   */
+  const acceptVariant = (variant: AiComposeVariant) => {
+    handleContentChange(variant.text);
+    setAiVariants([]);
+  };
 
   /**
    * The one validator, run against the selected channels before publish is enabled (14.1).
@@ -772,6 +825,66 @@ export function PostComposerModal({
                   </ul>
                 </div>
               )}
+
+              {/* The writing assistant — metered, and nothing it returns takes an action (14c) */}
+              <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    Writing assistant
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    {aiAllowance
+                      ? `${aiAllowance.remainingGenerations} left this month · resets ${aiAllowance.resetsAt.slice(0, 10)}`
+                      : 'Checking your allowance…'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => composeWithAi.mutate()}
+                    disabled={
+                      composeWithAi.isPending ||
+                      !currentTabContent.trim() ||
+                      (aiAllowance?.remainingGenerations ?? 0) < 1
+                    }
+                    className="rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {composeWithAi.isPending ? 'Writing…' : `Suggest ${3} rewrites`}
+                  </button>
+                  <span className="text-[11px] text-slate-500">
+                    Suggestions fill the draft only when you accept one.
+                  </span>
+                </div>
+                {aiError && (
+                  <p className="text-[11px] font-medium text-rose-700">{aiError}</p>
+                )}
+                {aiVariants.length > 0 && (
+                  <ul className="flex flex-col gap-1.5">
+                    {aiVariants.map((variant, index) => (
+                      <li
+                        key={`${index}-${variant.characters}`}
+                        className="flex items-start justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2"
+                      >
+                        {/* A textarea value, never HTML and never markdown-with-HTML (14s). */}
+                        <textarea
+                          readOnly
+                          value={variant.text}
+                          rows={3}
+                          aria-label={`Suggestion ${index + 1}`}
+                          className="w-full resize-none border-0 bg-transparent text-[11px] text-slate-700 focus:outline-hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => acceptVariant(variant)}
+                          className="shrink-0 rounded-md border border-violet-200 bg-white px-2 py-1 text-[11px] font-semibold text-violet-700 hover:bg-violet-50"
+                        >
+                          Use this
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
 
               {/* Hook formulas — literal substitution over three keys, no template engine */}
               <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3">

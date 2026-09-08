@@ -95,9 +95,9 @@ Publishing claims its row conditionally (`updateMany` with the publishable state
 proceeding only on `count === 1`) before any network call — the same claim the job queue makes.
 Two concurrent publishes of one post produce one post on the client's account.
 
-## Secrets (ticket 12)
+## Secrets (tickets 12 and 14)
 
-Three environment variables, no defaults, checked once at boot in `CryptoService.onModuleInit`
+Four environment variables, no defaults, checked once at boot in `CryptoService.onModuleInit`
 via `vault-secrets.ts`:
 
 | Variable | What it protects |
@@ -105,6 +105,7 @@ via `vault-secrets.ts`:
 | `MARKETING_VAULT_SECRET` | Derives the key that encrypts stored OAuth access/refresh tokens |
 | `MARKETING_OAUTH_STATE_SECRET` | Signs the OAuth `state` parameter |
 | `MARKETING_ANALYTICS_PEPPER` | Peppers the daily visitor IP hash |
+| `ANTHROPIC_API_KEY` | The composer's model credential (14a) — a *platform* secret, so it does not go through `CryptoService`; a tenant's own key does (`ai-keys.service.ts`) |
 
 In production a missing or shorter-than-32-character value **refuses the boot**. Outside
 production a missing one gets an ephemeral key generated per process, so development tokens do

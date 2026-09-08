@@ -39,6 +39,8 @@ export function BrandSwitcher({
   const [timezone, setTimezone] = useState('UTC');
   const [primaryColor, setPrimaryColor] = useState('#3b82f6');
   const [storageQuotaMb, setStorageQuotaMb] = useState(1000);
+  const [voiceTone, setVoiceTone] = useState('');
+  const [productDescription, setProductDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
@@ -74,6 +76,8 @@ export function BrandSwitcher({
       timezone,
       brandColors: { primary: primaryColor },
       storageQuotaMb,
+      voiceTone: voiceTone.trim() || undefined,
+      productDescription: productDescription.trim() || undefined,
     });
   };
 
@@ -252,6 +256,27 @@ export function BrandSwitcher({
               inputMode="numeric"
               value={String(storageQuotaMb)}
               onChange={(value) => setStorageQuotaMb(Number(value.replace(/[^0-9]/g, '')) || 0)}
+            />
+
+            {/*
+              The two fields the writing assistant is allowed to know about a brand (14b).
+              A closed allowlist: the prompt is assembled from these and the user's own draft,
+              and never from a CRM record.
+            */}
+            <Field
+              id="brand-voice-tone"
+              label="Tone of voice"
+              value={voiceTone}
+              onChange={setVoiceTone}
+              hint="How this brand sounds. Read by the writing assistant, nothing else."
+            />
+
+            <Field
+              id="brand-product-description"
+              label="What this brand sells"
+              value={productDescription}
+              onChange={setProductDescription}
+              hint="One or two sentences. Optional."
             />
 
             {/* Submits on Enter; the visible actions live on the dialog's footer bar. */}

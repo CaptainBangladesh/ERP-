@@ -170,21 +170,26 @@ describe('Marketing: Brand & Encrypted OAuth Vault', () => {
         delete process.env.MARKETING_VAULT_SECRET;
         delete process.env.MARKETING_OAUTH_STATE_SECRET;
         delete process.env.MARKETING_ANALYTICS_PEPPER;
+        delete process.env.ANTHROPIC_API_KEY;
 
         expect(() => new CryptoService().onModuleInit()).toThrow(/MARKETING_VAULT_SECRET/);
+        expect(() => new CryptoService().onModuleInit()).toThrow(/ANTHROPIC_API_KEY/);
       } finally {
         process.env = before;
         new CryptoService().forgetKey();
       }
     });
 
-    it('accepts a production boot once all three secrets are long enough', () => {
+    it('accepts a production boot once all four secrets are long enough', () => {
       const before = { ...process.env };
       try {
         process.env.NODE_ENV = 'production';
         process.env.MARKETING_VAULT_SECRET = 'a'.repeat(40);
         process.env.MARKETING_OAUTH_STATE_SECRET = 'b'.repeat(40);
         process.env.MARKETING_ANALYTICS_PEPPER = 'c'.repeat(40);
+        // The model credential joined the list in ticket 14 (14a) and inherits the same rule:
+        // no hardcoded fallback, and a missing value refuses the boot rather than degrading.
+        process.env.ANTHROPIC_API_KEY = 'd'.repeat(40);
 
         expect(() => new CryptoService().onModuleInit()).not.toThrow();
       } finally {

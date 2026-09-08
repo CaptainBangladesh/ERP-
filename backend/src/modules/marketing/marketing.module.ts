@@ -51,6 +51,11 @@ import { InsightsService } from './insights.service';
 import { InsightsController } from './insights.controller';
 import { SnippetsService } from './snippets.service';
 import { SnippetsController } from './snippets.controller';
+import { AiController, AiKeysController } from './ai.controller';
+import { AiAllowanceService } from './ai-allowance.service';
+import { AiComposerService } from './ai-composer.service';
+import { AiKeysService } from './ai-keys.service';
+import { AiProvider, LiveAiProvider, StubAiProvider } from './ai-provider';
 
 /**
  * Marketing.
@@ -87,6 +92,8 @@ import { SnippetsController } from './snippets.controller';
     PublicTrackingController,
     InsightsController,
     SnippetsController,
+    AiController,
+    AiKeysController,
   ],
   providers: [
     MarketingService,
@@ -128,6 +135,22 @@ import { SnippetsController } from './snippets.controller';
     RetentionService,
     InsightsService,
     SnippetsService,
+    LiveAiProvider,
+    StubAiProvider,
+    {
+      /**
+       * The model, bound once (14a-bis). Tests get a provider that answers without a network,
+       * which is what lets "refused before the API call" be asserted rather than asserted
+       * about a mock somebody could forget to install.
+       */
+      provide: AiProvider,
+      useFactory: (live: LiveAiProvider, stub: StubAiProvider) =>
+        process.env.NODE_ENV === 'test' ? stub : live,
+      inject: [LiveAiProvider, StubAiProvider],
+    },
+    AiAllowanceService,
+    AiKeysService,
+    AiComposerService,
   ],
   exports: [
     CryptoService,
@@ -150,6 +173,9 @@ import { SnippetsController } from './snippets.controller';
     TrackingService,
     InsightsService,
     SnippetsService,
+    AiAllowanceService,
+    AiKeysService,
+    AiComposerService,
   ],
 })
 export class MarketingModule implements NestModule {

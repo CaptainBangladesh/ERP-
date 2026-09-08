@@ -37,6 +37,7 @@ export const manifest: ModuleManifest = {
     '20260907120000_publishing_quota_network_attempt',
     '20260907130000_marketing_reliability_and_vault',
     '20260907140000_composer_intelligence',
+    '20260907150000_composer_generation_allowance',
   ],
 
   models: [
@@ -61,6 +62,9 @@ export const manifest: ModuleManifest = {
     'PageViewEvent',
     'PostingTimeInsight',
     'ComposerSnippet',
+    'AiGenerationAllowance',
+    'AiGenerationLedger',
+    'TenantAiKey',
   ],
 
   permissions: [
@@ -96,6 +100,8 @@ export const manifest: ModuleManifest = {
     'marketing:insights:write',
     'marketing:snippets:read',
     'marketing:snippets:write',
+    'marketing:ai:read',
+    'marketing:ai:write',
   ],
 
   navigation: [

@@ -1,4 +1,6 @@
 import {
+  AI_MAX_DRAFT_CHARS,
+  AI_MAX_VARIANTS,
   AUTOLIST_REPEAT_MODES,
   AUTOLIST_STATUSES,
   AUTOLIST_TRAVERSAL_MODES,
@@ -144,6 +146,20 @@ export const CreateBrandBody = validator({
   customDomain: optional(text({ missing: 'Enter custom domain.', maxLength: 100, tooLong: 'Domain is too long.' })),
   storageQuotaMb: optional(positiveInteger('Enter storage quota in megabytes.')),
   settings: optional(jsonObject('settings')),
+  voiceTone: optional(
+    text({
+      missing: 'Describe the brand voice.',
+      maxLength: 400,
+      tooLong: 'Use 400 characters or fewer — this is a sentence, not a brand book.',
+    }),
+  ),
+  productDescription: optional(
+    text({
+      missing: 'Describe what the brand sells.',
+      maxLength: 600,
+      tooLong: 'Use 600 characters or fewer.',
+    }),
+  ),
 });
 
 export const UpdateBrandBody = validator({
@@ -155,6 +171,20 @@ export const UpdateBrandBody = validator({
   customDomain: optional(text({ missing: 'Enter custom domain.', maxLength: 100, tooLong: 'Domain is too long.' })),
   storageQuotaMb: optional(positiveInteger('Enter storage quota in megabytes.')),
   settings: optional(jsonObject('settings')),
+  voiceTone: optional(
+    text({
+      missing: 'Describe the brand voice.',
+      maxLength: 400,
+      tooLong: 'Use 400 characters or fewer — this is a sentence, not a brand book.',
+    }),
+  ),
+  productDescription: optional(
+    text({
+      missing: 'Describe what the brand sells.',
+      maxLength: 600,
+      tooLong: 'Use 600 characters or fewer.',
+    }),
+  ),
 }).and((values, report) => {
   const changed = Object.values(values).some((value) => value !== undefined);
   if (!changed) report('name', 'Change something — this request changes nothing.');
@@ -1119,6 +1149,9 @@ class ClosedValidator<S extends Schema> extends Validator<S> {
   constructor(
     private readonly allowed: readonly string[],
     schema: S,
+    private readonly code: string = MARKETING_ERROR_CODES.adWebhookUnknownFields,
+    private readonly explain: (keys: string[]) => string = (keys) =>
+      `This payload carries fields this endpoint does not accept: ${keys.join(', ')}.`,
   ) {
     super(schema);
   }
@@ -1128,10 +1161,8 @@ class ClosedValidator<S extends Schema> extends Validator<S> {
       const unknown = Object.keys(input).filter((key) => !this.allowed.includes(key));
       if (unknown.length > 0) {
         throw new ApiException(
-          MARKETING_ERROR_CODES.adWebhookUnknownFields,
-          `This payload carries fields this endpoint does not accept: ${unknown
-            .slice(0, 10)
-            .join(', ')}.`,
+          this.code,
+          this.explain(unknown.slice(0, 10)),
           HttpStatus.BAD_REQUEST,
         );
       }
@@ -1257,5 +1288,94 @@ export const RecomputeBestTimesBody = validator({
   platform: oneOf<SocialPlatform>(SOCIAL_PLATFORMS, {
     missing: 'Choose a network.',
     invalid: 'That is not a network this module publishes to.',
+  }),
+});
+
+
+// ─── Composer intelligence (ticket 14, phase 2) — metered generation ──────────────
+
+/**
+ * How many variants one call returns.
+ *
+ * A count, not a knob with a price on it: it is bounded at `AI_MAX_VARIANTS` and every
+ * variant comes out of the same single call (14e), so the most it can move is the length of
+ * the answer, never the number of calls.
+ */
+const VARIANT_COUNT = rule<number>('Say how many variants you want.', (value) => {
+  const count = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(count) || count < 1 || count > AI_MAX_VARIANTS) {
+    return refused(`Ask for between 1 and ${AI_MAX_VARIANTS} variants.`);
+  }
+  return accepted(count);
+});
+
+const AI_COMPOSE_SCHEMA = {
+  brandId: identifier({
+    missing: 'Choose a brand.',
+    invalid: 'That is not a brand identifier.',
+  }),
+  draft: text({
+    missing: 'Write something for the assistant to work from.',
+    maxLength: AI_MAX_DRAFT_CHARS,
+    tooLong: `Use ${AI_MAX_DRAFT_CHARS} characters or fewer.`,
+  }),
+  platform: oneOf<SocialPlatform>(SOCIAL_PLATFORMS, {
+    missing: 'Choose a network.',
+    invalid: 'That is not a network this module publishes to.',
+  }),
+  variants: optional(VARIANT_COUNT),
+};
+
+const AI_COMPOSE_KEYS = ['brandId', 'draft', 'platform', 'variants'];
+
+/**
+ * The client chooses nothing that costs money (14q), and cannot ask for bulk (14u).
+ *
+ * Two refusals rather than one silent trim. A body carrying `model`, `maxTokens`,
+ * `temperature`, `apiKey` or a cost figure is **rejected**, because the server picks all of
+ * them and a request that was trimmed instead would look to its author like it had been
+ * honoured. An *array* of drafts is rejected separately and by name: the interactive route is
+ * the expensive one per unit of work, and 14e's batch rule only holds if the cheap path
+ * cannot be reached in a loop from a browser.
+ */
+class AiComposeValidator<S extends Schema> extends ClosedValidator<S> {
+  override parse(input: unknown): Parsed<S> {
+    if (Array.isArray(input)) {
+      throw new ApiException(
+        MARKETING_ERROR_CODES.aiBulkRefused,
+        'This endpoint composes one draft at a time. A whole autolist or media library goes ' +
+          'through the bulk path, which runs as a marketing job on the provider batch ' +
+          'endpoint and draws on the same allowance.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    return super.parse(input);
+  }
+}
+
+export const ComposeWithAiBody = new AiComposeValidator(
+  AI_COMPOSE_KEYS,
+  AI_COMPOSE_SCHEMA,
+  MARKETING_ERROR_CODES.aiUnknownField,
+  (keys) =>
+    `This endpoint does not accept ${keys.join(', ')}. The model, the token budget and the ` +
+    `credential are the server's to choose, and the cost is the ledger's to compute.`,
+);
+
+/**
+ * The tenant's own key, on the way in.
+ *
+ * Length-checked only: a key's real validity is decided by one probe call at save time (14v),
+ * because a regex that thinks it knows a vendor's key format is a regex that rejects the next
+ * one they issue.
+ */
+export const SetAiKeyBody = validator({
+  apiKey: rule<string>('Paste the API key.', (value) => {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (trimmed.length < 20 || trimmed.length > 300) {
+      return refused('That does not look like an API key.');
+    }
+    return accepted(trimmed);
   }),
 });

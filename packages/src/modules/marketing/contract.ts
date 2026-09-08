@@ -102,6 +102,10 @@ export const MARKETING_PATHS = {
   recomputeBestTimes: `/${MARKETING_ROUTE}/insights/best-times/recompute`,
   snippets: `/${MARKETING_ROUTE}/snippets`,
   snippet: (id: string) => `/${MARKETING_ROUTE}/snippets/${id}`,
+  // Composer intelligence (ticket 14, phase 2) — metered generation
+  aiAllowance: `/${MARKETING_ROUTE}/ai/allowance`,
+  aiCompose: `/${MARKETING_ROUTE}/ai/compose`,
+  brandAiKey: (brandId: string) => `/${MARKETING_ROUTE}/brands/${brandId}/ai-key`,
 } as const;
 
 /**
@@ -145,6 +149,14 @@ export type SocialAccountStatus = (typeof SOCIAL_ACCOUNT_STATUSES)[number];
 export const BRAND_MEMBER_ROLES = ['lead', 'editor', 'viewer'] as const;
 
 export type BrandMemberRole = (typeof BRAND_MEMBER_ROLES)[number];
+
+/**
+ * The publishing role: the one that may connect an account or spend a tenant's own money.
+ *
+ * Named here rather than spelled `'lead'` at each check, because 14v and 17d are the same
+ * authorisation question asked in two places and they must not be able to drift apart.
+ */
+export const BRAND_PUBLISHING_ROLE: BrandMemberRole = 'lead';
 
 /**
  * The fields a caller may sort, filter or search the list by.
@@ -195,6 +207,9 @@ export interface CreateBrandRequest {
   customDomain?: string;
   storageQuotaMb?: number;
   settings?: Record<string, unknown>;
+  /** Brand voice, read by the prompt allowlist and by nothing else (14b). */
+  voiceTone?: string;
+  productDescription?: string;
 }
 
 export interface UpdateBrandRequest {
@@ -206,6 +221,9 @@ export interface UpdateBrandRequest {
   customDomain?: string;
   storageQuotaMb?: number;
   settings?: Record<string, unknown>;
+  /** Brand voice, read by the prompt allowlist and by nothing else (14b). */
+  voiceTone?: string;
+  productDescription?: string;
 }
 
 export interface BrandSummary {
@@ -217,6 +235,9 @@ export interface BrandSummary {
   timezone: string;
   customDomain: string | null;
   storageQuotaMb: number;
+  /** Brand voice, read by the prompt allowlist and by nothing else (14b). */
+  voiceTone: string | null;
+  productDescription: string | null;
   socialAccountsCount: number;
   createdAt: string;
   updatedAt: string;
@@ -594,6 +615,20 @@ export const MARKETING_ERROR_CODES = {
   formDailyCapReached: 'form_daily_cap_reached',
   messagingWindowExpired: 'messaging_window_expired',
   snippetNotFound: 'snippet_not_found',
+  /** The tenant has spent this month's generation allowance. Names the reset date (14d). */
+  aiAllowanceExhausted: 'ai_allowance_exhausted',
+  /** The request carried a field the compose endpoint does not accept — a model, a token
+   *  budget, a temperature, a key, a price. Refused rather than trimmed (14q). */
+  aiUnknownField: 'ai_unknown_field',
+  /** An array of drafts arrived at the interactive endpoint. Bulk is the batch path (14u). */
+  aiBulkRefused: 'ai_bulk_refused',
+  /** The provider answered with an error. Vendor message and status only, never the body (14r). */
+  aiProviderFailed: 'ai_provider_failed',
+  /** The tenant's own key was rejected. Never a silent fall back to the platform key (14v). */
+  aiTenantKeyRejected: 'ai_tenant_key_rejected',
+  /** Only a brand's publishing role may set, rotate or delete the tenant key (14v). */
+  aiKeyForbidden: 'ai_key_forbidden',
+  aiKeyNotFound: 'ai_key_not_found',
 } as const;
 
 // ─── Campaigns & UTM Tracking ──────────────────────────────────────────────────────
@@ -1679,4 +1714,178 @@ export function validateForNetworks(
   draft: DraftForNetwork,
 ): NetworkLimitViolation[] {
   return platforms.flatMap((platform) => validateForNetwork(platform, draft));
+}
+
+// ─── Composer intelligence (ticket 14, phase 2) — metered generation ───────────────
+
+/**
+ * The model, pinned.
+ *
+ * Haiku 4.5 is 14g's default and stays it until the blind A/B moves it, which can only
+ * happen behind `resolveAiProvider` (14a-bis). Pinned to a dated snapshot rather than a
+ * floating alias because a model that changes underneath a fixed `max_tokens` and a
+ * dollar-denominated allowance changes the bill without changing the code.
+ */
+export const AI_MODEL = 'claude-haiku-4-5-20251001';
+
+/** Haiku 4.5 list price, in cents per 1,000 tokens: $1/MTok in, $5/MTok out. */
+export const AI_INPUT_CENTS_PER_1K = 0.1;
+export const AI_OUTPUT_CENTS_PER_1K = 0.5;
+
+/**
+ * `max_tokens` from the real shape of the output, not a default (14e).
+ *
+ * A caption is 30-60 tokens. Three of them plus the JSON scaffolding is ~250, and output is
+ * ~77% of this workload's bill — a 400+ default would be a 60% overcharge on every call
+ * nobody would ever see.
+ */
+export const AI_MAX_OUTPUT_TOKENS = 250;
+
+/** The ceiling the prompt builder is capped to, and what an estimate is priced against. */
+export const AI_MAX_INPUT_TOKENS = 1_200;
+
+/**
+ * What one generation is charged to the ledger *before* the call (14p), in cents.
+ *
+ * The ceiling rather than the expectation: input cap plus output cap, so the reservation can
+ * never be smaller than the invoice. The reconciliation row afterwards gives the difference
+ * back from `response.usage`.
+ */
+export const AI_GENERATION_ESTIMATE_CENTS =
+  (AI_MAX_INPUT_TOKENS / 1000) * AI_INPUT_CENTS_PER_1K +
+  (AI_MAX_OUTPUT_TOKENS / 1000) * AI_OUTPUT_CENTS_PER_1K;
+
+/** 14d's figure: a Later-sized allowance, per tenant per month, no rollover. */
+export const AI_MONTHLY_GENERATIONS = 20;
+
+/**
+ * The allowance the platform key funds, in cents of model spend per tenant per month.
+ *
+ * Denominated in dollars rather than request counts so that a longer prompt or a chattier
+ * model cannot quietly raise the ceiling (14d) — 20 generations is what that money buys at
+ * today's prompt shape, not a second, separate limit.
+ */
+export const AI_PLATFORM_MONTHLY_CAP_CENTS =
+  AI_MONTHLY_GENERATIONS * AI_GENERATION_ESTIMATE_CENTS;
+
+/**
+ * What a tenant's own key buys: 25× the platform allowance, ~500 generations a month (14h).
+ *
+ * It raises the ceiling; it does not remove the meter. A tenant paying their own bill still
+ * gets a number they can see and a refusal they can understand.
+ */
+export const AI_TENANT_KEY_CAP_MULTIPLIER = 25;
+
+/** One call returns N variants — never N calls (14e). */
+export const AI_MAX_VARIANTS = 3;
+
+/** The longest draft the composer will send. Everything past this is a bulk path. */
+export const AI_MAX_DRAFT_CHARS = 2_000;
+
+/** The period key: `YYYY-MM` in UTC, so a month means the same thing in every timezone. */
+export function aiPeriodKey(at: Date = new Date()): string {
+  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** The first instant of the month after `period` — the date a refusal names (14q). */
+export function aiPeriodResetsAt(period: string): string {
+  const [year, month] = period.split('-').map((part) => Number(part));
+  return new Date(Date.UTC(year ?? 1970, month ?? 1, 1)).toISOString();
+}
+
+/** Cost in cents of one completion, from `response.usage` and nothing else (14d). */
+export function aiCostCents(inputTokens: number, outputTokens: number): number {
+  return (
+    (inputTokens / 1000) * AI_INPUT_CENTS_PER_1K +
+    (outputTokens / 1000) * AI_OUTPUT_CENTS_PER_1K
+  );
+}
+
+/**
+ * What the composer knows before it spends anything (14q).
+ *
+ * Read by its own endpoint so the number is on screen *before* the user generates, rather
+ * than being learned from a refusal.
+ */
+export interface AiAllowanceResponse {
+  /** `YYYY-MM`, UTC. */
+  readonly period: string;
+  readonly capCents: number;
+  readonly spentCents: number;
+  readonly remainingCents: number;
+  /** Whole generations left at the reservation price — the number worth showing a human. */
+  readonly remainingGenerations: number;
+  /** ISO instant the allowance resets. No rollover. */
+  readonly resetsAt: string;
+  /** Which key funds it: the platform's, or this tenant's own (14h). */
+  readonly source: 'platform' | 'tenant';
+  readonly model: string;
+}
+
+/**
+ * Everything the client may say about a generation, and nothing else.
+ *
+ * No `model`, no `maxTokens`, no `temperature`, no `apiKey`, no cost figure: the server picks
+ * all of them, and a body carrying one is refused rather than trimmed (14q). The brand voice
+ * is looked up server-side from `brandId` — the client cannot widen the prompt (14b).
+ */
+export interface AiComposeRequest {
+  readonly brandId: string;
+  readonly draft: string;
+  readonly platform: SocialPlatform;
+  readonly variants?: number;
+}
+
+export interface AiComposeVariant {
+  readonly text: string;
+  readonly characters: number;
+}
+
+export interface AiComposeResponse {
+  readonly variants: readonly AiComposeVariant[];
+  /**
+   * Always `true`, and it is a promise rather than a flag: nothing here is applied, scheduled,
+   * published or sent. A variant reaches a post only when a human puts it there (14c).
+   */
+  readonly requiresAccept: true;
+  readonly allowance: AiAllowanceResponse;
+  readonly model: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+/** The tenant key, as the client is ever allowed to see it: masked, or absent (14v). */
+export interface AiKeyStatusResponse {
+  readonly configured: boolean;
+  /** Masked from the *decrypted* value (11.4a). Absent when no key is stored. */
+  readonly maskedKey?: string;
+  readonly updatedAt?: string;
+  /** The allowance this tenant is on right now, in cents. */
+  readonly capCents: number;
+}
+
+export interface SetAiKeyRequest {
+  readonly apiKey: string;
+}
+
+/**
+ * Model output is text on a rendering path (14s).
+ *
+ * Control characters stripped — a completion arrives from outside the tenant exactly as an
+ * inbox message does — and trimmed to the target network's own cap from the table above, so
+ * a variant the composer offers is a variant the publisher would accept. The result is put in
+ * a `textarea` value; it is never HTML, never markdown-with-HTML, and never written to a
+ * bio page or any other server-rendered surface without the escaping a typed field gets.
+ */
+export function normaliseCompletion(text: string, platform: SocialPlatform): string {
+  const stripped = text
+    // Control characters, keeping the newline and tab a caption legitimately contains.
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    // Bidirectional overrides, which render as text that is not the text stored.
+    .replace(/[\u202A-\u202E\u2066-\u2069]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+
+  const limit = NETWORK_LIMITS[platform].characterLimit;
+  return stripped.length > limit ? stripped.slice(0, limit).trimEnd() : stripped;
 }

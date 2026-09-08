@@ -16,6 +16,8 @@ describe('SocialCalendarPage and Social Media Suite', () => {
     timezone: 'America/New_York',
     customDomain: null,
     storageQuotaMb: 2000,
+    voiceTone: 'Direct, warm, no exclamation marks.',
+    productDescription: 'Running shoes for people who hate running.',
     socialAccountsCount: 3,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

@@ -1596,6 +1596,10 @@ model MarketingBrand {
   logoUrl        String?  @map("logo_url")
   brandColors    Json?    @map("brand_colors")
   timezone       String   @default("UTC")
+  /// Brand voice, as the prompt allowlist reads it (14b). Two typed columns rather than a
+  /// settings blob, because the prompt builder takes named fields and not a JSON bag.
+  voiceTone         String? @map("voice_tone")
+  productDescription String? @map("product_description")
   customDomain   String?  @map("custom_domain")
   storageQuotaMb Int      @default(1000) @map("storage_quota_mb")
   settings       Json?
@@ -2098,4 +2102,77 @@ model ComposerSnippet {
   @@index([brandId])
   @@index([companyId, label])
   @@map("composer_snippets")
+}
+
+/// The generation allowance counter — one row per company per `YYYY-MM` period (14d, 14p).
+///
+/// `spentCents` is a real column and not a field inside a JSON blob (12.3e), because the
+/// ceiling is enforced by a conditional `UPDATE ... WHERE spent + estimate <= cap` whose
+/// zero-rows-affected answer *is* the refusal. A counter inside JSON cannot be compared in
+/// the same statement that increments it, which is how a ceiling degrades into a forecast.
+model AiGenerationAllowance {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  /// `YYYY-MM`, UTC. No rollover: a new period is a new row starting at zero.
+  period     String
+  capCents   Decimal  @map("cap_cents") @db.Decimal(12, 4)
+  spentCents Decimal  @default(0) @map("spent_cents") @db.Decimal(12, 4)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, period])
+  @@index([companyId])
+  @@map("ai_generation_allowances")
+}
+
+/// Every movement against the allowance, append-only (14p) — and the generation audit row.
+///
+/// Two rows per generation: the reservation written before the provider call, and the
+/// reconciliation written after it, which is negative when the real cost from
+/// `response.usage` came in under the estimate and cancels the reservation entirely when the
+/// call failed, timed out or was aborted. A correction is a new row; nothing is ever updated.
+///
+/// What is deliberately absent: prompt text, completion text, and the fenced untrusted block
+/// (14r). This row is what an operator gets to see, and it is tokens, latency and outcome.
+model AiGenerationLedger {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  brandId      String?  @map("brand_id") @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  period       String
+  /// 'reserve' | 'reconcile'
+  entry        String
+  /// Signed: the reservation is positive, the reconciliation usually negative.
+  amountCents  Decimal  @map("amount_cents") @db.Decimal(12, 4)
+  model        String
+  inputTokens  Int      @default(0) @map("input_tokens")
+  outputTokens Int      @default(0) @map("output_tokens")
+  latencyMs    Int      @default(0) @map("latency_ms")
+  /// 'reserved' | 'succeeded' | 'failed' | 'refused'
+  outcome      String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@index([companyId, period])
+  @@map("ai_generation_ledger")
+}
+
+/// A tenant's own model key — a per-tenant secret, so unlike the platform key it lives in the
+/// encrypted vault (`CryptoService`, `v1.iv.ct.tag`) rather than the environment (14h).
+///
+/// `maskedKey` is derived from the *decrypted* value at save time (11.4a); masking the
+/// ciphertext would show four characters of a GCM auth tag and call it a key. The plaintext
+/// is never returned to a client in any form.
+model TenantAiKey {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @unique @map("company_id") @db.Uuid
+  encryptedKey    String   @map("encrypted_key")
+  maskedKey       String   @map("masked_key")
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  lastValidatedAt DateTime? @map("last_validated_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@map("tenant_ai_keys")
 }

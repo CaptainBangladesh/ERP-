@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 
 /**
- * The three secrets this module cannot do its job without, and one rule about all of them.
+ * The four secrets this module cannot do its job without, and one rule about all of them.
  *
  * Before ticket 12 each had a hardcoded fallback: the vault key fell back to
  * `'erp-marketing-oauth-vault-secret-salt-development-key'`, the OAuth state HMAC to a similar
@@ -35,6 +35,21 @@ export const MARKETING_SECRET_VARS = {
   oauthState: 'MARKETING_OAUTH_STATE_SECRET',
   /** Peppers the daily visitor IP hash. See `tracking.service.ts`. */
   analyticsPepper: 'MARKETING_ANALYTICS_PEPPER',
+  /**
+   * The model credential behind the composer's generation route (14a).
+   *
+   * A *platform* secret, not a per-tenant one: it is one shared vendor key, so it does not
+   * go through `CryptoService` — per-record encryption of a value every tenant's request
+   * uses buys nothing and couples two rotation schedules that have to stay independent
+   * (12.3b). A tenant's *own* key is the other thing entirely and does live in the vault
+   * (14h, `ai-keys.service.ts`).
+   *
+   * It is here rather than read at a call site so it inherits the rule above: absent in
+   * production refuses the boot, absent in development gets an ephemeral value that cannot
+   * accidentally work. It is never sent to the browser, never in a masked-credential list,
+   * and never logged (14r) — and every read of it goes through `resolveAiProvider`.
+   */
+  anthropicApiKey: 'ANTHROPIC_API_KEY',
 } as const;
 
 export type MarketingSecretVar =
@@ -86,7 +101,7 @@ export function marketingSecret(name: MarketingSecretVar): string {
 }
 
 /**
- * The boot check. Called from `CryptoService.onModuleInit`, once, for all three.
+ * The boot check. Called from `CryptoService.onModuleInit`, once, for all four.
  *
  * Deliberately eager rather than lazy: a check on first use would pass every boot and fail on
  * the first customer to connect a social account, which is the wrong end of the deploy to
