@@ -17,6 +17,7 @@ import {
   SMART_LINK_COLOR_PATTERN,
   SMART_LINK_FONT_FAMILIES,
   SMART_LINK_URL_SCHEMES,
+  isCompetitorHandle,
   MARKETING_ERROR_CODES,
   type AutolistRepeatMode,
   type AutolistSlot,
@@ -38,7 +39,9 @@ import {
   type SmartLinkTheme,
 } from '@erp/shared';
 import { HttpStatus } from '@nestjs/common';
+import { isIP } from 'node:net';
 import { ApiException } from '../../http/api-exception';
+import { isPublicAddress } from './outbound-fetch.service';
 import type { ListSpec } from '../../platform/list';
 import {
   accepted,
@@ -1379,3 +1382,141 @@ export const SetAiKeyBody = validator({
     return accepted(trimmed);
   }),
 });
+
+// ─── External content sources (ticket 15) ────────────────────────────────────────
+
+/**
+ * A feed URL, on the way in (16a).
+ *
+ * `readLinkUrl` first, for the shape and the scheme allowlist a rendered link gets — then
+ * narrowed to `https:`, because fetching is a different trust decision from rendering and
+ * `http:` is not one this server makes. This is the check that gives the operator an
+ * immediate error; it is *not* the check that holds. `OutboundFetchService` re-resolves the
+ * host on every single poll (14-17.0), because the DNS answer is what changes between them.
+ */
+const FEED_URL = rule<string>('Enter the feed address.', (value) => {
+  const read = readLinkUrl(value, 'url');
+  if (!read.ok) return refused(read.message);
+  if (read.value.length > 500) return refused('URL must be 500 characters or fewer.');
+
+  const parsed = new URL(read.value);
+  if (parsed.protocol !== 'https:') {
+    return refused(
+      "A feed address must start with 'https://'. This server fetches it on a schedule, and " +
+        'an unencrypted fetch is a different decision from an unencrypted link on a page.',
+    );
+  }
+  if (parsed.port !== '' && parsed.port !== '443') {
+    return refused('A feed address must use the standard https port.');
+  }
+
+  // A URL that *is* an address can be judged here and now, so it is: an operator who pastes
+  // `https://169.254.169.254/…` gets an immediate error rather than a feed row that fails
+  // silently on its first poll. A *hostname* still cannot be judged at save time — that is
+  // `OutboundFetchService`'s job on every poll, because the DNS answer is what changes.
+  const literal = parsed.hostname.replace(/^\[|\]$/g, '');
+  if (isIP(literal) !== 0 && !isPublicAddress(literal)) {
+    return refused(
+      'That address is on a private or loopback range. This server fetches feeds on a ' +
+        'schedule, and it only calls hosts on the public internet.',
+    );
+  }
+
+  return accepted(read.value);
+});
+
+export const CreateContentFeedBody = validator({
+  brandId: identifier({
+    missing: 'Choose a brand.',
+    invalid: 'That is not a brand identifier.',
+  }),
+  name: text({
+    missing: 'Name the feed.',
+    maxLength: 120,
+    tooLong: 'Use 120 characters or fewer.',
+  }),
+  url: FEED_URL,
+});
+
+export const CONTENT_FEED_LIST: ListSpec = {
+  defaultSort: 'name',
+  fields: {
+    name: { type: 'text', sortable: true, filterable: true, searchable: true },
+    url: { type: 'text', sortable: false, filterable: false, searchable: true },
+    status: { type: 'text', sortable: true, filterable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const CONTENT_FEED_ENTRY_LIST: ListSpec = {
+  defaultSort: '-fetchedAt',
+  fields: {
+    title: { type: 'text', sortable: true, filterable: false, searchable: true },
+    excerpt: { type: 'text', sortable: false, filterable: false, searchable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    feedId: { type: 'text', sortable: false, filterable: true },
+    status: { type: 'text', sortable: false, filterable: true },
+    fetchedAt: { type: 'date', sortable: true, filterable: true },
+    publishedAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+/**
+ * A competitor handle (15d).
+ *
+ * An identifier, not a URL, and **rejected** rather than sanitized when it is not one: a
+ * "handle" field that quietly accepts `https://…` is how the scraper path 15a closed reopens
+ * as a convenience. A leading `@` is the one thing trimmed, because that is how every network
+ * writes a handle on screen and nobody means it as part of the identifier.
+ */
+const COMPETITOR_HANDLE = rule<string>('Enter the competitor handle.', (value) => {
+  const raw = typeof value === 'string' ? value.trim().replace(/^@/, '') : '';
+  if (!isCompetitorHandle(raw)) {
+    return refused(
+      'A handle is the name on the profile — letters, digits, dots, dashes and underscores. ' +
+        'Not a link: this reads the network’s own API, it does not visit pages.',
+    );
+  }
+  return accepted(raw);
+});
+
+export const CreateCompetitorBody = validator({
+  brandId: identifier({
+    missing: 'Choose a brand.',
+    invalid: 'That is not a brand identifier.',
+  }),
+  network: oneOf<SocialPlatform>(SOCIAL_PLATFORMS, {
+    missing: 'Choose a network.',
+    invalid: 'That is not a network this module reads.',
+  }),
+  handle: COMPETITOR_HANDLE,
+  label: optional(
+    text({
+      missing: 'Name the competitor.',
+      maxLength: 120,
+      tooLong: 'Use 120 characters or fewer.',
+    }),
+  ),
+});
+
+export const COMPETITOR_LIST: ListSpec = {
+  defaultSort: 'label',
+  fields: {
+    label: { type: 'text', sortable: true, filterable: true, searchable: true },
+    handle: { type: 'text', sortable: true, filterable: true, searchable: true },
+    network: { type: 'text', sortable: true, filterable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    createdAt: { type: 'date', sortable: true, filterable: true },
+  },
+};
+
+export const COMPETITOR_SNAPSHOT_LIST: ListSpec = {
+  defaultSort: '-captureDate',
+  fields: {
+    captureDate: { type: 'date', sortable: true, filterable: true },
+    network: { type: 'text', sortable: false, filterable: true },
+    brandId: { type: 'text', sortable: false, filterable: true },
+    competitorId: { type: 'text', sortable: false, filterable: true },
+  },
+};

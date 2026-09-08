@@ -9,6 +9,9 @@ export const RETENTION_JOB_TYPE = 'marketing.retention.purge';
 /** How long pseudonymous visitor events are kept when nothing says otherwise. */
 export const DEFAULT_RETENTION_DAYS = 180;
 
+/** How long a competitor's daily aggregates are kept when nothing says otherwise (15c). */
+export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 365;
+
 /**
  * Rows removed per pass.
  *
@@ -60,6 +63,21 @@ export class RetentionService implements OnModuleInit {
   retentionDays(): number {
     const configured = Number(process.env.MARKETING_ANALYTICS_RETENTION_DAYS);
     return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_RETENTION_DAYS;
+  }
+
+  /**
+   * Competitor snapshots expire on their own window (15c).
+   *
+   * Their own number because they are a different kind of row from a visitor event — a year of
+   * daily aggregates is a chart somebody wants, where a year of raw page views is a liability —
+   * but the same job, because 15c says these expire through the existing retention pass rather
+   * than a second scheduler.
+   */
+  snapshotRetentionDays(): number {
+    const configured = Number(process.env.MARKETING_SNAPSHOT_RETENTION_DAYS);
+    return Number.isFinite(configured) && configured > 0
+      ? configured
+      : DEFAULT_SNAPSHOT_RETENTION_DAYS;
   }
 
   /**
@@ -136,6 +154,8 @@ export class RetentionService implements OnModuleInit {
       );
     }
 
+    await this.purgeCompetitorSnapshots();
+
     // A full batch means there is more behind it; come straight back rather than waiting a day
     // and rather than looping here and holding the worker.
     const more = expiring.length >= PURGE_BATCH;
@@ -145,6 +165,41 @@ export class RetentionService implements OnModuleInit {
       scheduledAt: new Date(Date.now() + (more ? 0 : A_DAY_MS)),
     });
   }
+
+  /**
+   * Expires competitor snapshots on the same pass (15c).
+   *
+   * Deleted by identity from a bounded read, exactly as the event purge is, so the first run
+   * after a long-lived deployment cannot become one enormous statement. The rows are
+   * append-only aggregates, so this is the only thing that ever removes one.
+   */
+  private async purgeCompetitorSnapshots(): Promise<void> {
+    const cutoff = new Date(Date.now() - this.snapshotRetentionDays() * A_DAY_MS);
+
+    const expiring = await this.prisma.competitorSnapshot.findMany({
+      where: { capturedAt: { lt: cutoff } },
+      orderBy: { capturedAt: 'asc' },
+      select: { id: true },
+      ...snapshotBatchOf(PURGE_BATCH),
+    });
+
+    if (expiring.length === 0) return;
+
+    const result = await this.prisma.competitorSnapshot.deleteMany({
+      where: { id: { in: expiring.map((row) => row.id) } },
+    });
+
+    this.logger.log(
+      `Purged ${result.count} competitor snapshot(s) older than ${cutoff.toISOString()}`,
+    );
+  }
+}
+
+/** The same bounded-read declaration as `batchOf`, for the snapshot table. */
+function snapshotBatchOf(count: number): Pick<Prisma.CompetitorSnapshotFindManyArgs, 'take'> {
+  const args: Pick<Prisma.CompetitorSnapshotFindManyArgs, 'take'> = {};
+  args['take'] = count;
+  return args;
 }
 
 /**

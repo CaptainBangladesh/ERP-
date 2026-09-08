@@ -31,6 +31,7 @@ import { CampaignsManager } from '../components/CampaignsManager';
 import { LeadGenManager } from '../components/LeadGenManager';
 import { SocialInboxManager } from '../components/SocialInboxManager';
 import { TrackingManager } from '../components/TrackingManager';
+import { ContentSourcesManager } from '../components/ContentSourcesManager';
 
 /**
  * Every destination this workspace has, as data.
@@ -52,6 +53,7 @@ const TABS = [
   { id: 'campaigns', label: 'Campaigns & Attribution', icon: '🎯', group: 'Grow' },
   { id: 'leadgen', label: 'Inbound & CRM', icon: '🧲', group: 'Grow' },
   { id: 'analytics', label: 'Tracking & Analytics', icon: '📊', group: 'Grow' },
+  { id: 'sources', label: 'Feeds & Competitors', icon: '📰', group: 'Grow' },
   { id: 'vault', label: 'Brand & OAuth Vault', icon: '🔐', group: 'Settings' },
   { id: 'queue', label: 'Queue & Tasks', icon: '⚡', group: 'Settings' },
   { id: 'records', label: 'Campaign Records', icon: '📋', group: 'Settings', hidden: true },
@@ -290,6 +292,15 @@ export function MarketingPage({ initialTab = DEFAULT_TAB }: { initialTab?: TabId
             <EmptyState icon="📊" title="Select or Create a Brand">
               Select a Brand workspace to configure website tracking pixels and view visitor
               analytics.
+            </EmptyState>
+          ))}
+
+        {activeTab === 'sources' &&
+          (activeBrand ? (
+            <ContentSourcesManager brandId={activeBrand.id} brandName={activeBrand.name} />
+          ) : (
+            <EmptyState icon="📰" title="Select or Create a Brand">
+              Select a Brand workspace to watch content feeds and benchmark competitor handles.
             </EmptyState>
           ))}
 

@@ -1620,6 +1620,8 @@ model MarketingBrand {
   trackingSites    TrackingSite[]
   postingTimeInsights PostingTimeInsight[]
   composerSnippets ComposerSnippet[]
+  contentFeeds     ContentFeed[]
+  competitors      Competitor[]
 
   @@unique([companyId, slug])
   @@index([companyId])
@@ -1664,6 +1666,7 @@ model SocialAccount {
 
   scheduledPosts        ScheduledPost[]
   socialMessages        SocialMessage[]
+  quotaReservation      SocialQuotaReservation?
 
   @@unique([brandId, platform, platformAccountId])
   @@index([companyId])
@@ -2175,4 +2178,149 @@ model TenantAiKey {
 
   @@index([companyId])
   @@map("tenant_ai_keys")
+}
+
+// ─── External content sources (ticket 15) ────────────────────────────────────────────
+
+/// An RSS/Atom/JSON feed an operator asked us to watch (16a, 16c, 16f).
+///
+/// The URL is validated for shape at write time and re-validated against DNS on every poll —
+/// neither check substitutes for the other, because the DNS answer is what changes between
+/// them. `lastReason` is the closed code from `OUTBOUND_FETCH_REASONS` and nothing else
+/// (14-17.0d): no status line, no header, no body fragment, no resolved address is stored
+/// here, because a feed-error panel that echoes them is an exfiltration channel with a UI.
+model ContentFeed {
+  id                  String   @id @default(uuid()) @db.Uuid
+  companyId           String   @map("company_id") @db.Uuid
+  brandId             String   @map("brand_id") @db.Uuid
+  brand               MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name                String
+  url                 String
+  /// 'ACTIVE' | 'DISABLED'. Disable is a state, never a deletion of the operator's row (16f).
+  status              String   @default("ACTIVE")
+  lastPolledAt        DateTime? @map("last_polled_at")
+  lastSuccessAt       DateTime? @map("last_success_at")
+  lastReason          String?  @map("last_reason")
+  consecutiveFailures Int      @default(0) @map("consecutive_failures")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  entries             ContentFeedEntry[]
+
+  @@unique([brandId, url])
+  @@index([companyId])
+  @@index([brandId])
+  @@map("content_feeds")
+}
+
+/// One ingested entry, as a draft with its provenance attached (16b, 16h).
+///
+/// `entryKey` is always a sha256 hex digest of a canonical string (16g), so the column is a
+/// fixed 64 characters whatever an arbitrary publisher put in its `<guid>`, and the unique
+/// index on `(brandId, feedId, entryKey)` is the whole dedupe mechanism: ingest writes
+/// create-if-absent and treats the constraint violation as success. A re-poll, a retry after
+/// the 12.1b fence rejects a stale worker, or a feed that renumbers its items therefore
+/// cannot produce a second draft for the same entry.
+///
+/// `title` and `excerpt` are TEXT and are rendered as text (16d) — never HTML, never on the
+/// server-rendered bio page. The excerpt is a truncation rather than a copy of somebody
+/// else's article, and `link` is kept so the composer can show the source beside it (16h).
+model ContentFeedEntry {
+  id           String   @id @default(uuid()) @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  brandId      String   @map("brand_id") @db.Uuid
+  feedId       String   @map("feed_id") @db.Uuid
+  feed         ContentFeed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  entryKey     String   @map("entry_key")
+  title        String
+  excerpt      String
+  link         String
+  /// A validated URL only; no media is downloaded at ingest (16h).
+  enclosureUrl String?  @map("enclosure_url")
+  publishedAt  DateTime? @map("published_at")
+  fetchedAt    DateTime @default(now()) @map("fetched_at")
+  /// Always 'DRAFT'. Auto-publishing from a feed is out of scope, not a config flag (16b).
+  status       String   @default("DRAFT")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@unique([brandId, feedId, entryKey])
+  @@index([companyId])
+  @@index([brandId])
+  @@index([feedId])
+  @@map("content_feed_entries")
+}
+
+/// A public business handle we benchmark against (15a, 15d).
+///
+/// `handle` is an identifier, not a URL: it is validated against a conservative charset and
+/// rejected — not sanitized — when it fails, and it is passed to the adapter's own fixed
+/// endpoint. No competitor code path constructs a URL or calls the fetch guard at all.
+model Competitor {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  brandId   String   @map("brand_id") @db.Uuid
+  brand     MarketingBrand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  network   String
+  handle    String
+  label     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  snapshots CompetitorSnapshot[]
+
+  @@unique([brandId, network, handle])
+  @@index([companyId])
+  @@index([brandId])
+  @@map("competitors")
+}
+
+/// One day's aggregates for one competitor (15c, 15f).
+///
+/// Aggregates and a capture date — no post bodies, no commenter names, no mirrored profile
+/// photos. Competitor post content is third-party copyright and its commenters never dealt
+/// with us, so collecting it would turn a metrics feature into a personal-data processor.
+///
+/// Append-only, and unique on `(brandId, competitorId, network, captureDate)`: the poller is
+/// at-least-once, so without that key a retry writes a second row for the same day and every
+/// engagement-rate chart quietly double-counts. Rows expire through `RetentionService`.
+model CompetitorSnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  brandId        String   @map("brand_id") @db.Uuid
+  competitorId   String   @map("competitor_id") @db.Uuid
+  competitor     Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  network        String
+  /// UTC date, so "one per day" is a fact about the index rather than about the poller.
+  captureDate    DateTime @map("capture_date") @db.Date
+  followerCount  Int?     @map("follower_count")
+  postCount      Int?     @map("post_count")
+  engagementRate Decimal? @map("engagement_rate") @db.Decimal(8, 4)
+  capturedAt     DateTime @default(now()) @map("captured_at")
+
+  @@unique([brandId, competitorId, network, captureDate])
+  @@index([companyId])
+  @@index([brandId])
+  @@index([capturedAt])
+  @@map("competitor_snapshots")
+}
+
+/// The reservation counter competitor reads draw on before calling a network (15b, 15e).
+///
+/// Benchmarking spends the *publishing* quota, because Meta and X count both against the same
+/// limit. A background poll that read a balance and then spent it would have the same
+/// two-concurrent-readers hole 14p was written to close, so `reserved` is a real column moved
+/// by a conditional `UPDATE ... WHERE reserved <= headroom` whose zero-rows answer is the
+/// refusal. `windowStartedAt` is what makes the counter roll rather than accumulate forever.
+model SocialQuotaReservation {
+  id              String   @id @default(uuid()) @db.Uuid
+  companyId       String   @map("company_id") @db.Uuid
+  socialAccountId String   @unique @map("social_account_id") @db.Uuid
+  socialAccount   SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  windowStartedAt DateTime @map("window_started_at")
+  reserved        Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@map("social_quota_reservations")
 }

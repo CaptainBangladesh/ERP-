@@ -258,6 +258,17 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   /** Append-only: a correction to a reservation is a second row, never an edit (14p). */
   AiGenerationLedger: { kind: 'company-owned', immutable: true },
   TenantAiKey: { kind: 'company-owned' },
+  ContentFeed: { kind: 'company-owned' },
+  ContentFeedEntry: { kind: 'company-owned' },
+  Competitor: { kind: 'company-owned' },
+  /**
+   * Append-only in the way `PageViewEvent` is, and classified the same way for the same
+   * reason: nothing updates a snapshot — a re-poll is deduped by the unique index rather than
+   * overwriting yesterday's row — but 15c requires these to *expire* through
+   * `RetentionService`, and `immutable` refuses delete as well as update.
+   */
+  CompetitorSnapshot: { kind: 'company-owned' },
+  SocialQuotaReservation: { kind: 'company-owned' },
 };
 
 /**

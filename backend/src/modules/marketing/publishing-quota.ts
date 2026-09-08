@@ -86,3 +86,27 @@ export async function countAgainstQuota(
     },
   });
 }
+
+/**
+ * The share of a window that only publishing may draw on (15e).
+ *
+ * Competitor benchmarking spends this same ledger, because Meta and X count a profile read
+ * against the same limit as a post. But unlike a composer click, a benchmarking poll runs
+ * unattended and can quietly consume the budget a scheduled post needs at 9am — so half the
+ * window is fenced off, and an exhausted benchmark budget degrades to "snapshot skipped,
+ * quota reserved for publishing" rather than to a failed post.
+ */
+export const PUBLISHING_FLOOR_RATIO = 0.5;
+
+export function publishingFloor(window: PublishingWindow): number {
+  return Math.ceil(window.cap * PUBLISHING_FLOOR_RATIO);
+}
+
+/**
+ * How many competitor reads may still be reserved in this window.
+ *
+ * Zero is a refusal, not an error: the caller records "skipped" and tries again next window.
+ */
+export function competitorHeadroom(window: PublishingWindow, publishedInWindow: number): number {
+  return Math.max(0, window.cap - publishingFloor(window) - publishedInWindow);
+}

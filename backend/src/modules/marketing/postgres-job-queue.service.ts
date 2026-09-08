@@ -14,6 +14,7 @@ import type {
   ScheduleJobOptions,
 } from './job-queue.interface';
 import { JOB_LIST } from './schemas';
+import { runInWorker } from './worker-context';
 
 /**
  * How long a claim is good for.
@@ -440,7 +441,11 @@ export class PostgresJobQueueService implements IJobQueue {
       async () => {
         try {
           this.logger.log(`Executing job ${job.id} (${job.type}) for tenant ${job.companyId}`);
-          await handler(job);
+          // Marked as worker work, which is what lets `OutboundFetchService` refuse a call
+          // made from a request handler rather than trusting everyone to remember (14-17.0).
+          await runInWorker(async () => {
+            await handler(job);
+          });
           await this.complete(job.id, job.attempts);
           this.logger.log(`Completed job ${job.id} (${job.type})`);
         } catch (err: unknown) {

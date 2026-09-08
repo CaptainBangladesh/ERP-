@@ -106,6 +106,16 @@ export const MARKETING_PATHS = {
   aiAllowance: `/${MARKETING_ROUTE}/ai/allowance`,
   aiCompose: `/${MARKETING_ROUTE}/ai/compose`,
   brandAiKey: (brandId: string) => `/${MARKETING_ROUTE}/brands/${brandId}/ai-key`,
+  // External content sources (ticket 15) — RSS ingest and competitor benchmarking
+  contentFeeds: `/${MARKETING_ROUTE}/content-feeds`,
+  contentFeed: (id: string) => `/${MARKETING_ROUTE}/content-feeds/${id}`,
+  pollContentFeed: (id: string) => `/${MARKETING_ROUTE}/content-feeds/${id}/poll`,
+  enableContentFeed: (id: string) => `/${MARKETING_ROUTE}/content-feeds/${id}/enable`,
+  contentFeedEntries: `/${MARKETING_ROUTE}/content-feed-entries`,
+  competitors: `/${MARKETING_ROUTE}/competitors`,
+  competitor: (id: string) => `/${MARKETING_ROUTE}/competitors/${id}`,
+  snapshotCompetitor: (id: string) => `/${MARKETING_ROUTE}/competitors/${id}/snapshot`,
+  competitorSnapshots: `/${MARKETING_ROUTE}/competitor-snapshots`,
 } as const;
 
 /**
@@ -629,7 +639,158 @@ export const MARKETING_ERROR_CODES = {
   /** Only a brand's publishing role may set, rotate or delete the tenant key (14v). */
   aiKeyForbidden: 'ai_key_forbidden',
   aiKeyNotFound: 'ai_key_not_found',
+  // ─── External content sources (ticket 15) ───
+  contentFeedNotFound: 'content_feed_not_found',
+  contentFeedAlreadyExists: 'content_feed_already_exists',
+  /** The brand is at its configured ceiling of feeds or competitor rows (14-17.0e). */
+  externalSourceLimitReached: 'external_source_limit_reached',
+  competitorNotFound: 'competitor_not_found',
+  competitorAlreadyExists: 'competitor_already_exists',
+  /** No connected account for that network on this brand — never an app-level token (15b). */
+  competitorAccountMissing: 'competitor_account_missing',
+  /** The window's publishing floor is reserved; a benchmark read may not draw on it (15e). */
+  competitorQuotaReserved: 'competitor_quota_reserved',
 } as const;
+
+// ─── External content sources (ticket 15) ─────────────────────────────────────────
+
+/**
+ * Why an outbound fetch did not produce a body (14-17.0d).
+ *
+ * A closed enum, and the *only* thing an operator or a log line is ever told about a remote
+ * response. No status line, no header, no body fragment, no resolved address: blind SSRF
+ * becomes useful SSRF the moment the error panel echoes what came back.
+ */
+export const OUTBOUND_FETCH_REASONS = [
+  'blocked_scheme',
+  'blocked_address',
+  'too_many_redirects',
+  'too_large',
+  'timeout',
+  'http_error',
+  'parse_error',
+] as const;
+
+export type OutboundFetchReason = (typeof OUTBOUND_FETCH_REASONS)[number];
+
+/** What an operator reads beside a reason code — their own words, not the remote's. */
+export const OUTBOUND_FETCH_REASON_LABELS: Record<OutboundFetchReason, string> = {
+  blocked_scheme: 'Refused: the address is not an https:// URL on port 443.',
+  blocked_address: 'Refused: that host resolves to an address this server will not call.',
+  too_many_redirects: 'Refused: the address redirected too many times.',
+  too_large: 'Refused: the response was larger than the 2 MB limit.',
+  timeout: 'Refused: the host did not answer inside the time limit.',
+  http_error: 'The host answered with an error.',
+  parse_error: 'The document could not be read as a feed.',
+};
+
+export const CONTENT_FEED_STATUSES = ['ACTIVE', 'DISABLED'] as const;
+export type ContentFeedStatus = (typeof CONTENT_FEED_STATUSES)[number];
+
+/** A brand's ceiling on operator-supplied fetch targets and competitor rows (14-17.0e). */
+export const MAX_FEEDS_PER_BRAND = 25;
+export const MAX_COMPETITORS_PER_BRAND = 25;
+
+/** Consecutive failures before a feed is disabled rather than polled again (16f). */
+export const FEED_FAILURES_BEFORE_DISABLE = 5;
+
+/** The stored excerpt of somebody else's copy — an excerpt, not a reproduction (16h). */
+export const FEED_EXCERPT_MAX_CHARS = 400;
+
+export interface ContentFeedSummary {
+  readonly id: string;
+  readonly brandId: string;
+  readonly name: string;
+  readonly url: string;
+  readonly status: ContentFeedStatus;
+  readonly lastPolledAt?: string;
+  readonly lastSuccessAt?: string;
+  /** The closed code and nothing else (14-17.0d). */
+  readonly lastReason?: OutboundFetchReason;
+  readonly consecutiveFailures: number;
+  readonly entryCount: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type ContentFeedListResponse = ListResponse<ContentFeedSummary>;
+
+export interface CreateContentFeedRequest {
+  readonly brandId: string;
+  readonly name: string;
+  /** `https:` only at save time (16a); re-checked against DNS on every poll (14-17.0). */
+  readonly url: string;
+}
+
+/**
+ * One ingested entry — a draft, and the provenance that makes it obviously somebody else's
+ * writing (16h). Title and excerpt are **text**; nothing here is ever rendered as HTML (16d).
+ */
+export interface ContentFeedEntrySummary {
+  readonly id: string;
+  readonly brandId: string;
+  readonly feedId: string;
+  readonly feedName: string;
+  readonly title: string;
+  readonly excerpt: string;
+  readonly link: string;
+  readonly enclosureUrl?: string;
+  readonly publishedAt?: string;
+  readonly fetchedAt: string;
+  readonly status: 'DRAFT';
+}
+
+export type ContentFeedEntryListResponse = ListResponse<ContentFeedEntrySummary>;
+
+export interface CompetitorSummary {
+  readonly id: string;
+  readonly brandId: string;
+  readonly network: SocialPlatform;
+  /** An identifier, never a URL (15d). */
+  readonly handle: string;
+  readonly label: string;
+  /** False when the network's API exposes no public profile metrics (15a). */
+  readonly metricsSupported: boolean;
+  readonly latestSnapshot?: CompetitorSnapshotSummary;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type CompetitorListResponse = ListResponse<CompetitorSummary>;
+
+export interface CreateCompetitorRequest {
+  readonly brandId: string;
+  readonly network: SocialPlatform;
+  readonly handle: string;
+  readonly label?: string;
+}
+
+/** Aggregates and a date. No post bodies, no commenter names, no mirrored photos (15c). */
+export interface CompetitorSnapshotSummary {
+  readonly id: string;
+  readonly competitorId: string;
+  readonly network: SocialPlatform;
+  /** `YYYY-MM-DD`, UTC — one row per competitor per day (15f). */
+  readonly captureDate: string;
+  readonly followerCount?: number;
+  readonly postCount?: number;
+  readonly engagementRate?: number;
+  readonly capturedAt: string;
+}
+
+export type CompetitorSnapshotListResponse = ListResponse<CompetitorSnapshotSummary>;
+
+/**
+ * A handle's shape, per 15d — letters, digits, `_`, `.`, `-`, and nothing else.
+ *
+ * Rejected rather than sanitized when it fails, because "sanitize a handle" is how a field
+ * that quietly accepts `https://…` reopens the scraper path 15a closed.
+ */
+export const COMPETITOR_HANDLE_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+export function isCompetitorHandle(value: string): boolean {
+  return COMPETITOR_HANDLE_PATTERN.test(value);
+}
 
 // ─── Campaigns & UTM Tracking ──────────────────────────────────────────────────────
 

@@ -56,6 +56,15 @@ import { AiAllowanceService } from './ai-allowance.service';
 import { AiComposerService } from './ai-composer.service';
 import { AiKeysService } from './ai-keys.service';
 import { AiProvider, LiveAiProvider, StubAiProvider } from './ai-provider';
+import {
+  LiveOutboundFetchService,
+  OutboundFetchService,
+  StubOutboundFetchService,
+} from './outbound-fetch.service';
+import { ContentFeedsService } from './content-feeds.service';
+import { ContentFeedsController } from './content-feeds.controller';
+import { CompetitorsService } from './competitors.service';
+import { CompetitorsController } from './competitors.controller';
 
 /**
  * Marketing.
@@ -94,6 +103,8 @@ import { AiProvider, LiveAiProvider, StubAiProvider } from './ai-provider';
     SnippetsController,
     AiController,
     AiKeysController,
+    ContentFeedsController,
+    CompetitorsController,
   ],
   providers: [
     MarketingService,
@@ -151,6 +162,22 @@ import { AiProvider, LiveAiProvider, StubAiProvider } from './ai-provider';
     AiAllowanceService,
     AiKeysService,
     AiComposerService,
+    LiveOutboundFetchService,
+    StubOutboundFetchService,
+    {
+      /**
+       * The one way out of this module (14-17.0), bound once. Tests get a double that runs the
+       * *same* address check and then serves canned bytes, so "a feed host resolving to a
+       * private address is refused" is asserted against the guard's rule rather than against a
+       * mock's manners.
+       */
+      provide: OutboundFetchService,
+      useFactory: (live: LiveOutboundFetchService, stub: StubOutboundFetchService) =>
+        process.env.NODE_ENV === 'test' ? stub : live,
+      inject: [LiveOutboundFetchService, StubOutboundFetchService],
+    },
+    ContentFeedsService,
+    CompetitorsService,
   ],
   exports: [
     CryptoService,
@@ -176,6 +203,9 @@ import { AiProvider, LiveAiProvider, StubAiProvider } from './ai-provider';
     AiAllowanceService,
     AiKeysService,
     AiComposerService,
+    OutboundFetchService,
+    ContentFeedsService,
+    CompetitorsService,
   ],
 })
 export class MarketingModule implements NestModule {

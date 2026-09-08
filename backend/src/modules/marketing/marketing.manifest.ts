@@ -38,6 +38,7 @@ export const manifest: ModuleManifest = {
     '20260907130000_marketing_reliability_and_vault',
     '20260907140000_composer_intelligence',
     '20260907150000_composer_generation_allowance',
+    '20260907160000_external_content_sources',
   ],
 
   models: [
@@ -65,6 +66,11 @@ export const manifest: ModuleManifest = {
     'AiGenerationAllowance',
     'AiGenerationLedger',
     'TenantAiKey',
+    'ContentFeed',
+    'ContentFeedEntry',
+    'Competitor',
+    'CompetitorSnapshot',
+    'SocialQuotaReservation',
   ],
 
   permissions: [
@@ -102,6 +108,10 @@ export const manifest: ModuleManifest = {
     'marketing:snippets:write',
     'marketing:ai:read',
     'marketing:ai:write',
+    'marketing:content-feeds:read',
+    'marketing:content-feeds:write',
+    'marketing:competitors:read',
+    'marketing:competitors:write',
   ],
 
   navigation: [
