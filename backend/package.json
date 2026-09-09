@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "nest start --watch",
     "build": "node scripts/prisma-generate-cached.mjs && nest build",
-    "start": "node dist/main.js",
+    "start": "node scripts/start.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check:modules": "ts-node --project tsconfig.json src/platform/modules/check.ts",
     "check:tenancy": "node scripts/check-tenancy.mjs",
