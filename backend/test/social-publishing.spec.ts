@@ -9,6 +9,7 @@ import { TikTokNetworkAdapter } from '../src/modules/marketing/adapters/tiktok.a
 import { StubSocialNetworkAdapter } from '../src/modules/marketing/adapters/stub.adapter';
 import { PostgresJobQueueService } from '../src/modules/marketing/postgres-job-queue.service';
 import { Tenancy } from '../src/platform/tenancy';
+import { quotaLedgerDouble } from './harness/quota-ledger';
 
 describe('Social Publishing Engine & Evergreen Autolists', () => {
   let mockPosts: any[];
@@ -118,6 +119,9 @@ describe('Social Publishing Engine & Evergreen Autolists', () => {
           return mockSocialAccounts.find((a) => a.id === where.id) ?? null;
         }),
       },
+      // Read on every publish guard, not only by the benchmarking paths — the posts and the
+      // competitor reads spend one window between them.
+      socialQuotaLedger: quotaLedgerDouble(),
       scheduledPost: {
         // The quota query since ticket 11: published rows by publish time, plus failed rows
         // that reached the network. A stub that still filtered on `createdAt` would agree with
