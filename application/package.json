@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "concurrently -g \"tsc -b\" \"vite build\"",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build --prefix ../packages",

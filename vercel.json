@@ -1,3 +1,4 @@
 {
+  "buildCommand": "echo 'Relay ready'",
   "outputDirectory": "public"
 }
