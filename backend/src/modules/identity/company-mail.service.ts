@@ -119,49 +119,15 @@ export class CompanyMailService {
       },
     });
 
-    // Synchronize to MailboxConnection so all company employees can see and send from this company mailbox in CRM
-    try {
-      const existingMailbox = await this.prisma.mailboxConnection.findFirst({
-        where: { provider: 'smtp' },
-      });
-
-      const mailboxPayload = {
-        status: 'connected',
-        emailAddress: input.fromAddress.trim(),
-        displayName: input.fromName?.trim() || input.fromAddress.trim(),
-        smtpHost: input.host.trim(),
-        smtpPort: input.port,
-        smtpSecure: input.secure,
-        smtpUsername: input.username.trim() || input.fromAddress.trim(),
-        smtpPassword: password,
-        connectedAt: new Date(),
-      };
-
-      if (existingMailbox) {
-        await this.prisma.mailboxConnection.update({
-          where: { id: existingMailbox.id },
-          data: mailboxPayload,
-        });
-      } else {
-        const anyUser = await this.prisma.userRole.findFirst({
-          where: { companyId: company.id },
-          select: { userId: true },
-        });
-        if (anyUser) {
-          await this.prisma.mailboxConnection.create({
-            data: {
-              companyId: company.id,
-              userId: anyUser.userId,
-              provider: 'smtp',
-              ...mailboxPayload,
-            },
-          });
-        }
-      }
-    } catch {
-      // If mailbox connection sync fails, company mail settings remain saved on Company
-    }
-
+    /**
+     * Nothing is written into CRM's mailbox table from here, and nothing needs to be.
+     *
+     * This used to mirror the settings into a `MailboxConnection` row so CRM would show the
+     * company address as something its users can send from — a module writing another
+     * module's table, which the conformance pack refuses. It was also redundant: CRM derives
+     * that mailbox from these settings, read through the platform's company seam, so the
+     * copy could only ever drift from the thing it was copied from.
+     */
     return this.settings();
   }
 
@@ -182,10 +148,8 @@ export class CompanyMailService {
       },
     });
 
-    await this.prisma.mailboxConnection.deleteMany({
-      where: { provider: 'smtp' },
-    }).catch(() => {});
-
+    // No CRM row to delete either. Its company mailbox is derived from the settings just
+    // cleared, so clearing them is what removes it.
     return this.settings();
   }
 }
