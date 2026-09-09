@@ -56,6 +56,28 @@ export type MarketingSecretVar =
   (typeof MARKETING_SECRET_VARS)[keyof typeof MARKETING_SECRET_VARS];
 
 /**
+ * The subset whose absence refuses the boot, which is not all of them.
+ *
+ * The line is what a missing value *does to data*. Without the vault key, the OAuth state
+ * key, or the analytics pepper, this module still runs and quietly writes rows nobody can
+ * read back or trust later — tokens encrypted under a per-process throwaway, a `state`
+ * parameter signed with a key that changes on restart, visitor hashes that cannot be
+ * correlated. That damage is silent, permanent and already done by the time anyone looks, so
+ * it has to stop the server.
+ *
+ * `ANTHROPIC_API_KEY` is not like that. It is one vendor credential for one feature, it
+ * encrypts nothing and signs nothing, and without it the composer simply cannot run. Refusing
+ * the whole boot over it takes down invoicing, stock, the CRM and everybody's mail to protect
+ * a feature that was not going to work anyway — so it is checked where it is used instead,
+ * and `resolveAiProvider` refuses with a message naming the two ways to fix it.
+ */
+export const MARKETING_BOOT_CRITICAL_SECRET_VARS = [
+  MARKETING_SECRET_VARS.vault,
+  MARKETING_SECRET_VARS.oauthState,
+  MARKETING_SECRET_VARS.analyticsPepper,
+] as const;
+
+/**
  * One ephemeral value per variable per process, so a restart re-keys and a redeploy of the
  * same code twice never produces the same key twice.
  */
@@ -101,7 +123,22 @@ export function marketingSecret(name: MarketingSecretVar): string {
 }
 
 /**
- * The boot check. Called from `CryptoService.onModuleInit`, once, for all four.
+ * A secret that may legitimately be absent, answered as absent rather than thrown.
+ *
+ * For credentials whose absence disables a feature instead of corrupting data. In production
+ * an unset value is `undefined`, so the caller decides what to say about it; outside
+ * production it still gets the ephemeral stand-in, which keeps development and the suite
+ * behaving exactly as before.
+ */
+export function optionalMarketingSecret(name: MarketingSecretVar): string | undefined {
+  const configured = process.env[name];
+  if (configured && configured.length >= MIN_SECRET_LENGTH) return configured;
+  if (isProduction()) return undefined;
+  return marketingSecret(name);
+}
+
+/**
+ * The boot check. Called from `CryptoService.onModuleInit`, once.
  *
  * Deliberately eager rather than lazy: a check on first use would pass every boot and fail on
  * the first customer to connect a social account, which is the wrong end of the deploy to
@@ -114,7 +151,7 @@ export function assertMarketingSecrets(): void {
   }
 
   const missing: string[] = [];
-  for (const name of Object.values(MARKETING_SECRET_VARS)) {
+  for (const name of MARKETING_BOOT_CRITICAL_SECRET_VARS) {
     const value = process.env[name];
     if (!value || value.length < MIN_SECRET_LENGTH) missing.push(name);
   }
@@ -124,6 +161,19 @@ export function assertMarketingSecrets(): void {
       `Refusing to start: ${missing.join(', ')} must be set to at least ` +
         `${MIN_SECRET_LENGTH} characters in production. There is no default; a marketing ` +
         `vault encrypted under a key from this repository would protect nothing.`,
+    );
+  }
+
+  // Said once at boot rather than discovered by the first person to press Generate, and a
+  // log line rather than a refusal — see `MARKETING_BOOT_CRITICAL_SECRET_VARS` for why this
+  // one does not take the server down with it.
+  const platformKey = process.env[MARKETING_SECRET_VARS.anthropicApiKey];
+  if (!platformKey || platformKey.length < MIN_SECRET_LENGTH) {
+    logger.log(
+      `${MARKETING_SECRET_VARS.anthropicApiKey} is not set, so this deployment has no ` +
+        'platform key for the composer. Everything else runs normally; generation is ' +
+        'refused with `ai_not_configured` until either this is set or a tenant adds a key ' +
+        'of their own.',
     );
   }
 }

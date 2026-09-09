@@ -13,7 +13,7 @@ import { companyApplied, InjectPrisma, type ScopedPrisma } from '../../platform/
 import type { Valid } from '../../platform/validation';
 import { CryptoService } from './crypto.service';
 import { AiProvider, type AiCredential } from './ai-provider';
-import { MARKETING_SECRET_VARS, marketingSecret } from './vault-secrets';
+import { MARKETING_SECRET_VARS, optionalMarketingSecret } from './vault-secrets';
 import { SetAiKeyBody } from './schemas';
 
 /**
@@ -62,8 +62,30 @@ export class AiKeysService {
       };
     }
 
+    const platformKey = optionalMarketingSecret(MARKETING_SECRET_VARS.anthropicApiKey);
+
+    /**
+     * No platform key and no tenant key, which is a deployment that never configured
+     * generation rather than a failure of this request.
+     *
+     * Refused here, at the one resolver, so the composer is the only thing that stops — this
+     * used to be checked at boot, where a missing vendor credential for one feature took the
+     * whole server down with it and every other module went with it. The message names both
+     * fixes because they belong to different people: the environment variable is the
+     * operator's, the tenant key is the tenant's.
+     */
+    if (!platformKey) {
+      throw new ApiException(
+        MARKETING_ERROR_CODES.aiNotConfigured,
+        'Generation is not configured on this server. Either set ANTHROPIC_API_KEY in the ' +
+          'deployment environment, or add your own API key in the composer settings. ' +
+          'Nothing was generated and no allowance was spent.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
     return {
-      apiKey: marketingSecret(MARKETING_SECRET_VARS.anthropicApiKey),
+      apiKey: platformKey,
       model: AI_MODEL,
       source: 'platform',
     };

@@ -163,17 +163,43 @@ describe('Marketing: Brand & Encrypted OAuth Vault', () => {
       }
     });
 
-    it('refuses to boot in production without a vault secret', () => {
+    it('refuses to boot in production without the secrets that protect stored data', () => {
       const before = { ...process.env };
       try {
         process.env.NODE_ENV = 'production';
         delete process.env.MARKETING_VAULT_SECRET;
         delete process.env.MARKETING_OAUTH_STATE_SECRET;
         delete process.env.MARKETING_ANALYTICS_PEPPER;
-        delete process.env.ANTHROPIC_API_KEY;
 
         expect(() => new CryptoService().onModuleInit()).toThrow(/MARKETING_VAULT_SECRET/);
-        expect(() => new CryptoService().onModuleInit()).toThrow(/ANTHROPIC_API_KEY/);
+        expect(() => new CryptoService().onModuleInit()).toThrow(/MARKETING_OAUTH_STATE_SECRET/);
+        expect(() => new CryptoService().onModuleInit()).toThrow(/MARKETING_ANALYTICS_PEPPER/);
+      } finally {
+        process.env = before;
+        new CryptoService().forgetKey();
+      }
+    });
+
+    /**
+     * The model credential is deliberately not in that list.
+     *
+     * It encrypts nothing and signs nothing, so its absence cannot silently corrupt a stored
+     * row the way a missing vault key can — it only means the composer has no key to call the
+     * vendor with. Refusing the boot over it took down invoicing, stock, the CRM and every
+     * outgoing email to protect a feature that was not going to work either way, and a
+     * deployment that never wanted generation could not start at all. So it is checked where
+     * it is used, and `resolveAiProvider` refuses with `ai_not_configured`.
+     */
+    it('boots without a model credential, which disables generation rather than the server', () => {
+      const before = { ...process.env };
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.MARKETING_VAULT_SECRET = 'a'.repeat(40);
+        process.env.MARKETING_OAUTH_STATE_SECRET = 'b'.repeat(40);
+        process.env.MARKETING_ANALYTICS_PEPPER = 'c'.repeat(40);
+        delete process.env.ANTHROPIC_API_KEY;
+
+        expect(() => new CryptoService().onModuleInit()).not.toThrow();
       } finally {
         process.env = before;
         new CryptoService().forgetKey();
@@ -187,8 +213,8 @@ describe('Marketing: Brand & Encrypted OAuth Vault', () => {
         process.env.MARKETING_VAULT_SECRET = 'a'.repeat(40);
         process.env.MARKETING_OAUTH_STATE_SECRET = 'b'.repeat(40);
         process.env.MARKETING_ANALYTICS_PEPPER = 'c'.repeat(40);
-        // The model credential joined the list in ticket 14 (14a) and inherits the same rule:
-        // no hardcoded fallback, and a missing value refuses the boot rather than degrading.
+        // Set here too, so this covers the fully-configured deployment. Unlike the three
+        // above, its absence is not a boot failure — see the test directly above.
         process.env.ANTHROPIC_API_KEY = 'd'.repeat(40);
 
         expect(() => new CryptoService().onModuleInit()).not.toThrow();

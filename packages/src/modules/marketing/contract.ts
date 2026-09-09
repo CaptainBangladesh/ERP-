@@ -654,6 +654,16 @@ export const MARKETING_ERROR_CODES = {
   aiProviderFailed: 'ai_provider_failed',
   /** The tenant's own key was rejected. Never a silent fall back to the platform key (14v). */
   aiTenantKeyRejected: 'ai_tenant_key_rejected',
+  /**
+   * This server has no model credential at all — no platform key in the environment and no
+   * key of the tenant's own.
+   *
+   * Distinct from `aiProviderFailed`, which means a key was presented and the vendor said no.
+   * This one is a deployment that never configured generation, and the fix belongs to whoever
+   * runs the server (set `ANTHROPIC_API_KEY`) or to the tenant (bring their own key) — so it
+   * says which, rather than surfacing as an unexplained 500.
+   */
+  aiNotConfigured: 'ai_not_configured',
   /** Only a brand's publishing role may set, rotate or delete the tenant key (14v). */
   aiKeyForbidden: 'ai_key_forbidden',
   aiKeyNotFound: 'ai_key_not_found',
