@@ -160,26 +160,6 @@ export const manifest: ModuleManifest = {
      */
     { label: 'Forms', path: '/crm/capture-sources', order: 55, permission: 'crm:capture-sources:read' },
     { label: 'Campaigns', path: '/crm/campaigns', order: 56, permission: 'crm:campaigns:read' },
-    /**
-     * Where a manager authors the company's call/objection scripts and the playbooks that
-     * sequence them — the content the lead workspace surfaces in context. Gated by
-     * `crm:playbooks:write`: a rep without it never sees the entry, but still gets the scripts
-     * and next-best-action on every lead they work.
-     */
-    { label: 'Playbooks', path: '/crm/playbooks', order: 57, permission: 'crm:playbooks:write' },
-    /**
-     * The personal planning home — the rep's own assigned tasks (read from the activities list,
-     * no new endpoint) alongside their private planner notes. Gated by `crm:activities:read`, the
-     * permission every rep working their own slate already has, so a rep without the team gate
-     * still gets their own planner.
-     */
-    { label: 'My Planner', path: '/crm/planner', order: 58, permission: 'crm:activities:read' },
-    /**
-     * The team's shared plan — one strategy/targets note the whole team sees. Reading rides on
-     * `crm:team:read` (the team gate that governs the whole Planning track); a manager with
-     * `crm:team:manage` is the one who edits it.
-     */
-    { label: 'Team Plan', path: '/crm/team-plan', order: 59, permission: 'crm:team:read' },
   ],
 
   events: {

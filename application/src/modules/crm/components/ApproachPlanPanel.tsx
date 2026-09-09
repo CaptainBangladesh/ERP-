@@ -30,6 +30,8 @@ type PlanForm = Record<keyof SaveApproachPlanRequest, string>;
 
 const EMPTY_FORM: PlanForm = { angle: '', decisionMakers: '', objections: '', nextSteps: '', notes: '' };
 
+const draftKey = (leadId: string) => `crm:approach-plan:draft:${leadId}`;
+
 function toForm(plan: ApproachPlanResponse | undefined): PlanForm {
   if (!plan) return EMPTY_FORM;
   return {
@@ -67,23 +69,74 @@ export function ApproachPlanPanel({ leadId, canWrite }: { leadId: string; canWri
 
   const [form, setForm] = useState<PlanForm>(EMPTY_FORM);
   const [dirty, setDirty] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
-  // Load the fetched plan into the form once it arrives, unless the rep has unsaved edits.
+  // Load the fetched plan into the form once it arrives, checking for draft protection
   useEffect(() => {
-    if (plan.data && !dirty) setForm(toForm(plan.data));
-  }, [plan.data, dirty]);
+    if (!plan.data) return;
+
+    if (!dirty) {
+      try {
+        const savedDraft = typeof window !== 'undefined' ? window.sessionStorage?.getItem(draftKey(leadId)) : null;
+        if (savedDraft) {
+          const parsed = JSON.parse(savedDraft) as PlanForm;
+          setForm(parsed);
+          setDirty(true);
+          return;
+        }
+      } catch {
+        // Fallback to server data on storage error
+      }
+      setForm(toForm(plan.data));
+    }
+  }, [plan.data, leadId]);
 
   const save = useMutation({
-    mutationFn: () => api.put<ApproachPlanResponse>(APPROACH_PLAN_PATHS.byLead(leadId), toRequest(form)),
+    mutationFn: (requestForm: PlanForm) =>
+      api.put<ApproachPlanResponse>(APPROACH_PLAN_PATHS.byLead(leadId), toRequest(requestForm)),
     onSuccess: (saved) => {
       setDirty(false);
+      try {
+        if (typeof window !== 'undefined') {
+          window.sessionStorage?.removeItem(draftKey(leadId));
+        }
+      } catch {
+        // Ignore storage error
+      }
       queryClient.setQueryData(['crm', 'approach-plan', leadId], saved);
     },
   });
 
   function update(key: keyof PlanForm, value: string) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      try {
+        if (typeof window !== 'undefined') {
+          window.sessionStorage?.setItem(draftKey(leadId), JSON.stringify(next));
+        }
+      } catch {
+        // Ignore storage error
+      }
+      return next;
+    });
     setDirty(true);
+  }
+
+  function handleDiscard() {
+    setDirty(false);
+    try {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage?.removeItem(draftKey(leadId));
+      }
+    } catch {
+      // Ignore storage error
+    }
+    setForm(toForm(plan.data));
+  }
+
+  function handleClear() {
+    setConfirmClear(false);
+    save.mutate(EMPTY_FORM);
   }
 
   if (plan.isLoading) {
@@ -93,15 +146,66 @@ export function ApproachPlanPanel({ leadId, canWrite }: { leadId: string; canWri
   const failure = save.error instanceof ApiFailure ? save.error : undefined;
   const fields = failure?.fields ?? {};
   const lastSaved = plan.data?.updatedAt ? new Date(plan.data.updatedAt) : null;
+  const hasContent = Boolean(
+    form.angle?.trim() ||
+      form.decisionMakers?.trim() ||
+      form.objections?.trim() ||
+      form.nextSteps?.trim() ||
+      form.notes?.trim(),
+  );
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold text-slate-900">Approach plan</h2>
-        <p className="text-sm text-slate-600">
-          How we'll approach this prospect — the intent behind the outreach, kept apart from the
-          activity timeline. One plan per lead.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold text-slate-900">Approach plan</h2>
+          <p className="text-sm text-slate-600">
+            How we'll approach this prospect — the intent behind the outreach, kept apart from the
+            activity timeline. One plan per lead.
+          </p>
+        </div>
+
+        {canWrite && (
+          <div className="flex items-center gap-2">
+            {dirty && (
+              <button
+                type="button"
+                onClick={handleDiscard}
+                className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                Discard edits
+              </button>
+            )}
+            {hasContent && !confirmClear && (
+              <button
+                type="button"
+                onClick={() => setConfirmClear(true)}
+                className="rounded-md border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+              >
+                Clear plan
+              </button>
+            )}
+            {confirmClear && (
+              <div className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 p-1">
+                <span className="px-2 text-xs font-medium text-rose-800">Clear all fields?</span>
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="rounded bg-rose-600 px-2 py-1 text-xs font-bold text-white hover:bg-rose-700"
+                >
+                  Yes, clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmClear(false)}
+                  className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -136,12 +240,17 @@ export function ApproachPlanPanel({ leadId, canWrite }: { leadId: string; canWri
           <button
             type="button"
             disabled={!dirty || save.isPending}
-            onClick={() => save.mutate()}
+            onClick={() => save.mutate(form)}
             className="rounded-md bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {save.isPending ? 'Saving…' : 'Save plan'}
           </button>
-          {dirty && <span className="text-xs text-amber-600">Unsaved changes</span>}
+          {dirty && (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Unsaved draft protected
+            </span>
+          )}
           {!dirty && lastSaved && (
             <span className="text-xs text-slate-400">Last saved {lastSaved.toLocaleString()}</span>
           )}

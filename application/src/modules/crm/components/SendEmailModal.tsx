@@ -68,7 +68,8 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
       const activeMailboxes = (mRes.items || []).filter((m: MailboxConnectionSummary) => m.status === 'connected');
       setMailboxes(activeMailboxes);
       if (activeMailboxes.length > 0 && !selectedMailboxId) {
-        setSelectedMailboxId(activeMailboxes[0]?.id || '');
+        const preferred = activeMailboxes.find((m) => m.isShared || m.provider === 'smtp') || activeMailboxes[0];
+        setSelectedMailboxId(preferred?.id || '');
       }
 
       setTemplates(tRes.items || []);

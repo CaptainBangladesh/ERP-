@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ACTIVITY_TYPES,
+  ERROR_CODES,
   LEAD_STATUSES,
   PLAYBOOK_PATHS,
   SCRIPT_CATEGORIES,
@@ -16,8 +17,9 @@ import {
   type ScriptCategory,
   type ScriptListResponse,
   type ScriptSummary,
+  type UpdatePlaybookRequest,
+  type UpdateScriptRequest,
 } from '@erp/shared';
-import { ERROR_CODES } from '@erp/shared';
 import { Field, FormError, Select } from '@erp/shared/ui';
 import { ApiFailure, api } from '../../../api/client';
 import { useSession } from '../../../session/SessionProvider';
@@ -46,11 +48,6 @@ const ACTIVITY_LABELS: Record<ActivityType, string> = {
   task: 'Task',
 };
 
-/**
- * The manager's authoring surface for the content-and-guidance track: the company's spoken
- * scripts, and the playbooks that sequence them. Deliberately lean — create and remove, not a
- * browsable library — because the scripts do their real work in context on the lead, not here.
- */
 export function PlaybooksPage() {
   const { session } = useSession();
 
@@ -82,8 +79,12 @@ export function PlaybooksPage() {
 
 // ─── scripts ────────────────────────────────────────────────────────────────────────
 
-function ScriptsSection() {
+export function ScriptsSection() {
   const queryClient = useQueryClient();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingScript, setEditingScript] = useState<ScriptSummary | null>(null);
+  const [confirmDeleteScript, setConfirmDeleteScript] = useState<ScriptSummary | null>(null);
+
   const scripts = useQuery({
     queryKey: ['crm', 'scripts', 'list'],
     queryFn: () => api.get<ScriptListResponse>(SCRIPT_PATHS.scripts),
@@ -95,31 +96,111 @@ function ScriptsSection() {
 
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(SCRIPT_PATHS.script(id)),
-    onSuccess: refresh,
+    onSuccess: () => {
+      setConfirmDeleteScript(null);
+      refresh();
+    },
   });
 
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold text-slate-900">Scripts</h2>
-
-      <AddScript onAdded={refresh} />
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Scripts</h2>
+          <p className="text-xs text-slate-500">
+            Spoken scripts, objection handles, and elevator pitches displayed in lead guidance.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setEditingScript(null);
+            setModalOpen(true);
+          }}
+          className="rounded-md bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-slate-800"
+        >
+          + New Script
+        </button>
+      </div>
 
       {scripts.data && scripts.data.items.length === 0 && (
-        <p className="text-sm text-slate-500">No scripts yet. Add your first one above.</p>
+        <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center">
+          <p className="text-sm text-slate-500">No scripts yet. Add your first sales script above.</p>
+        </div>
       )}
 
       <div className="flex flex-col gap-3">
         {(scripts.data?.items ?? []).map((script) => (
-          <ScriptRow key={script.id} script={script} onDelete={() => remove.mutate(script.id)} />
+          <ScriptRow
+            key={script.id}
+            script={script}
+            onEdit={() => {
+              setEditingScript(script);
+              setModalOpen(true);
+            }}
+            onDelete={() => setConfirmDeleteScript(script)}
+          />
         ))}
       </div>
+
+      {modalOpen && (
+        <AuthorScriptModal
+          script={editingScript}
+          onClose={() => {
+            setModalOpen(false);
+            setEditingScript(null);
+          }}
+          onSuccess={() => {
+            setModalOpen(false);
+            setEditingScript(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {confirmDeleteScript && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+            <h3 className="text-base font-bold text-slate-900">Delete Script?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Are you sure you want to delete <strong className="text-slate-900">"{confirmDeleteScript.title}"</strong>?
+              This will remove it from the workspace guidance rails for all representatives.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteScript(null)}
+                className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(confirmDeleteScript.id)}
+                className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                {remove.isPending ? 'Deleting…' : 'Delete Script'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
-function ScriptRow({ script, onDelete }: { script: ScriptSummary; onDelete: () => void }) {
+function ScriptRow({
+  script,
+  onEdit,
+  onDelete,
+}: {
+  script: ScriptSummary;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-4">
+    <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-4 shadow-2xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold text-slate-900">{script.title}</span>
@@ -130,114 +211,164 @@ function ScriptRow({ script, onDelete }: { script: ScriptSummary; onDelete: () =
             {script.leadStatus ? STATUS_LABELS[script.leadStatus as LeadStatus] ?? script.leadStatus : 'Any status'}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="text-xs font-medium text-rose-600 hover:text-rose-900"
-        >
-          Delete
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-xs font-medium text-slate-600 hover:text-slate-900"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-xs font-medium text-rose-600 hover:text-rose-900"
+          >
+            Delete
+          </button>
+        </div>
       </div>
       <p className="whitespace-pre-wrap text-sm text-slate-600">{script.body}</p>
     </div>
   );
 }
 
-function AddScript({ onAdded }: { onAdded: () => void }) {
-  const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<ScriptCategory>('opener');
-  const [leadStatus, setLeadStatus] = useState('');
-  const [body, setBody] = useState('');
+interface AuthorScriptModalProps {
+  script: ScriptSummary | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}
 
-  const add = useMutation({
-    mutationFn: () =>
-      api.post(SCRIPT_PATHS.scripts, {
+function AuthorScriptModal({ script, onClose, onSuccess }: AuthorScriptModalProps) {
+  const isEdit = Boolean(script);
+  const [title, setTitle] = useState(script?.title ?? '');
+  const [category, setCategory] = useState<ScriptCategory>(script?.category ?? 'opener');
+  const [leadStatus, setLeadStatus] = useState<string>(script?.leadStatus ?? '');
+  const [body, setBody] = useState(script?.body ?? '');
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      if (isEdit && script) {
+        return api.patch(SCRIPT_PATHS.script(script.id), {
+          title,
+          category,
+          body,
+          leadStatus: leadStatus === '' ? null : leadStatus,
+        } satisfies UpdateScriptRequest);
+      }
+      return api.post(SCRIPT_PATHS.scripts, {
         title,
         category,
         body,
         leadStatus: leadStatus === '' ? null : leadStatus,
-      } satisfies CreateScriptRequest),
-    onSuccess: () => {
-      setTitle('');
-      setBody('');
-      setLeadStatus('');
-      setCategory('opener');
-      onAdded();
+      } satisfies CreateScriptRequest);
     },
+    onSuccess,
   });
 
-  const failure = add.error instanceof ApiFailure ? add.error : undefined;
+  const failure = saveMutation.error instanceof ApiFailure ? saveMutation.error : undefined;
   const fields = failure?.fields ?? {};
 
   return (
-    <form
-      noValidate
-      className="flex flex-col gap-4 rounded-md border border-slate-200 bg-white p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        add.mutate();
-      }}
-    >
-      <div className="flex flex-wrap gap-4">
-        <div className="min-w-56 flex-1">
-          <Field id="script-title" label="Title" value={title} error={fields.title} onChange={setTitle} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900">
+            {isEdit ? 'Edit Sales Script' : 'Create Sales Script'}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            ✕
+          </button>
         </div>
-        <div className="min-w-40">
-          <Select
-            id="script-category"
-            label="Category"
-            value={category}
-            options={SCRIPT_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))}
-            onChange={(v) => setCategory(v as ScriptCategory)}
-          />
-        </div>
-        <div className="min-w-40">
-          <Select
-            id="script-status"
-            label="Relevant when"
-            value={leadStatus}
-            options={[
-              { value: '', label: 'Any status' },
-              ...LEAD_STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s] })),
-            ]}
-            onChange={setLeadStatus}
-          />
-        </div>
-      </div>
 
-      <LabeledTextarea
-        id="script-body"
-        label="Script"
-        value={body}
-        onChange={setBody}
-        error={fields.body}
-        rows={4}
-        hint="Use {{lead.name}}, {{lead.organisationName}}, {{lead.email}}, {{lead.phone}} or {{custom.<field>}} to merge in the lead's data. Add |fallback for a default, e.g. {{lead.name|there}}."
-      />
-
-      {failure && failure.code !== ERROR_CODES.validationFailed && <FormError>{failure.message}</FormError>}
-
-      <div>
-        <button
-          type="submit"
-          disabled={add.isPending}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        <form
+          noValidate
+          className="mt-4 flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveMutation.mutate();
+          }}
         >
-          {add.isPending ? 'Adding…' : 'Add script'}
-        </button>
+          <div className="flex flex-wrap gap-4">
+            <div className="min-w-56 flex-1">
+              <Field id="script-title" label="Title" value={title} error={fields.title} onChange={setTitle} />
+            </div>
+            <div className="min-w-36">
+              <Select
+                id="script-category"
+                label="Category"
+                value={category}
+                options={SCRIPT_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))}
+                onChange={(v) => setCategory(v as ScriptCategory)}
+              />
+            </div>
+            <div className="min-w-36">
+              <Select
+                id="script-status"
+                label="Relevant when"
+                value={leadStatus}
+                options={[
+                  { value: '', label: 'Any status' },
+                  ...LEAD_STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s] })),
+                ]}
+                onChange={setLeadStatus}
+              />
+            </div>
+          </div>
+
+          <LabeledTextarea
+            id="script-body"
+            label="Script Content"
+            value={body}
+            onChange={setBody}
+            error={fields.body}
+            rows={5}
+            hint="Use {{lead.name}}, {{lead.organisationName}}, {{lead.email}}, {{lead.phone}} or {{custom.<field>}} to merge lead details. Add |fallback for defaults, e.g. {{lead.name|there}}."
+          />
+
+          {failure && failure.code !== ERROR_CODES.validationFailed && (
+            <FormError>{failure.message}</FormError>
+          )}
+
+          <div className="mt-2 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saveMutation.isPending}
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              {saveMutation.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Script'}
+            </button>
+          </div>
+        </form>
       </div>
-    </form>
+    </div>
   );
 }
 
 // ─── playbooks ──────────────────────────────────────────────────────────────────────
 
-function PlaybooksSection() {
+export function PlaybooksSection() {
   const queryClient = useQueryClient();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingPlaybook, setEditingPlaybook] = useState<PlaybookSummary | null>(null);
+  const [confirmDeletePlaybook, setConfirmDeletePlaybook] = useState<PlaybookSummary | null>(null);
+
   const playbooks = useQuery({
     queryKey: ['crm', 'playbooks', 'list'],
     queryFn: () => api.get<PlaybookListResponse>(PLAYBOOK_PATHS.playbooks),
   });
+
   const scripts = useQuery({
     queryKey: ['crm', 'scripts', 'list'],
     queryFn: () => api.get<ScriptListResponse>(SCRIPT_PATHS.scripts),
@@ -249,17 +380,37 @@ function PlaybooksSection() {
 
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(PLAYBOOK_PATHS.playbook(id)),
-    onSuccess: refresh,
+    onSuccess: () => {
+      setConfirmDeletePlaybook(null);
+      refresh();
+    },
   });
 
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold text-slate-900">Playbooks</h2>
-
-      <AddPlaybook scripts={scripts.data?.items ?? []} onAdded={refresh} />
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Playbooks</h2>
+          <p className="text-xs text-slate-500">
+            Multi-step sales cadences sequencing discovery, outreach, and objection handling.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setEditingPlaybook(null);
+            setModalOpen(true);
+          }}
+          className="rounded-md bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-slate-800"
+        >
+          + New Playbook
+        </button>
+      </div>
 
       {playbooks.data && playbooks.data.items.length === 0 && (
-        <p className="text-sm text-slate-500">No playbooks yet. Build your first one above.</p>
+        <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center">
+          <p className="text-sm text-slate-500">No playbooks yet. Build your first sales sequence above.</p>
+        </div>
       )}
 
       <div className="flex flex-col gap-3">
@@ -268,10 +419,59 @@ function PlaybooksSection() {
             key={playbook.id}
             playbook={playbook}
             scripts={scripts.data?.items ?? []}
-            onDelete={() => remove.mutate(playbook.id)}
+            onEdit={() => {
+              setEditingPlaybook(playbook);
+              setModalOpen(true);
+            }}
+            onDelete={() => setConfirmDeletePlaybook(playbook)}
           />
         ))}
       </div>
+
+      {modalOpen && (
+        <AuthorPlaybookModal
+          playbook={editingPlaybook}
+          scripts={scripts.data?.items ?? []}
+          onClose={() => {
+            setModalOpen(false);
+            setEditingPlaybook(null);
+          }}
+          onSuccess={() => {
+            setModalOpen(false);
+            setEditingPlaybook(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {confirmDeletePlaybook && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+            <h3 className="text-base font-bold text-slate-900">Delete Playbook?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Are you sure you want to delete <strong className="text-slate-900">"{confirmDeletePlaybook.name}"</strong>?
+              Leads enrolled in this sequence will be unenrolled.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmDeletePlaybook(null)}
+                className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(confirmDeletePlaybook.id)}
+                className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                {remove.isPending ? 'Deleting…' : 'Delete Playbook'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -279,24 +479,39 @@ function PlaybooksSection() {
 function PlaybookRow({
   playbook,
   scripts,
+  onEdit,
   onDelete,
 }: {
   playbook: PlaybookSummary;
   scripts: ScriptSummary[];
+  onEdit: () => void;
   onDelete: () => void;
 }) {
   const scriptTitle = (id: string | null) => (id ? scripts.find((s) => s.id === id)?.title ?? 'Script' : null);
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-4">
+    <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-4 shadow-2xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col">
           <span className="text-sm font-bold text-slate-900">{playbook.name}</span>
           {playbook.description && <span className="text-xs text-slate-500">{playbook.description}</span>}
         </div>
-        <button type="button" onClick={onDelete} className="text-xs font-medium text-rose-600 hover:text-rose-900">
-          Delete
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-xs font-medium text-slate-600 hover:text-slate-900"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-xs font-medium text-rose-600 hover:text-rose-900"
+          >
+            Delete
+          </button>
+        </div>
       </div>
       <ol className="flex flex-col gap-1.5">
         {playbook.steps.map((step) => (
@@ -322,150 +537,189 @@ function PlaybookRow({
 
 const EMPTY_STEP: PlaybookStepInput = { title: '', instruction: '', scriptId: null, activityType: null };
 
-function AddPlaybook({ scripts, onAdded }: { scripts: ScriptSummary[]; onAdded: () => void }) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [steps, setSteps] = useState<PlaybookStepInput[]>([{ ...EMPTY_STEP }]);
+interface AuthorPlaybookModalProps {
+  playbook: PlaybookSummary | null;
+  scripts: ScriptSummary[];
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function AuthorPlaybookModal({ playbook, scripts, onClose, onSuccess }: AuthorPlaybookModalProps) {
+  const isEdit = Boolean(playbook);
+  const [name, setName] = useState(playbook?.name ?? '');
+  const [description, setDescription] = useState(playbook?.description ?? '');
+  const [steps, setSteps] = useState<PlaybookStepInput[]>(
+    playbook && playbook.steps.length > 0
+      ? playbook.steps.map((s) => ({
+          title: s.title,
+          instruction: s.instruction,
+          scriptId: s.scriptId,
+          activityType: s.activityType,
+        }))
+      : [{ ...EMPTY_STEP }],
+  );
 
   function updateStep(index: number, patch: Partial<PlaybookStepInput>) {
     setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   }
 
-  function reset() {
-    setName('');
-    setDescription('');
-    setSteps([{ ...EMPTY_STEP }]);
-  }
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const payloadSteps = steps.map((s) => ({
+        title: s.title,
+        instruction: s.instruction,
+        scriptId: s.scriptId || null,
+        activityType: s.activityType || null,
+      }));
 
-  const add = useMutation({
-    mutationFn: () =>
-      api.post(PLAYBOOK_PATHS.playbooks, {
+      if (isEdit && playbook) {
+        return api.patch(PLAYBOOK_PATHS.playbook(playbook.id), {
+          name,
+          description: description === '' ? null : description,
+          steps: payloadSteps,
+        } satisfies UpdatePlaybookRequest);
+      }
+
+      return api.post(PLAYBOOK_PATHS.playbooks, {
         name,
         description: description === '' ? null : description,
-        steps: steps.map((s) => ({
-          title: s.title,
-          instruction: s.instruction,
-          scriptId: s.scriptId || null,
-          activityType: s.activityType || null,
-        })),
-      } satisfies CreatePlaybookRequest),
-    onSuccess: () => {
-      reset();
-      onAdded();
+        steps: payloadSteps,
+      } satisfies CreatePlaybookRequest);
     },
+    onSuccess,
   });
 
-  const failure = add.error instanceof ApiFailure ? add.error : undefined;
+  const failure = saveMutation.error instanceof ApiFailure ? saveMutation.error : undefined;
   const fields = failure?.fields ?? {};
 
   return (
-    <form
-      noValidate
-      className="flex flex-col gap-4 rounded-md border border-slate-200 bg-white p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        add.mutate();
-      }}
-    >
-      <div className="flex flex-wrap gap-4">
-        <div className="min-w-56 flex-1">
-          <Field id="playbook-name" label="Playbook name" value={name} error={fields.name} onChange={setName} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-6 shadow-xl my-8">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900">
+            {isEdit ? 'Edit Sales Playbook' : 'Create Sales Playbook'}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            ✕
+          </button>
         </div>
-        <div className="min-w-56 flex-1">
+
+        <form
+          noValidate
+          className="mt-4 flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveMutation.mutate();
+          }}
+        >
+          <Field id="playbook-name" label="Playbook Name" value={name} error={fields.name} onChange={setName} />
           <Field
             id="playbook-description"
             label="Description (optional)"
             value={description}
+            error={fields.description}
             onChange={setDescription}
           />
-        </div>
-      </div>
 
-      <div className="flex flex-col gap-3">
-        <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Steps</span>
-        {fields.steps && <p className="text-xs font-semibold text-rose-600">{fields.steps}</p>}
-
-        {steps.map((step, index) => (
-          <div key={index} className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Step {index + 1}</span>
-              {steps.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => setSteps((prev) => prev.filter((_, i) => i !== index))}
-                  className="text-xs font-medium text-rose-600 hover:text-rose-900"
-                >
-                  Remove
-                </button>
-              )}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Ordered Steps</span>
+              <button
+                type="button"
+                onClick={() => setSteps((prev) => [...prev, { ...EMPTY_STEP }])}
+                className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                + Add Step
+              </button>
             </div>
-            <Field
-              id={`step-title-${index}`}
-              label="What the rep does"
-              value={step.title}
-              onChange={(v) => updateStep(index, { title: v })}
-            />
-            <LabeledTextarea
-              id={`step-instruction-${index}`}
-              label="Instruction"
-              value={step.instruction}
-              onChange={(v) => updateStep(index, { instruction: v })}
-              rows={2}
-            />
-            <div className="flex flex-wrap gap-3">
-              <div className="min-w-48 flex-1">
+
+            {steps.map((step, index) => (
+              <div
+                key={index}
+                className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700">Step {index + 1}</span>
+                  {steps.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setSteps((prev) => prev.filter((_, i) => i !== index))}
+                      className="text-xs text-rose-600 hover:text-rose-800"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field
+                    id={`step-${index}-title`}
+                    label="Step title"
+                    value={step.title}
+                    onChange={(v) => updateStep(index, { title: v })}
+                  />
+                  <Select
+                    id={`step-${index}-activity`}
+                    label="Action logged"
+                    value={step.activityType ?? ''}
+                    options={[
+                      { value: '', label: 'None' },
+                      ...ACTIVITY_TYPES.map((a) => ({ value: a, label: ACTIVITY_LABELS[a] })),
+                    ]}
+                    onChange={(v) => updateStep(index, { activityType: (v as ActivityType) || null })}
+                  />
+                </div>
+
+                <Field
+                  id={`step-${index}-instruction`}
+                  label="Rep instruction"
+                  value={step.instruction}
+                  onChange={(v) => updateStep(index, { instruction: v })}
+                />
+
                 <Select
-                  id={`step-script-${index}`}
-                  label="Script (optional)"
+                  id={`step-${index}-script`}
+                  label="Script to deliver (optional)"
                   value={step.scriptId ?? ''}
                   options={[
-                    { value: '', label: 'None' },
+                    { value: '', label: 'No script attached' },
                     ...scripts.map((s) => ({ value: s.id, label: s.title })),
                   ]}
                   onChange={(v) => updateStep(index, { scriptId: v || null })}
                 />
               </div>
-              <div className="min-w-40">
-                <Select
-                  id={`step-activity-${index}`}
-                  label="Logs as (optional)"
-                  value={step.activityType ?? ''}
-                  options={[
-                    { value: '', label: 'None' },
-                    ...ACTIVITY_TYPES.map((t) => ({ value: t, label: ACTIVITY_LABELS[t] })),
-                  ]}
-                  onChange={(v) => updateStep(index, { activityType: (v || null) as ActivityType | null })}
-                />
-              </div>
-            </div>
+            ))}
           </div>
-        ))}
 
-        <button
-          type="button"
-          onClick={() => setSteps((prev) => [...prev, { ...EMPTY_STEP }])}
-          className="self-start rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
-        >
-          + Add step
-        </button>
+          {failure && failure.code !== ERROR_CODES.validationFailed && (
+            <FormError>{failure.message}</FormError>
+          )}
+
+          <div className="mt-4 flex justify-end gap-3 border-t border-slate-100 pt-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saveMutation.isPending}
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              {saveMutation.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Playbook'}
+            </button>
+          </div>
+        </form>
       </div>
-
-      {failure && failure.code !== ERROR_CODES.validationFailed && <FormError>{failure.message}</FormError>}
-
-      <div>
-        <button
-          type="submit"
-          disabled={add.isPending}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          {add.isPending ? 'Creating…' : 'Create playbook'}
-        </button>
-      </div>
-    </form>
+    </div>
   );
 }
-
-// ─── shared bits ────────────────────────────────────────────────────────────────────
 
 function LabeledTextarea({
   id,
@@ -473,7 +727,7 @@ function LabeledTextarea({
   value,
   onChange,
   error,
-  rows = 3,
+  rows,
   hint,
 }: {
   id: string;
@@ -491,12 +745,12 @@ function LabeledTextarea({
       </label>
       <textarea
         id={id}
-        rows={rows}
+        rows={rows ?? 4}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
       />
-      {hint && <p className="text-xs text-slate-400">{hint}</p>}
+      {hint && <p className="text-xs text-slate-500">{hint}</p>}
       {error && <p className="text-xs font-semibold text-rose-600">{error}</p>}
     </div>
   );

@@ -1,6 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
-import { Mailer, SMTP_TIMEOUTS, type MailMessage } from '../../platform/mail';
+import {
+  Mailer,
+  SMTP_TIMEOUTS,
+  isSmtpRelayConfigured,
+  sendThroughRelay,
+  type MailMessage,
+} from '../../platform/mail';
 import { CompanyMailService } from './company-mail.service';
 import { mailSendFailed } from './errors';
 
@@ -53,6 +59,62 @@ export class CompanyMailer extends Mailer {
         `No company mail configured; sending "${message.subject}" through the deployment's mailer.`,
       );
       return this.deploymentMailer.send(message);
+    }
+
+    if (isSmtpRelayConfigured()) {
+      const from = company.fromName
+        ? `${company.fromName} <${company.fromAddress}>`
+        : company.fromAddress;
+
+      await sendThroughRelay(
+        {
+          host: company.host,
+          port: company.port,
+          secure: company.secure,
+          username: company.username,
+          password: company.password,
+        },
+        {
+          from,
+          to: message.to,
+          subject: message.subject,
+          body: message.body,
+          html: message.html,
+        },
+      );
+      this.logger.log(`Sent system email "${message.subject}" to ${message.to} via Vercel SMTP relay.`);
+      return;
+    }
+
+    if (process.env.RESEND_API_KEY) {
+      const from = company.fromName
+        ? `${company.fromName} <${company.fromAddress}>`
+        : company.fromAddress;
+
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to: [message.to],
+          subject: message.subject,
+          text: message.body,
+          html: message.html,
+        }),
+      }).catch((cause) => {
+        throw mailSendFailed(cause instanceof Error ? cause.message : String(cause));
+      });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { message?: string };
+        throw mailSendFailed(`Resend API error (${response.status}): ${data.message || 'Unknown error'}`);
+      }
+
+      this.logger.log(`Sent system email "${message.subject}" to ${message.to} via Resend HTTPS API.`);
+      return;
     }
 
     const transport = nodemailer.createTransport({

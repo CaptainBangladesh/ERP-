@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import * as XLSX from 'xlsx';
 import {
   isAuthenticationFailure,
   LEAD_FIELD_PATHS,
@@ -679,6 +678,7 @@ function findBestMatch(header: string, customFields: LeadFieldSummary[] = []): s
 }
 
 async function readHeadersFromFile(file: File): Promise<{ headers: string[]; count: number }> {
+  const XLSX = await import('xlsx');
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
   const headersSet = new Set<string>();

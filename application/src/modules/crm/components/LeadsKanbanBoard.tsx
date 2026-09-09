@@ -8,7 +8,7 @@ import type {
   UserSummary,
 } from '@erp/shared';
 import { navigate } from '../../../app/location';
-import { leadWorkspacePath } from '../pages/LeadWorkspace';
+import { leadWorkspacePath } from '../lead-routes';
 import type { LeadStatusVocabulary, StatusLabel } from '../vocabulary';
 
 /**

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useSession } from '../session/SessionProvider';
 import { AppShell } from './AppShell';
 import { navigate, useLocationPath } from './location';
@@ -38,11 +38,19 @@ export function AppRoutes() {
 
   const Screen = route.component;
 
-  if (route.public) return <Screen />;
+  if (route.public) {
+    return (
+      <Suspense fallback={<Loading />}>
+        <Screen />
+      </Suspense>
+    );
+  }
 
   return (
     <AppShell>
-      <Screen />
+      <Suspense fallback={<Loading />}>
+        <Screen />
+      </Suspense>
     </AppShell>
   );
 }

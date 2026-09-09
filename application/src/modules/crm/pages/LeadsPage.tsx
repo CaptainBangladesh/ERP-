@@ -30,7 +30,7 @@ import { ApiFailure, api } from '../../../api/client';
 import { navigate } from '../../../app/location';
 import { useSession } from '../../../session/SessionProvider';
 import { hasPermission } from '../../../session/permissions';
-import { leadWorkspacePath } from './LeadWorkspace';
+import { leadWorkspacePath } from '../lead-routes';
 import { BoardSetupModal } from '../components/BoardSetupModal';
 import { BulkActionToolbar, BulkLayer, BulkNotice } from '../components/BulkActionToolbar';
 import { MassEmailModal } from '../components/MassEmailModal';

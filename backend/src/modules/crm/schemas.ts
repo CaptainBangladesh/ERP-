@@ -575,15 +575,29 @@ const ACTIVITY_TYPE = oneOf<ActivityType>(ACTIVITY_TYPES, {
   invalid: 'That is not a valid activity type.',
 });
 
-const ACTIVITY_OCCURRED_AT = day({
-  missing: 'Enter an occurred date.',
-  invalid: 'Enter a valid occurred date.',
-});
+function parseTimestampOrDay(missing: string, invalid: string) {
+  return rule<Date>(missing, (value) => {
+    if (typeof value !== 'string') return refused(invalid);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      if (Number.isNaN(parsed.getTime())) return refused(invalid);
+      return accepted(parsed);
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return refused(invalid);
+    return accepted(parsed);
+  });
+}
 
-const ACTIVITY_DUE_AT = day({
-  missing: 'Enter a due date.',
-  invalid: 'Enter a valid due date.',
-});
+const ACTIVITY_OCCURRED_AT = parseTimestampOrDay(
+  'Enter an occurred date.',
+  'Enter a valid occurred date.',
+);
+
+const ACTIVITY_DUE_AT = parseTimestampOrDay(
+  'Enter a due date.',
+  'Enter a valid due date.',
+);
 
 const ACTIVITY_NOTES = {
   minLength: 1,

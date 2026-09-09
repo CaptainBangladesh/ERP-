@@ -4,6 +4,10 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/api/smtp-relay",
+      "destination": "/api/smtp-relay"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://erp-c5im.onrender.com/api/:path*"
     },

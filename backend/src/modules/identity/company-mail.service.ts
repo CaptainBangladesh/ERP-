@@ -118,6 +118,49 @@ export class CompanyMailService {
       },
     });
 
+    // Synchronize to MailboxConnection so all company employees can see and send from this company mailbox in CRM
+    try {
+      const existingMailbox = await this.prisma.mailboxConnection.findFirst({
+        where: { provider: 'smtp' },
+      });
+
+      const mailboxPayload = {
+        status: 'connected',
+        emailAddress: input.fromAddress.trim(),
+        displayName: input.fromName?.trim() || input.fromAddress.trim(),
+        smtpHost: input.host.trim(),
+        smtpPort: input.port,
+        smtpSecure: input.secure,
+        smtpUsername: input.username.trim() || input.fromAddress.trim(),
+        smtpPassword: password,
+        connectedAt: new Date(),
+      };
+
+      if (existingMailbox) {
+        await this.prisma.mailboxConnection.update({
+          where: { id: existingMailbox.id },
+          data: mailboxPayload,
+        });
+      } else {
+        const anyUser = await this.prisma.userRole.findFirst({
+          where: { companyId: company.id },
+          select: { userId: true },
+        });
+        if (anyUser) {
+          await this.prisma.mailboxConnection.create({
+            data: {
+              companyId: company.id,
+              userId: anyUser.userId,
+              provider: 'smtp',
+              ...mailboxPayload,
+            },
+          });
+        }
+      }
+    } catch {
+      // If mailbox connection sync fails, company mail settings remain saved on Company
+    }
+
     return this.settings();
   }
 
@@ -137,6 +180,10 @@ export class CompanyMailService {
         mailSmtpPassword: null,
       },
     });
+
+    await this.prisma.mailboxConnection.deleteMany({
+      where: { provider: 'smtp' },
+    }).catch(() => {});
 
     return this.settings();
   }

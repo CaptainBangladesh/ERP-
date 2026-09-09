@@ -5,7 +5,7 @@ import {
   type AuditEvent,
 } from '@erp/shared';
 import { linkProps } from '../../../app/location';
-import { leadWorkspacePath } from '../pages/LeadWorkspace';
+import { leadWorkspacePath } from '../lead-routes';
 import { avatarColour, initialsOf } from '../survey-answers';
 import {
   CalendarIcon,

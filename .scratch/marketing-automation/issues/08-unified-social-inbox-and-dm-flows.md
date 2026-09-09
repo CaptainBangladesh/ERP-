@@ -1,8 +1,19 @@
 # 08 — Unified Social Inbox and DM Flows
 
 Type: task
-Status: open
+Status: resolved
 Blocked by: 02, 07
+
+## Answer
+
+Shipped in commit `88aef1d` — `SocialMessage` and `DmAutomationFlow` models with migration
+`20260906180000_unified_social_inbox_and_dm_flows`, `inbox.service.ts`, `dm-flows.service.ts`,
+`social-inbox-webhooks.controller.ts`, and the `SocialInboxManager` frontend component. See the
+corresponding entry in `map.md` for the full summary.
+
+*(This file was left at `Status: open` when the work closed — corrected 2026-09-07 during the
+audit. Note that `inbox.service.ts:462` writes the `crm`-owned `Activity` table directly, which
+is one of the 16 conformance violations ticket 16 resolves.)*
 
 ## Question
 

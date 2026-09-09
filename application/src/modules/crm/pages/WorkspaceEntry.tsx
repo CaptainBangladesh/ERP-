@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { LEAD_PATHS, listPath, type LeadListResponse } from '@erp/shared';
 import { api } from '../../../api/client';
 import { navigate } from '../../../app/location';
-import { leadWorkspacePath } from './LeadWorkspace';
+import { leadWorkspacePath } from '../lead-routes';
 
 /**
  * What the "Workspace" menu item opens: the lead-working surface, not a screen of its own.

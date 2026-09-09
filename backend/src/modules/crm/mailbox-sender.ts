@@ -3,7 +3,14 @@ import * as nodemailer from 'nodemailer';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import { MAILBOX_ERROR_CODES } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
-import { DevMailer, SMTP_TIMEOUTS, type MailMessage } from '../../platform/mail';
+import {
+  DevMailer,
+  SMTP_TIMEOUTS,
+  isSmtpRelayConfigured,
+  sendThroughRelay,
+  verifyThroughRelay,
+  type MailMessage,
+} from '../../platform/mail';
 import { decryptSmtpPassword } from '../../platform/secrets';
 
 /**
@@ -67,6 +74,26 @@ export class LiveMailboxSender extends MailboxSender {
   private readonly logger = new Logger(LiveMailboxSender.name);
 
   async verifySmtp(settings: SmtpSettings): Promise<void> {
+    if (isSmtpRelayConfigured()) {
+      return verifyThroughRelay({
+        host: settings.smtpHost || '',
+        port: settings.smtpPort || 465,
+        secure: settings.smtpSecure ?? ((settings.smtpPort || 465) === 465),
+        username: settings.smtpUsername || settings.emailAddress,
+        password: storedPasswordOf(settings),
+      });
+    }
+
+    if (process.env.RESEND_API_KEY) {
+      const res = await fetch('https://api.resend.com/api-keys', {
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+      }).catch(() => null);
+      if (res && !res.ok) {
+        throw new Error(`Resend API key rejected (HTTP ${res.status}). Check your RESEND_API_KEY.`);
+      }
+      return;
+    }
+
     const transport = smtpTransportFor(settings);
     try {
       await transport.verify();
@@ -78,13 +105,83 @@ export class LiveMailboxSender extends MailboxSender {
   async sendFrom(mailbox: SendingMailbox, message: MailMessage): Promise<void> {
     switch (mailbox.provider) {
       case 'smtp':
+        if (isSmtpRelayConfigured()) {
+          this.logger.log(`SMTP_RELAY_URL detected: delivering via Vercel HTTPS relay for ${mailbox.emailAddress}`);
+          const from = mailbox.displayName
+            ? `${mailbox.displayName} <${mailbox.emailAddress}>`
+            : mailbox.emailAddress;
+          return sendThroughRelay(
+            {
+              host: mailbox.smtpHost || '',
+              port: mailbox.smtpPort || 465,
+              secure: mailbox.smtpSecure ?? ((mailbox.smtpPort || 465) === 465),
+              username: mailbox.smtpUsername || mailbox.emailAddress,
+              password: storedPasswordOf(mailbox),
+            },
+            {
+              from,
+              to: message.to,
+              subject: message.subject,
+              body: message.body,
+              html: message.html,
+            },
+          );
+        }
+        if (process.env.RESEND_API_KEY) {
+          this.logger.log(`RESEND_API_KEY detected: delivering via Resend HTTPS API for ${mailbox.emailAddress}`);
+          return this.sendOverResend(mailbox, message, process.env.RESEND_API_KEY);
+        }
         return this.sendOverSmtp(mailbox, message);
+      case 'resend':
+        return this.sendOverResend(
+          mailbox,
+          message,
+          process.env.RESEND_API_KEY || (mailbox as any).accessToken || '',
+        );
       case 'gmail':
         return this.sendOverGmail(mailbox, message);
       default:
         throw sendFailed(
           `Sending from a ${mailbox.provider} mailbox is not supported yet. Nothing was sent.`,
         );
+    }
+  }
+
+  /**
+   * Free HTTP-based delivery via Resend API over HTTPS (port 443).
+   *
+   * Standard SMTP ports (25, 465, 587) are blocked by cloud hosts like Render's Free tier.
+   * Resend delivers over standard HTTPS (port 443), which is never blocked and costs $0.
+   */
+  private async sendOverResend(
+    mailbox: { displayName: string; emailAddress: string },
+    message: MailMessage,
+    apiKey: string,
+  ): Promise<void> {
+    const from = mailbox.displayName
+      ? `${mailbox.displayName} <${mailbox.emailAddress}>`
+      : mailbox.emailAddress;
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from,
+        to: [message.to],
+        subject: message.subject,
+        text: message.body,
+        html: message.html,
+      }),
+    }).catch((err) => {
+      throw sendFailed(`Could not reach Resend API: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { message?: string };
+      throw sendFailed(`Resend API refused the message (HTTP ${response.status}): ${data.message || 'Unknown error'}`);
     }
   }
 
@@ -331,8 +428,9 @@ function describeCause(cause: unknown, mailbox: SmtpSettings): string {
 
   if (unreachable) {
     return (
-      `Could not reach ${mailbox.smtpHost}:${mailbox.smtpPort ?? 587} from this server ` +
-      `(${detail}). Outbound SMTP may be blocked where this API is hosted. Nothing was sent.`
+      `Could not reach ${mailbox.smtpHost}:${mailbox.smtpPort ?? 587} from this server (${detail}). ` +
+      `Outbound SMTP ports 465 & 587 are blocked on Render Free Tier. ` +
+      `To send for 100% FREE, set RESEND_API_KEY in Render Environment variables, or deploy to a host that does not block SMTP.`
     );
   }
 

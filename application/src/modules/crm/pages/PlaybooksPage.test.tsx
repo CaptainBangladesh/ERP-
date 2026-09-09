@@ -54,10 +54,13 @@ describe('PlaybooksPage', () => {
 
     const { user } = renderPage(<PlaybooksPage />, { token: 'a-token', path: '/crm/playbooks' });
 
+    // The form is a dialog now, not an inline panel — the list is what the section shows first.
+    await user.click(await screen.findByRole('button', { name: /new script/i }));
+
     await user.type(await screen.findByLabelText(/^title$/i), 'Warm opener');
     await user.selectOptions(screen.getByLabelText(/relevant when/i), 'new');
-    await user.type(screen.getByLabelText(/^script$/i), 'Hi {{lead.name}}');
-    await user.click(screen.getByRole('button', { name: /add script/i }));
+    await user.type(screen.getByLabelText(/script content/i), 'Hi {{lead.name}}');
+    await user.click(screen.getByRole('button', { name: /^create script$/i }));
 
     await waitFor(() =>
       expect(sent).toMatchObject({ title: 'Warm opener', category: 'opener', leadStatus: 'new' }),
@@ -89,10 +92,12 @@ describe('PlaybooksPage', () => {
 
     const { user } = renderPage(<PlaybooksPage />, { token: 'a-token', path: '/crm/playbooks' });
 
+    await user.click(await screen.findByRole('button', { name: /new playbook/i }));
+
     await user.type(await screen.findByLabelText(/playbook name/i), 'Outreach');
-    await user.type(screen.getByLabelText(/what the rep does/i), 'Call and introduce');
+    await user.type(screen.getByLabelText(/rep instruction/i), 'Call and introduce');
     await user.click(screen.getByRole('button', { name: /add step/i }));
-    await user.click(screen.getByRole('button', { name: /create playbook/i }));
+    await user.click(screen.getByRole('button', { name: /^create playbook$/i }));
 
     await waitFor(() => expect((sent?.steps as unknown[]).length).toBe(2));
     expect(sent).toMatchObject({ name: 'Outreach' });

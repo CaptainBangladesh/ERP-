@@ -5,7 +5,9 @@
     "outDir": "dist/esm",
     "rootDir": "src",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "declaration": false,
+    "declarationMap": false
   },
   "include": ["src/**/*"]
 }

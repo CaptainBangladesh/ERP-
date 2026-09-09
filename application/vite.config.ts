@@ -5,6 +5,27 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalized = id.replace(/\\/g, '/');
+          if (normalized.includes('/node_modules/xlsx/')) {
+            return 'vendor-xlsx';
+          }
+          if (
+            normalized.includes('/node_modules/react/') ||
+            normalized.includes('/node_modules/react-dom/')
+          ) {
+            return 'vendor-react';
+          }
+          if (normalized.includes('/node_modules/@tanstack/')) {
+            return 'vendor-tanstack';
+          }
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     // The app talks to a same-origin /api during development, so the client never needs to

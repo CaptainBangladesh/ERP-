@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { Mailer, type MailMessage } from './mailer';
 import { SMTP_TIMEOUTS } from './smtp-timeouts';
+import { isSmtpRelayConfigured, sendThroughRelay } from './smtp-relay';
 
 /**
  * Sends real internet emails using Nodemailer with SMTP credentials configured via environment variables:
@@ -47,6 +48,27 @@ export class SmtpMailer extends Mailer {
       process.env.MAIL_FROM ||
       process.env.SMTP_USER ||
       'no-reply@company.test';
+
+    if (isSmtpRelayConfigured()) {
+      const host = process.env.SMTP_HOST || '';
+      const port = Number(process.env.SMTP_PORT || 465);
+      const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+      const username = process.env.SMTP_USER;
+      const password = process.env.SMTP_PASS;
+
+      await sendThroughRelay(
+        { host, port, secure, username, password },
+        {
+          from,
+          to: message.to,
+          subject: message.subject,
+          body: message.body,
+          html: message.html,
+        },
+      );
+      this.logger.log(`Email sent successfully to ${message.to} via Vercel SMTP relay.`);
+      return;
+    }
 
     if (!this.transporter) {
       this.logger.warn(

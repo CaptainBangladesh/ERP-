@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, LazyExoticComponent } from 'react';
 
 /**
  * What a module declares to the frontend.
@@ -17,7 +17,7 @@ export interface FrontendModuleManifest {
 export interface FrontendRoute {
   /** Exact match, no parameters yet. Ticket 04's list screens introduce the need. */
   readonly path: string;
-  readonly component: ComponentType;
+  readonly component: ComponentType<any> | LazyExoticComponent<any>;
   /**
    * Reachable without a session, and rendered without the signed-in chrome. Rare and
    * explicit, exactly as on the backend: sign-in and sign-up are the whole legitimate use,

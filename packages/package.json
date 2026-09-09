@@ -30,7 +30,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.esm.json && node scripts/write-esm-marker.mjs",
+    "build": "concurrently -g \"tsc -p tsconfig.json\" \"tsc -p tsconfig.esm.json\" && node scripts/write-esm-marker.mjs",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -10,3 +10,10 @@ export { DeploymentMailer } from './deployment-mailer';
 export { UnconfiguredMailer } from './unconfigured-mailer';
 export { MailModule } from './mail.module';
 export { SMTP_TIMEOUTS } from './smtp-timeouts';
+export {
+  isSmtpRelayConfigured,
+  sendThroughRelay,
+  verifyThroughRelay,
+  type SmtpRelayConfig,
+  type SmtpRelayMessage,
+} from './smtp-relay';

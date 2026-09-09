@@ -124,16 +124,66 @@ export class MailboxesService {
     actor: { userId: string; isOwner?: boolean } | string,
   ): Promise<MailboxConnectionSummary[]> {
     const context = typeof actor === 'string' ? { userId: actor, isOwner: false } : actor;
+    const company = await this.prisma.company.findFirst().catch(() => null);
+    const ownerUserId = company?.ownerUserId;
+
     const rows = await this.prisma.mailboxConnection.findMany({
       where: {
         OR: [
           { userId: context.userId },
           { provider: 'smtp' },
+          ...(ownerUserId ? [{ userId: ownerUserId }] : []),
         ],
       },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map((r: any) => describeMailbox(r, context));
+
+    const hasSmtp = rows.some((r: any) => r.provider === 'smtp');
+    if (!hasSmtp) {
+      const company = await this.prisma.company.findFirst().catch(() => null);
+      if (company?.mailSmtpHost && company.mailSmtpPassword && company.mailFromAddress) {
+        try {
+          const autoMailbox = await this.prisma.mailboxConnection.create({
+            data: companyApplied({
+              userId: context.userId,
+              provider: 'smtp',
+              status: 'connected',
+              emailAddress: company.mailFromAddress,
+              displayName: company.mailFromName || company.mailFromAddress,
+              smtpHost: company.mailSmtpHost,
+              smtpPort: company.mailSmtpPort ?? 465,
+              smtpSecure: company.mailSmtpSecure ?? true,
+              smtpUsername: company.mailSmtpUsername || company.mailFromAddress,
+              smtpPassword: company.mailSmtpPassword,
+            }),
+          });
+          rows.push(autoMailbox);
+        } catch {
+          const synthesizedSummary: MailboxConnectionSummary = {
+            id: `company-smtp-${company.id}`,
+            userId: context.userId,
+            provider: 'smtp',
+            emailAddress: company.mailFromAddress,
+            displayName: company.mailFromName || company.mailFromAddress,
+            status: 'connected',
+            connectedAt: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isShared: true,
+            canManage: Boolean(context.isOwner),
+            smtp: {
+              host: company.mailSmtpHost,
+              port: company.mailSmtpPort ?? 465,
+              secure: company.mailSmtpSecure ?? true,
+              username: company.mailSmtpUsername || company.mailFromAddress,
+            },
+          };
+          return [...rows.map((r: any) => describeMailbox(r, context)), synthesizedSummary];
+        }
+      }
+    }
+
+    return rows.map((r: any) => describeMailbox(r, context, ownerUserId));
   }
 
   async requireMailbox(
@@ -144,7 +194,8 @@ export class MailboxesService {
       where: { id },
     });
     if (!row) throw mailboxNotFound();
-    return describeMailbox(row, actor);
+    const company = await this.prisma.company.findFirst().catch(() => null);
+    return describeMailbox(row, actor, company?.ownerUserId);
   }
 
   /**
@@ -215,6 +266,19 @@ export class MailboxesService {
           data: companyApplied({ userId: actor.userId, provider: 'smtp', ...settings }),
         });
 
+    // Also sync to Company record so system mailings (invites, password resets) use the same credentials
+    await this.prisma.company.updateMany({
+      data: {
+        mailFromAddress: candidate.emailAddress,
+        mailFromName: input.displayName.trim() || candidate.emailAddress,
+        mailSmtpHost: candidate.smtpHost,
+        mailSmtpPort: candidate.smtpPort,
+        mailSmtpSecure: candidate.smtpSecure,
+        mailSmtpUsername: candidate.smtpUsername,
+        mailSmtpPassword: candidate.smtpPassword,
+      },
+    }).catch(() => {});
+
     return describeMailbox(connection, { userId: actor.userId, isOwner: true });
   }
 
@@ -226,9 +290,28 @@ export class MailboxesService {
    */
   async sendingMailbox(id: string): Promise<SendingMailbox> {
     const row = await this.prisma.mailboxConnection.findUnique({ where: { id } });
-    if (!row) throw mailboxNotFound();
+    if (row) return row as SendingMailbox;
 
-    return row as SendingMailbox;
+    if (id.startsWith('company-smtp-')) {
+      const company = await this.prisma.company.findFirst();
+      if (company?.mailSmtpHost && company.mailSmtpPassword && company.mailFromAddress) {
+        return {
+          id,
+          provider: 'smtp',
+          emailAddress: company.mailFromAddress,
+          displayName: company.mailFromName || company.mailFromAddress,
+          accessToken: null,
+          refreshToken: null,
+          smtpHost: company.mailSmtpHost,
+          smtpPort: company.mailSmtpPort ?? 465,
+          smtpSecure: company.mailSmtpSecure ?? true,
+          smtpUsername: company.mailSmtpUsername || company.mailFromAddress,
+          smtpPassword: company.mailSmtpPassword,
+        };
+      }
+    }
+
+    throw mailboxNotFound();
   }
 
   /**
@@ -276,7 +359,8 @@ export class MailboxesService {
       data: { status: 'revoked' },
     });
 
-    return describeMailbox(updated, actor);
+    const company = await this.prisma.company.findFirst().catch(() => null);
+    return describeMailbox(updated, actor, company?.ownerUserId);
   }
 }
 
@@ -297,11 +381,13 @@ export function describeMailbox(
     smtpUsername?: string | null;
   },
   actor?: { userId: string; isOwner?: boolean },
+  ownerUserId?: string | null,
 ): MailboxConnectionSummary {
   const isOwner = Boolean(actor?.isOwner);
   const isCreator = actor?.userId ? row.userId === actor.userId : true;
   const isSmtp = row.provider === 'smtp';
-  const isShared = isSmtp;
+  const isOwnerMailbox = Boolean(ownerUserId && row.userId === ownerUserId);
+  const isShared = isSmtp || isOwnerMailbox;
   const canManage = isCreator || isOwner;
 
   return {

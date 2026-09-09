@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
-import { SMTP_TIMEOUTS } from '../../platform/mail';
+import {
+  SMTP_TIMEOUTS,
+  isSmtpRelayConfigured,
+  verifyThroughRelay,
+} from '../../platform/mail';
 import { mailSettingsRejected } from './errors';
 
 /** Enough to open a connection and authenticate, before anything is stored. */
@@ -26,6 +30,25 @@ export abstract class MailHostVerifier {
 @Injectable()
 export class SmtpMailHostVerifier extends MailHostVerifier {
   async verify(credentials: MailHostCredentials): Promise<void> {
+    if (isSmtpRelayConfigured()) {
+      try {
+        await verifyThroughRelay(credentials);
+        return;
+      } catch (cause) {
+        throw mailSettingsRejected(cause instanceof Error ? cause.message : String(cause));
+      }
+    }
+
+    if (process.env.RESEND_API_KEY) {
+      const res = await fetch('https://api.resend.com/api-keys', {
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+      }).catch(() => null);
+      if (res && !res.ok) {
+        throw mailSettingsRejected(`Resend API key rejected (HTTP ${res.status}). Check your RESEND_API_KEY.`);
+      }
+      return;
+    }
+
     const transport = nodemailer.createTransport({
       host: credentials.host,
       port: credentials.port,
