@@ -78,9 +78,21 @@ export class LeadOutreachService {
      * and a pixel referencing a row written afterwards would report nothing.
      */
     const openToken = randomUUID();
-    const trackingPixel =
-      `<img src="${LEAD_EMAIL_PATHS.publicOpenPixel(openToken)}" alt="" width="1" height="1" ` +
-      `style="display:none;" />`;
+    /**
+     * Absolute, or not included at all.
+     *
+     * The pixel is fetched by the recipient's mail client, which has no idea what host this
+     * API runs on — a relative `src` there resolves against nothing and is never requested, so
+     * every send looked tracked and no open was ever recorded. Where the server cannot name
+     * its own public address the pixel is left out entirely rather than embedded broken: a
+     * missing pixel records nothing, and a broken one records nothing while looking like it
+     * works.
+     */
+    const publicApiUrl = publicApiBaseUrl();
+    const trackingPixel = publicApiUrl
+      ? `<img src="${publicApiUrl}${LEAD_EMAIL_PATHS.publicOpenPixel(openToken)}" alt="" ` +
+        `width="1" height="1" style="display:none;" />`
+      : '';
 
     // Through the mailbox the user picked, not the deployment's own mailer: this is mail
     // from a person, and it has to leave from their address so the reply comes back to them.
@@ -183,4 +195,29 @@ export class LeadOutreachService {
       });
     });
   }
+}
+
+/**
+ * This API's own public address, for links that have to work from outside it.
+ *
+ * `RENDER_EXTERNAL_URL` is set by the platform itself, so a Render deployment gets this right
+ * with nothing to configure; `PUBLIC_API_URL` and `BACKEND_URL` are the explicit overrides for
+ * everywhere else.
+ *
+ * The fallback is deliberately asymmetric. On a laptop, `localhost` is genuinely where this
+ * server is, and the suite reads the pixel back out of the sent message to prove the mail
+ * carried one — so a fallback there is correct rather than a guess. In production it would be
+ * a lie: `localhost` in a stranger's inbox is their own machine, so the pixel is dropped
+ * instead and the send goes out untracked but intact. Silently untracked beats silently
+ * broken, and `reportDeploymentConfiguration` names the missing variable at boot so it is not
+ * discovered from an empty report months later.
+ */
+function publicApiBaseUrl(): string | undefined {
+  const configured =
+    process.env.PUBLIC_API_URL || process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL;
+  const trimmed = configured?.trim().replace(/\/$/, '');
+  if (trimmed) return trimmed;
+
+  if (process.env.NODE_ENV === 'production') return undefined;
+  return `http://localhost:${process.env.PORT ?? 3000}`;
 }

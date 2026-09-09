@@ -14,6 +14,7 @@ import {
   type CreateLeadRequest,
   type EmailTemplateSummary,
   type LeadResponse,
+  type MailDeliveryDiagnostics,
   type MailboxConnectionSummary,
   type SendLeadEmailRequest,
   type SignUpRequest,
@@ -705,5 +706,94 @@ describe('CRM Outreach: Mailboxes, Templates & 1-on-1 Send', () => {
       .expect(200);
 
     expect(listB.body.items.some((t: EmailTemplateSummary) => t.id === templateA.body.id)).toBe(false);
+  });
+  /**
+   * What the server can say about its own ability to send, before anybody presses Send.
+   *
+   * The failure this answers is invisible everywhere else: outbound SMTP blocked by the
+   * hosting platform, a relay that was never deployed, and a password encrypted under a
+   * different secret all surface as one refusal at send time, and telling them apart
+   * otherwise costs a configuration change and a redeploy each. These hold in place that the
+   * endpoint names which one it is — and that it does so without handing back a secret.
+   */
+  describe('mail delivery diagnostics', () => {
+    const settings = {
+      host: 'mail.privateemail.com',
+      port: 465,
+      secure: true,
+      emailAddress: 'sales@northwind.test',
+      displayName: 'Northwind Sales',
+      username: 'sales@northwind.test',
+      password: 'a-real-mailbox-password',
+    };
+
+    it('reports the transport, the mailbox, and that the stored password still opens', async () => {
+      const tenant = await signUp('DiagA');
+      await tenant.as(app.http.post(MAILBOX_PATHS.connectSmtp)).send(settings).expect(201);
+
+      const response = await tenant.as(app.http.get(MAILBOX_PATHS.diagnostics)).expect(200);
+      const diagnostics = response.body as MailDeliveryDiagnostics;
+
+      // Nothing configured for an HTTPS transport, so mail would leave over a direct socket.
+      expect(diagnostics.transport).toBe('direct-smtp');
+      expect(diagnostics.relay.configured).toBe(false);
+
+      expect(diagnostics.companyMailbox.configured).toBe(true);
+      expect(diagnostics.companyMailbox.address).toBe(settings.emailAddress);
+      expect(diagnostics.companyMailbox.host).toBe(settings.host);
+
+      // The check that separates "the password is wrong" from "this server cannot read it".
+      expect(diagnostics.storedPassword.ok).toBe(true);
+    });
+
+    it('says the password cannot be read when it was stored under another secret', async () => {
+      const tenant = await signUp('DiagB');
+      await tenant.as(app.http.post(MAILBOX_PATHS.connectSmtp)).send(settings).expect(201);
+
+      // Exactly what a laptop and a hosted server sharing one database look like when they
+      // hold different secrets: the row is intact and this server cannot open it.
+      await app.prisma.mailboxConnection.updateMany({
+        where: { provider: 'smtp' },
+        data: { smtpPassword: 'bm90.YSByZWFs.c2VjcmV0' },
+      });
+
+      const response = await tenant.as(app.http.get(MAILBOX_PATHS.diagnostics)).expect(200);
+      const diagnostics = response.body as MailDeliveryDiagnostics;
+
+      expect(diagnostics.storedPassword.ok).toBe(false);
+      expect(diagnostics.storedPassword.detail).toContain('different MAILBOX_SECRET');
+    });
+
+    it('reports the relay as the transport once one is configured', async () => {
+      const tenant = await signUp('DiagC');
+      await tenant.as(app.http.post(MAILBOX_PATHS.connectSmtp)).send(settings).expect(201);
+
+      process.env.SMTP_RELAY_URL = 'https://relay.example/api/smtp-relay';
+      try {
+        const response = await tenant.as(app.http.get(MAILBOX_PATHS.diagnostics)).expect(200);
+        const diagnostics = response.body as MailDeliveryDiagnostics;
+
+        expect(diagnostics.transport).toBe('relay');
+        expect(diagnostics.relay.configured).toBe(true);
+        expect(diagnostics.relay.url).toBe('https://relay.example/api/smtp-relay');
+      } finally {
+        delete process.env.SMTP_RELAY_URL;
+      }
+    });
+
+    it('never returns a password, encrypted or otherwise', async () => {
+      const tenant = await signUp('DiagD');
+      await tenant.as(app.http.post(MAILBOX_PATHS.connectSmtp)).send(settings).expect(201);
+
+      const stored = await app.prisma.mailboxConnection.findFirstOrThrow({
+        where: { provider: 'smtp' },
+      });
+
+      const response = await tenant.as(app.http.get(MAILBOX_PATHS.diagnostics)).expect(200);
+      const body = JSON.stringify(response.body);
+
+      expect(body).not.toContain(settings.password);
+      expect(body).not.toContain(stored.smtpPassword);
+    });
   });
 });

@@ -1,4 +1,9 @@
 {
   "buildCommand": "echo 'Relay ready'",
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "functions": {
+    "api/smtp-relay.mjs": {
+      "maxDuration": 30
+    }
+  }
 }

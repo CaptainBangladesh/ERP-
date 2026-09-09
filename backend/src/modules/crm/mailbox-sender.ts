@@ -6,7 +6,10 @@ import { ApiException } from '../../http/api-exception';
 import {
   DevMailer,
   SMTP_TIMEOUTS,
+  describeResendSenderProblem,
+  isNameResolutionFailure,
   isSmtpRelayConfigured,
+  isUnreachableMailHost,
   sendThroughRelay,
   verifyThroughRelay,
   type MailMessage,
@@ -84,13 +87,17 @@ export class LiveMailboxSender extends MailboxSender {
       });
     }
 
+    /**
+     * With Resend carrying the mail, the stored SMTP password is never used, so opening a
+     * socket to the mail host would prove nothing about whether a send will work. What
+     * decides that is whether Resend will accept this *sender*, so that is what is checked.
+     */
     if (process.env.RESEND_API_KEY) {
-      const res = await fetch('https://api.resend.com/api-keys', {
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-      }).catch(() => null);
-      if (res && !res.ok) {
-        throw new Error(`Resend API key rejected (HTTP ${res.status}). Check your RESEND_API_KEY.`);
-      }
+      const problem = await describeResendSenderProblem(
+        process.env.RESEND_API_KEY,
+        settings.emailAddress,
+      );
+      if (problem) throw new Error(problem);
       return;
     }
 
@@ -417,20 +424,25 @@ async function refreshGoogleAccessToken(refreshToken: string): Promise<string | 
  */
 function describeCause(cause: unknown, mailbox: SmtpSettings): string {
   const detail = cause instanceof Error ? cause.message : String(cause);
-  const code = (cause as { code?: unknown })?.code;
-  const unreachable =
-    code === 'ETIMEDOUT' ||
-    code === 'ECONNREFUSED' ||
-    code === 'ECONNRESET' ||
-    code === 'EDNS' ||
-    code === 'ESOCKET' ||
-    code === 'ENOTFOUND';
+  const where = `${mailbox.smtpHost}:${mailbox.smtpPort ?? 587}`;
 
-  if (unreachable) {
+  // A name that does not resolve is a typo, not a blocked port, and saying "your host blocks
+  // SMTP" here would send somebody to change their hosting plan over a misspelling.
+  if (isNameResolutionFailure(cause)) {
     return (
-      `Could not reach ${mailbox.smtpHost}:${mailbox.smtpPort ?? 587} from this server (${detail}). ` +
-      `Outbound SMTP ports 465 & 587 are blocked on Render Free Tier. ` +
-      `To send for 100% FREE, set RESEND_API_KEY in Render Environment variables, or deploy to a host that does not block SMTP.`
+      `No mail server was found at ${where} (${detail}). Check the host name on this ` +
+      'mailbox. Nothing was sent.'
+    );
+  }
+
+  if (isUnreachableMailHost(cause)) {
+    return (
+      `Could not reach ${where} from this server (${detail}). This server cannot open outbound ` +
+      'SMTP connections — hosting platforms commonly block ports 25, 465 and 587, and Render ' +
+      'blocks all three on free web services. The mailbox settings are not at fault and ' +
+      'retyping the password will not help. Set SMTP_RELAY_URL to send over HTTPS instead ' +
+      '(see docs/deployment/hosted-email.md), or move this API to a plan that permits ' +
+      'outbound SMTP. Nothing was sent.'
     );
   }
 

@@ -11,9 +11,14 @@ export { UnconfiguredMailer } from './unconfigured-mailer';
 export { MailModule } from './mail.module';
 export { SMTP_TIMEOUTS } from './smtp-timeouts';
 export {
+  checkRelayReachable,
   isSmtpRelayConfigured,
   sendThroughRelay,
+  smtpRelayUrl,
   verifyThroughRelay,
   type SmtpRelayConfig,
+  type SmtpRelayFailure,
   type SmtpRelayMessage,
 } from './smtp-relay';
+export { isNameResolutionFailure, isUnreachableMailHost } from './smtp-failure';
+export { describeResendSenderProblem } from './resend-sender-check';

@@ -103,6 +103,7 @@ export class CompanyMailService {
       secure: input.secure,
       username: input.username.trim() || input.fromAddress.trim(),
       password: decryptSmtpPassword(password),
+      fromAddress: input.fromAddress.trim(),
     });
 
     await this.prisma.company.update({

@@ -1093,7 +1093,49 @@ export const MAILBOX_PATHS = {
    * no third party to ask, which is the whole difference from the OAuth providers.
    */
   connectSmtp: `/${CRM_ROUTE}/mailboxes/smtp`,
+  /**
+   * What this server can actually do about sending mail, asked of the server itself.
+   *
+   * Exists because the failure this diagnoses is invisible from everywhere else. Outbound
+   * SMTP being blocked, a relay that was never deployed, and a stored password encrypted
+   * under a different secret all surface as one refusal at the moment somebody presses Send,
+   * and telling them apart otherwise means changing a setting, redeploying, and trying again
+   * — a loop that costs an afternoon and teaches nothing. This answers all three at once,
+   * from the running server, without sending anything.
+   */
+  diagnostics: `/${CRM_ROUTE}/mailboxes/diagnostics`,
 } as const;
+
+/** How a send will actually be carried, decided by what this deployment has configured. */
+export type MailTransportKind = 'relay' | 'resend' | 'direct-smtp';
+
+/** One thing that either works or does not, with the reason when it does not. */
+export interface MailDiagnosticCheck {
+  ok: boolean;
+  detail: string;
+}
+
+/**
+ * What the server can tell you about its own ability to send, without sending.
+ *
+ * Deliberately carries no password, no token and no secret — only whether each one is present
+ * and whether it works. A screen that had to show a secret to be useful would be a screen
+ * nobody could safely open.
+ */
+export interface MailDeliveryDiagnostics {
+  /** Which route a send takes on this server, given what is configured. */
+  transport: MailTransportKind;
+  /** Whether this server can open outbound SMTP sockets at all, and how that was determined. */
+  outboundSmtp: MailDiagnosticCheck;
+  /** The HTTPS relay: configured, reachable, and agreeing on the shared secret. */
+  relay: MailDiagnosticCheck & { configured: boolean; url: string | null };
+  /** The company mailbox this deployment would send from, and whether it can be read. */
+  companyMailbox: MailDiagnosticCheck & { configured: boolean; address: string | null; host: string | null };
+  /** Whether the stored password opens under the secret this server holds. */
+  storedPassword: MailDiagnosticCheck;
+  /** The environment as the server sees it, which is often not what the operator assumes. */
+  environment: { nodeEnv: string; resendConfigured: boolean; deploymentSmtpConfigured: boolean };
+}
 
 export const LEAD_EMAIL_PATHS = {
   send: (id: string) => `/${CRM_ROUTE}/leads/${id}/send-email`,

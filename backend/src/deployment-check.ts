@@ -50,6 +50,35 @@ export function reportDeploymentConfiguration(): void {
     );
   }
 
+  if (
+    !process.env.PUBLIC_API_URL &&
+    !process.env.BACKEND_URL &&
+    !process.env.RENDER_EXTERNAL_URL
+  ) {
+    problems.push(
+      'None of PUBLIC_API_URL, BACKEND_URL or RENDER_EXTERNAL_URL is set, so this server ' +
+        'cannot name its own public address. Open-tracking pixels are left out of outgoing ' +
+        'mail rather than pointed at localhost, so sends still work but no open is ever ' +
+        'recorded. Set PUBLIC_API_URL to this API’s own origin, e.g. ' +
+        'https://erp-c5im.onrender.com.',
+    );
+  }
+
+  /**
+   * Outbound SMTP is blocked on a good many hosting platforms — Render blocks ports 25, 465
+   * and 587 on free web services — and the failure it produces is a connection that hangs
+   * rather than one that refuses. Named here because the symptom (a send that fails long after
+   * the settings were accepted) points at the mailbox rather than at the host, which is how
+   * this ends up being debugged as a wrong password for weeks.
+   */
+  if (!process.env.SMTP_RELAY_URL && !process.env.RESEND_API_KEY) {
+    logger.log(
+      'No SMTP_RELAY_URL and no RESEND_API_KEY, so mail leaves over a direct SMTP connection. ' +
+        'If this platform blocks outbound SMTP, every send will fail with a connection ' +
+        'timeout. See docs/deployment/hosted-email.md.',
+    );
+  }
+
   const hasGoogleId = Boolean(process.env.GOOGLE_CLIENT_ID);
   const hasGoogleSecret = Boolean(process.env.GOOGLE_CLIENT_SECRET);
   if (hasGoogleId !== hasGoogleSecret) {

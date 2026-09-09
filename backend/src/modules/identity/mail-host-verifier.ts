@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import {
   SMTP_TIMEOUTS,
+  describeResendSenderProblem,
   isSmtpRelayConfigured,
   verifyThroughRelay,
 } from '../../platform/mail';
@@ -14,6 +15,12 @@ export interface MailHostCredentials {
   secure: boolean;
   username: string;
   password: string;
+  /**
+   * The address mail will claim to be from, which is not always the account it authenticates
+   * as. Needed because an HTTPS sender like Resend accepts or refuses on the strength of the
+   * *sender's* domain, so proving the login says nothing about whether a send will work.
+   */
+  fromAddress?: string;
 }
 
 /**
@@ -39,13 +46,16 @@ export class SmtpMailHostVerifier extends MailHostVerifier {
       }
     }
 
+    // Resend never uses these SMTP credentials, so connecting with them would prove nothing.
+    // Whether a send works turns on the sender's domain being verified with Resend, so that
+    // is what gets checked — proving only the API key is what let a company save settings
+    // that were accepted here and refused at the first real send.
     if (process.env.RESEND_API_KEY) {
-      const res = await fetch('https://api.resend.com/api-keys', {
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-      }).catch(() => null);
-      if (res && !res.ok) {
-        throw mailSettingsRejected(`Resend API key rejected (HTTP ${res.status}). Check your RESEND_API_KEY.`);
-      }
+      const problem = await describeResendSenderProblem(
+        process.env.RESEND_API_KEY,
+        credentials.fromAddress || credentials.username,
+      );
+      if (problem) throw mailSettingsRejected(problem);
       return;
     }
 

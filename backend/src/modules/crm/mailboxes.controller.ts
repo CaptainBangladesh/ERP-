@@ -13,6 +13,7 @@ import {
 import {
   CRM_ROUTE,
   type ConnectMailboxUrlResponse,
+  type MailDeliveryDiagnostics,
   type MailboxConnectionListResponse,
   type MailboxConnectionSummary,
   type MailboxProvider,
@@ -88,6 +89,21 @@ export class MailboxesController {
       isOwner: session.user.isOwner,
     });
     return { items };
+  }
+
+  /**
+   * What this server can actually do about sending mail.
+   *
+   * Guarded by the same permission as the rest of the mailbox surface, and it returns no
+   * secrets — only whether each piece is present and whether it works. Its whole purpose is
+   * to make a hosted failure legible without a redeploy: outbound SMTP blocked, a relay that
+   * was never deployed, and a password encrypted under a different secret all produce nearly
+   * the same refusal at send time, and this says which one it is.
+   */
+  @Get('mailboxes/diagnostics')
+  @RequirePermission('crm:leads:read')
+  async mailDiagnostics(): Promise<MailDeliveryDiagnostics> {
+    return this.mailboxesService.mailDiagnostics();
   }
 
   /**

@@ -1,8 +1,12 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
+import { Socket } from 'node:net';
 import {
   MAILBOX_ERROR_CODES,
   type ConnectMailboxUrlResponse,
+  type MailDeliveryDiagnostics,
+  type MailDiagnosticCheck,
+  type MailTransportKind,
   type MailboxConnectionSummary,
   type MailboxProvider,
   type MailboxStatus,
@@ -15,7 +19,12 @@ import {
   type ScopedPrisma,
 } from '../../platform/tenancy';
 import { MailboxOAuth } from './mailbox-oauth';
-import { encryptSmtpPassword } from '../../platform/secrets';
+import {
+  checkRelayReachable,
+  isSmtpRelayConfigured,
+  smtpRelayUrl,
+} from '../../platform/mail';
+import { decryptSmtpPassword, encryptSmtpPassword } from '../../platform/secrets';
 import { MailboxSender, type SendingMailbox } from './mailbox-sender';
 
 @Injectable()
@@ -315,6 +324,106 @@ export class MailboxesService {
   }
 
   /**
+   * What this server can and cannot do about sending mail, asked of the server itself.
+   *
+   * Every check here answers a question that otherwise costs a redeploy: can this machine open
+   * an outbound SMTP socket at all, is the relay deployed and does it agree on the shared
+   * secret, and does the stored password still open under the secret this server holds. Those
+   * three produce nearly identical refusals at send time and have completely different fixes.
+   *
+   * Nothing is sent and no secret is returned — only whether each part is present and whether
+   * it works.
+   */
+  async mailDiagnostics(): Promise<MailDeliveryDiagnostics> {
+    const company = await this.prisma.company.findFirst().catch(() => null);
+    const mailbox = await this.prisma.mailboxConnection
+      .findFirst({ where: { provider: 'smtp' } })
+      .catch(() => null);
+
+    const host = mailbox?.smtpHost || company?.mailSmtpHost || null;
+    const port = mailbox?.smtpPort ?? company?.mailSmtpPort ?? 465;
+    const address = mailbox?.emailAddress || company?.mailFromAddress || null;
+    const storedSecret = mailbox?.smtpPassword || company?.mailSmtpPassword || null;
+
+    const transport: MailTransportKind = isSmtpRelayConfigured()
+      ? 'relay'
+      : process.env.RESEND_API_KEY
+        ? 'resend'
+        : 'direct-smtp';
+
+    /**
+     * The two checks that touch the network are skipped under test, the same way
+     * `CompanyMailer` refuses to become a real connection there: the suite has no relay to
+     * reach and no mail host to probe, and a diagnostics call that dialled the internet would
+     * make every run depend on somebody else's uptime.
+     */
+    const probing = process.env.NODE_ENV !== 'test';
+
+    const relayCheck = !probing
+      ? { reachable: false, detail: 'Not probed under test.' }
+      : isSmtpRelayConfigured()
+        ? await checkRelayReachable()
+        : { reachable: false, detail: 'No SMTP_RELAY_URL is set, so no relay is used.' };
+
+    // The definitive test for the failure this whole file exists to explain: open a bare TCP
+    // socket to the mail host and see whether the platform lets it through. A blocked port
+    // does not refuse — it hangs — so the timeout is the answer, not an inconclusive result.
+    const outboundSmtp = !probing
+      ? { ok: false, detail: 'Not probed under test.' }
+      : host
+        ? await probeOutboundSmtp(host, port)
+        : { ok: false, detail: 'No company mailbox is configured, so there is no host to probe.' };
+
+    let storedPassword: MailDiagnosticCheck;
+    if (!storedSecret) {
+      storedPassword = { ok: false, detail: 'No password is stored for this mailbox.' };
+    } else {
+      try {
+        decryptSmtpPassword(storedSecret);
+        storedPassword = {
+          ok: true,
+          detail: 'The stored password opens under the secret this server holds.',
+        };
+      } catch {
+        storedPassword = {
+          ok: false,
+          detail:
+            'The stored password cannot be read on this server — it was saved under a ' +
+            'different MAILBOX_SECRET or SESSION_SECRET. Reconnect the mailbox here to ' +
+            're-encrypt it under this server’s key.',
+        };
+      }
+    }
+
+    return {
+      transport,
+      outboundSmtp,
+      relay: {
+        configured: isSmtpRelayConfigured(),
+        url: smtpRelayUrl() ?? null,
+        ok: relayCheck.reachable,
+        detail: relayCheck.detail,
+      },
+      companyMailbox: {
+        configured: Boolean(host && address),
+        address,
+        host,
+        ok: Boolean(host && address && storedSecret),
+        detail:
+          host && address
+            ? `Sending as ${address} through ${host}:${port}.`
+            : 'No company mailbox is configured yet.',
+      },
+      storedPassword,
+      environment: {
+        nodeEnv: process.env.NODE_ENV ?? 'development',
+        resendConfigured: Boolean(process.env.RESEND_API_KEY),
+        deploymentSmtpConfigured: Boolean(process.env.SMTP_HOST),
+      },
+    };
+  }
+
+  /**
    * Deletes a connection outright.
    *
    * Distinct from `disconnectMailbox`, which keeps the row so it can be reconnected. This is
@@ -415,6 +524,60 @@ export function describeMailbox(
         }
       : {}),
   };
+}
+
+/**
+ * Whether this machine can open a TCP connection to a mail host at all.
+ *
+ * A bare socket rather than an SMTP conversation, because the question is about the network
+ * and not about the mailbox: no credentials are sent, nothing is authenticated, and the
+ * connection is closed the moment it succeeds. That keeps the answer unambiguous — a host
+ * that accepts the socket and then rejects a password is a different finding entirely.
+ *
+ * A blocked port does not answer with a refusal; the packets are dropped and the connection
+ * hangs until something gives up. So the deadline here *is* the result, and it is short
+ * enough to keep a diagnostics request responsive.
+ */
+async function probeOutboundSmtp(host: string, port: number): Promise<MailDiagnosticCheck> {
+  const TIMEOUT_MS = 8_000;
+
+  return new Promise<MailDiagnosticCheck>((resolve) => {
+    const socket = new Socket();
+    let settled = false;
+
+    const finish = (result: MailDiagnosticCheck) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+
+    socket.setTimeout(TIMEOUT_MS);
+
+    socket.once('connect', () =>
+      finish({ ok: true, detail: `Opened a connection to ${host}:${port}.` }),
+    );
+
+    socket.once('timeout', () =>
+      finish({
+        ok: false,
+        detail:
+          `Connecting to ${host}:${port} timed out after ${TIMEOUT_MS / 1000}s. Outbound SMTP ` +
+          'is blocked where this API is hosted — Render blocks ports 25, 465 and 587 on free ' +
+          'web services. Mail must go over HTTPS through a relay, or the API must move to a ' +
+          'plan that permits outbound SMTP.',
+      }),
+    );
+
+    socket.once('error', (cause: NodeJS.ErrnoException) =>
+      finish({
+        ok: false,
+        detail: `Could not connect to ${host}:${port}: ${cause.message}`,
+      }),
+    );
+
+    socket.connect(port, host);
+  });
 }
 
 /** The mail host would not accept these settings, so they were not stored. */
