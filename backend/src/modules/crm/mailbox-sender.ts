@@ -131,6 +131,8 @@ export class LiveMailboxSender extends MailboxSender {
               subject: message.subject,
               body: message.body,
               html: message.html,
+              inReplyTo: message.inReplyTo,
+              references: message.references,
             },
           );
         }
@@ -181,6 +183,16 @@ export class LiveMailboxSender extends MailboxSender {
         subject: message.subject,
         text: message.body,
         html: message.html,
+        // Resend sets arbitrary headers from this map; In-Reply-To/References is how a reply
+        // threads under the original in the recipient's client.
+        ...(message.inReplyTo || message.references
+          ? {
+              headers: {
+                ...(message.inReplyTo ? { 'In-Reply-To': message.inReplyTo } : {}),
+                ...(message.references ? { References: message.references } : {}),
+              },
+            }
+          : {}),
       }),
     }).catch((err) => {
       throw sendFailed(`Could not reach Resend API: ${err instanceof Error ? err.message : String(err)}`);
@@ -209,6 +221,8 @@ export class LiveMailboxSender extends MailboxSender {
         subject: message.subject,
         text: message.body,
         html: message.html,
+        ...(message.inReplyTo ? { inReplyTo: message.inReplyTo } : {}),
+        ...(message.references ? { references: message.references } : {}),
       });
     } catch (cause) {
       this.logger.error(
@@ -363,6 +377,8 @@ async function buildRawMessage(
     subject: message.subject,
     text: message.body,
     html: message.html,
+    ...(message.inReplyTo ? { inReplyTo: message.inReplyTo } : {}),
+    ...(message.references ? { references: message.references } : {}),
   })
     .compile()
     .build();

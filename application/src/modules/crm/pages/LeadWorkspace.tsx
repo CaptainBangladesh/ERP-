@@ -104,6 +104,10 @@ export function LeadWorkspace() {
   const [worklistGroupFilter, setWorklistGroupFilter] = useState('');
   const [converting, setConverting] = useState(false);
   const [sendEmailOpen, setSendEmailOpen] = useState(false);
+  // Set when the compose box is opened as a reply to a received message; cleared for a fresh send.
+  const [replyContext, setReplyContext] = useState<
+    { subject: string; inReplyToActivityId: string } | undefined
+  >();
   const [mailboxesOpen, setMailboxesOpen] = useState(false);
   const [composerType, setComposerType] = useState<ActivityType>('note');
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
@@ -314,7 +318,14 @@ export function LeadWorkspace() {
               <div className="flex items-center gap-1.5">
                 {/* Email is the primary action and is filled to say so; the rest are the
                     same button at rest, so the row reads as one set rather than five. */}
-                <QuickAction label="Send email" primary onClick={() => setSendEmailOpen(true)}>
+                <QuickAction
+                  label="Send email"
+                  primary
+                  onClick={() => {
+                    setReplyContext(undefined);
+                    setSendEmailOpen(true);
+                  }}
+                >
                   <MailIcon size={17} />
                 </QuickAction>
                 <QuickAction label="Log a call" onClick={() => openComposer('call')}>
@@ -382,6 +393,10 @@ export function LeadWorkspace() {
               composerType={composerType}
               onComposerTypeChange={setComposerType}
               composerFocusSignal={composerFocusSignal}
+              onReply={(context) => {
+                setReplyContext(context);
+                setSendEmailOpen(true);
+              }}
             />
           )}
 
@@ -447,7 +462,11 @@ export function LeadWorkspace() {
           leadId={leadId}
           leadName={detail.name}
           leadEmail={detail.email}
-          onClose={() => setSendEmailOpen(false)}
+          replyContext={replyContext}
+          onClose={() => {
+            setSendEmailOpen(false);
+            setReplyContext(undefined);
+          }}
           onSuccess={() => {
             void queryClient.invalidateQueries({ queryKey: ['crm', 'activities', 'lead', leadId] });
             void queryClient.invalidateQueries({ queryKey: ['crm', 'leads', 'detail', leadId] });

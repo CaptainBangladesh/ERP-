@@ -94,6 +94,13 @@ export class LeadOutreachService {
         `width="1" height="1" style="display:none;" />`
       : '';
 
+    // When this email answers a captured reply, thread it: the received message's own
+    // Message-ID becomes our In-Reply-To/References, so the recipient's client stitches this
+    // under the message it answers rather than starting a new conversation. Resolved through the
+    // receipt keyed to that inbound Activity, so the request carries an id the timeline already
+    // has, not a raw Message-ID from the browser.
+    const threadHeader = await this.threadingFor(req.inReplyToActivityId);
+
     // Through the mailbox the user picked, not the deployment's own mailer: this is mail
     // from a person, and it has to leave from their address so the reply comes back to them.
     const sending = await this.mailboxesService.sendingMailbox(req.mailboxConnectionId);
@@ -102,6 +109,7 @@ export class LeadOutreachService {
       subject: resolvedSubject,
       body: resolvedText,
       html: `${resolvedHtml}${trackingPixel}`,
+      ...threadHeader,
     });
 
     const activity = await this.activitiesService.logActivity(actor, {
@@ -129,6 +137,30 @@ export class LeadOutreachService {
       success: true,
       activityId: activity.id,
     };
+  }
+
+  /**
+   * The threading headers for a reply, or nothing for a fresh email.
+   *
+   * The inbound Activity the send answers is joined to its `LeadEmailReceipt`, which is where the
+   * received message's Message-ID was stored. That id (angle-bracketed for the wire) becomes both
+   * `In-Reply-To` and `References` — enough for Gmail and Outlook to thread the reply under it.
+   * A reference to an Activity that is not an inbound reply resolves to no receipt, so this quietly
+   * returns nothing rather than failing the send.
+   */
+  private async threadingFor(
+    inReplyToActivityId: string | undefined,
+  ): Promise<{ inReplyTo: string; references: string } | Record<string, never>> {
+    if (!inReplyToActivityId) return {};
+
+    const receipt = await this.prisma.leadEmailReceipt.findFirst({
+      where: { activityId: inReplyToActivityId },
+      select: { messageId: true },
+    });
+    if (!receipt?.messageId) return {};
+
+    const id = angleWrapped(receipt.messageId);
+    return { inReplyTo: id, references: id };
   }
 
   /**
@@ -195,6 +227,20 @@ export class LeadOutreachService {
       });
     });
   }
+}
+
+/**
+ * A Message-ID in the `<id@host>` form the mail headers want.
+ *
+ * `mailparser` may hand back the id with or without its angle brackets depending on the sender;
+ * both `In-Reply-To` and `References` are defined in terms of the bracketed `msg-id`, so this
+ * settles it to one shape rather than trusting whatever arrived. A blank id yields a blank string,
+ * which the caller has already ruled out.
+ */
+function angleWrapped(messageId: string): string {
+  const trimmed = messageId.trim();
+  if (!trimmed) return '';
+  return trimmed.startsWith('<') && trimmed.endsWith('>') ? trimmed : `<${trimmed.replace(/^<|>$/g, '')}>`;
 }
 
 /**

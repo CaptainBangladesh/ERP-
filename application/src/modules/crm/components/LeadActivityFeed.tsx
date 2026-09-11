@@ -4,8 +4,10 @@ import {
   ACTIVITY_PATHS,
   IDENTITY_PATHS,
   describeAudit,
+  describeReceivedEmail,
   describeSentEmail,
   isSystemAudit,
+  replySubject,
   listPath,
   type ActivityListResponse,
   type ActivityResponse,
@@ -93,6 +95,7 @@ export function LeadActivityFeed({
   composerType,
   onComposerTypeChange,
   composerFocusSignal = 0,
+  onReply,
 }: {
   leadId: string;
   /** So an email open can say who probably opened it, rather than "the lead". */
@@ -102,6 +105,8 @@ export function LeadActivityFeed({
   onComposerTypeChange: (type: ActivityType) => void;
   /** Bumped by the parent when a quick action wants the composer focused. */
   composerFocusSignal?: number;
+  /** Opens the compose box as a reply to a received message, threaded to its inbound Activity. */
+  onReply?: (context: { subject: string; inReplyToActivityId: string }) => void;
 }) {
   const { session } = useSession();
   const canWrite = hasPermission(session, 'crm:activities:write');
@@ -347,6 +352,7 @@ export function LeadActivityFeed({
             currentUserId={currentUserId}
             isLast={index === shown.length - 1}
             onToggleComplete={() => complete.mutate({ id: activity.id, completed: Boolean(activity.completedAt) })}
+            onReply={onReply}
           />
         ))}
       </ul>
@@ -397,6 +403,7 @@ function FeedEntry({
   currentUserId,
   isLast,
   onToggleComplete,
+  onReply,
 }: {
   activity: ActivityResponse;
   leadName: string;
@@ -408,6 +415,7 @@ function FeedEntry({
   currentUserId: string | undefined;
   isLast: boolean;
   onToggleComplete: () => void;
+  onReply?: (context: { subject: string; inReplyToActivityId: string }) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editNotes, setEditNotes] = useState(activity.notes);
@@ -427,8 +435,14 @@ function FeedEntry({
 
   const audit = describeAudit(activity.notes);
   const sentEmail = !audit && activity.type === 'email' ? describeSentEmail(activity.notes) : undefined;
-  const isEditable = !audit && !sentEmail && canWrite;
-  const { icon, ring, tag } = presentation(activity, audit);
+  const receivedEmail =
+    !audit && !sentEmail && activity.type === 'email' ? describeReceivedEmail(activity.notes) : undefined;
+  // Correspondence — sent or received — is system-shaped and not a free-text note, so neither is editable.
+  const isEditable = !audit && !sentEmail && !receivedEmail && canWrite;
+  const { icon, ring, tag } = receivedEmail
+    ? { icon: <MailIcon size={14} />, ring: 'bg-emerald-50 text-emerald-700', tag: 'Reply received' }
+    : presentation(activity, audit);
+  const canReply = Boolean(receivedEmail && onReply);
 
   const isTask = activity.type === 'task' && !audit;
   const isCompleted = Boolean(activity.completedAt);
@@ -479,11 +493,33 @@ function FeedEntry({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{tag}</span>
-              <EntryHeadline activity={activity} audit={audit} sentEmail={sentEmail} leadName={leadName} />
+              <EntryHeadline
+                activity={activity}
+                audit={audit}
+                sentEmail={sentEmail}
+                receivedEmail={receivedEmail}
+                leadName={leadName}
+              />
             </div>
 
             <div className="flex items-center gap-2">
               <span className="shrink-0 text-[11px] font-medium text-slate-400">{when}</span>
+              {canReply && receivedEmail && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onReply?.({
+                      subject: replySubject(receivedEmail.subject),
+                      inReplyToActivityId: activity.id,
+                    })
+                  }
+                  title="Reply to this message"
+                  className="flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-100 cursor-pointer"
+                >
+                  <MailIcon size={12} />
+                  Reply
+                </button>
+              )}
               {isEditable && !isEditing && (
                 <button
                   type="button"
@@ -536,10 +572,10 @@ function FeedEntry({
               </div>
             </form>
           ) : (
-            <EntryBody activity={activity} audit={audit} sentEmail={sentEmail} />
+            <EntryBody activity={activity} audit={audit} sentEmail={sentEmail} receivedEmail={receivedEmail} />
           )}
 
-          {!audit && !isEditing && (
+          {!audit && !receivedEmail && !isEditing && (
             <p className="text-[11px] text-slate-400">
               by <span className="font-semibold text-slate-500">{activity.createdByName}</span>
             </p>
@@ -658,13 +694,22 @@ function EntryHeadline({
   activity,
   audit,
   sentEmail,
+  receivedEmail,
   leadName,
 }: {
   activity: ActivityResponse;
   audit: AuditEvent | undefined;
   sentEmail: { subject: string; preview: string } | undefined;
+  receivedEmail: { subject: string; preview: string } | undefined;
   leadName: string;
 }) {
+  if (receivedEmail) {
+    return (
+      <span className="text-xs font-bold text-slate-900">
+        {leadName} replied — “{receivedEmail.subject}”
+      </span>
+    );
+  }
   if (audit?.kind === 'email-opened') {
     return (
       <span className="text-xs font-bold text-slate-900">
@@ -708,11 +753,26 @@ function EntryBody({
   activity,
   audit,
   sentEmail,
+  receivedEmail,
 }: {
   activity: ActivityResponse;
   audit: AuditEvent | undefined;
   sentEmail: { subject: string; preview: string } | undefined;
+  receivedEmail: { subject: string; preview: string } | undefined;
 }) {
+  if (receivedEmail) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+        <p className="text-xs font-bold text-emerald-900">{receivedEmail.subject}</p>
+        {receivedEmail.preview && (
+          <p className="mt-1 line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-slate-700">
+            {receivedEmail.preview}
+          </p>
+        )}
+      </div>
+    );
+  }
+
   if (audit?.kind === 'email-opened') {
     return (
       <p className="text-xs leading-relaxed text-slate-600">

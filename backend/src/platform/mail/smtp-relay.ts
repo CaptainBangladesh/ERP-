@@ -16,6 +16,9 @@ export interface SmtpRelayMessage {
   subject: string;
   body?: string;
   html?: string;
+  /** Threading headers, forwarded to the relay's `sendMail` so a reply threads at the recipient. */
+  inReplyTo?: string;
+  references?: string;
 }
 
 /**

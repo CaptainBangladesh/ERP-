@@ -3,6 +3,14 @@ export interface MailMessage {
   readonly subject: string;
   readonly body: string;
   readonly html?: string;
+  /**
+   * The `Message-ID` this message replies to (angle-bracketed, e.g. `<abc@host>`), set so the
+   * recipient's mail client threads the reply under the original. Together with `references`
+   * these are the only headers this system sets by hand; both are omitted for a fresh message.
+   */
+  readonly inReplyTo?: string;
+  /** The `References` header — the thread chain, for clients that thread on it rather than `In-Reply-To`. */
+  readonly references?: string;
 }
 
 /**

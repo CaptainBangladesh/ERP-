@@ -3,12 +3,14 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import {
   ACTIVITY_PATHS,
+  EMAIL_TEMPLATE_PATHS,
   IDENTITY_PATHS,
   LEAD_FIELD_PATHS,
   LEAD_PATHS,
   LEAD_SOURCE_PATHS,
   LEAD_STATUS_LABEL_PATHS,
   LEAD_SUBMISSION_PATHS,
+  MAILBOX_PATHS,
   type ActivitySummary,
   type LeadAttachmentResponse,
   type LeadListResponse,
@@ -300,6 +302,53 @@ describe('LeadWorkspace', () => {
       expect(screen.getByText('Called and left a voicemail')).toBeInTheDocument();
       expect(screen.queryByText('Answered Site Survey Form')).not.toBeInTheDocument();
       expect(screen.queryByText('Sent the intro email')).not.toBeInTheDocument();
+    });
+
+    it('shows a received reply as its own entry and opens a threaded reply from it', async () => {
+      // One connected company mailbox, so the compose box has something to send from.
+      server.use(
+        http.get(MAILBOX_PATHS.mailboxes, () =>
+          HttpResponse.json({
+            items: [
+              {
+                id: 'mb-1',
+                userId: 'u1',
+                provider: 'smtp',
+                emailAddress: 'info@thenearbuy.com',
+                displayName: 'Thenearbuy',
+                status: 'connected',
+                connectedAt: '2026-09-01T00:00:00.000Z',
+                createdAt: '2026-09-01T00:00:00.000Z',
+                updatedAt: '2026-09-01T00:00:00.000Z',
+                isShared: true,
+                canManage: false,
+              },
+            ],
+          }),
+        ),
+        http.get(EMAIL_TEMPLATE_PATHS.templates, () => HttpResponse.json({ items: [] })),
+      );
+
+      withActivities([
+        activity({
+          id: 'inbound-1',
+          type: 'email',
+          notes: 'Reply received: Re: welcome to Thenearbuy\n\nSounds good — let us talk next week.',
+          createdByName: 'System',
+        }),
+      ]);
+
+      const { user } = renderPage(<LeadWorkspace />, { token: 'a-token', path: WORKSPACE_PATH });
+
+      // The reply reads as an arriving message, not as a line of email text.
+      expect(await screen.findByText(/Priya Kapoor replied/)).toBeInTheDocument();
+      expect(screen.getByText('Sounds good — let us talk next week.')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Reply' }));
+
+      // The compose box opens as a reply, with the Re: subject already filled.
+      expect(await screen.findByText('Reply to Priya Kapoor')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Re: welcome to Thenearbuy')).toBeInTheDocument();
     });
 
     it('logs a note from the pinned composer', async () => {

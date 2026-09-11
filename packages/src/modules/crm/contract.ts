@@ -619,6 +619,32 @@ export function describeSentEmail(notes: string): { subject: string; preview: st
   return { subject: match[1]!.trim(), preview: (match[2] ?? '').trim() };
 }
 
+/**
+ * A reply that came back in, taken apart for the feed — the inbound twin of `describeSentEmail`.
+ *
+ * `InboundRepliesService` writes an `email` Activity shaped `Reply received: <subject>` then the
+ * start of the body, so what marks correspondence *arriving* is that prefix, the same way a
+ * leading emoji marks an audit event. Returns `undefined` for anything else, which then reads as
+ * written. This is what lets the workspace draw a received reply as its own kind of entry — with
+ * a Reply action — rather than as one more line of email text.
+ */
+export function describeReceivedEmail(notes: string): { subject: string; preview: string } | undefined {
+  const match = /^Reply received:\s*(.+?)(?:\n\n([\s\S]*))?$/u.exec(notes);
+  if (!match) return undefined;
+  return { subject: match[1]!.trim(), preview: (match[2] ?? '').trim() };
+}
+
+/**
+ * The subject a reply goes out under: the original with a single `Re:` in front.
+ *
+ * Any run of existing `Re:` prefixes (a thread several turns deep already carries them) is
+ * stripped first, so a reply to a reply reads `Re: X`, not `Re: Re: Re: X`.
+ */
+export function replySubject(subject: string): string {
+  const bare = subject.replace(/^(?:re:\s*)+/iu, '').trim();
+  return `Re: ${bare}`;
+}
+
 export const ACTIVITY_FIELDS = {
   type: 'type',
   occurredAt: 'occurredAt',
@@ -1886,6 +1912,12 @@ export interface SendLeadEmailRequest {
   body?: string;
   htmlBody?: string;
   templateId?: string;
+  /**
+   * The inbound-reply Activity this email answers, when it is a reply. The server resolves it to
+   * the received message's stored Message-ID and sets `In-Reply-To`/`References`, so the reply
+   * threads with the original in the recipient's mail client. Omitted for a fresh outbound email.
+   */
+  inReplyToActivityId?: string;
 }
 
 export interface SendLeadEmailResponse {

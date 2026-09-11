@@ -22,6 +22,12 @@ interface SendEmailModalProps {
   onClose: () => void;
   onSuccess: () => void;
   onOpenMailboxesModal?: () => void;
+  /**
+   * Present when the compose box was opened as a *reply* to a received message: it seeds the
+   * `Re:` subject and carries the inbound Activity's id, which the server turns into the
+   * `In-Reply-To`/`References` headers that thread the reply at the recipient.
+   */
+  replyContext?: { subject: string; inReplyToActivityId: string };
 }
 
 export const SendEmailModal: React.FC<SendEmailModalProps> = ({
@@ -32,6 +38,7 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
   onClose,
   onSuccess,
   onOpenMailboxesModal,
+  replyContext,
 }) => {
   /**
    * The submit button sits on the dialog's footer bar, which is outside the form element —
@@ -83,14 +90,16 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadData();
-      setSubject('');
+      // A reply opens with the Re: subject already filled and no template selected — it answers a
+      // specific message, so it is a one-off, not a campaign template.
+      setSubject(replyContext?.subject ?? '');
       setHtmlBody('');
       setSelectedTemplateId('');
       setPreviewTab('compose');
       setPreviewData(null);
       setError(null);
     }
-  }, [isOpen, leadId]);
+  }, [isOpen, leadId, replyContext?.inReplyToActivityId]);
 
   const handleSelectTemplate = (tId: string) => {
     setSelectedTemplateId(tId);
@@ -164,6 +173,7 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
         templateId: selectedTemplateId || undefined,
         subject: selectedTemplateId ? undefined : subject,
         htmlBody: selectedTemplateId ? undefined : htmlBody,
+        inReplyToActivityId: replyContext?.inReplyToActivityId,
       };
 
       const res = await api.post<SendLeadEmailResponse>(
@@ -188,7 +198,7 @@ export const SendEmailModal: React.FC<SendEmailModalProps> = ({
     <Modal
       onClose={onClose}
       icon="✉️"
-      title={`Email ${leadName}`}
+      title={replyContext ? `Reply to ${leadName}` : `Email ${leadName}`}
       description={
         leadEmail ? (
           <>

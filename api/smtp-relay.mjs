@@ -109,6 +109,10 @@ export default async function handler(req, res) {
       subject: message.subject,
       text: message.body,
       html: message.html || (message.body ? message.body.replace(/\n/g, '<br/>') : undefined),
+      // Threading headers, when the API sent them: a reply carries the original's Message-ID so
+      // the recipient's client threads it under the message it answers.
+      ...(message.inReplyTo ? { inReplyTo: message.inReplyTo } : {}),
+      ...(message.references ? { references: message.references } : {}),
     });
 
     return res.status(200).json({

@@ -1,5 +1,6 @@
 import {
   AUTH_PATHS,
+  LEAD_EMAIL_PATHS,
   LEAD_PATHS,
   MAILBOX_ERROR_CODES,
   MAILBOX_PATHS,
@@ -7,9 +8,12 @@ import {
   type CreateLeadRequest,
   type LeadResponse,
   type MailPollResponse,
+  type MailboxConnectionSummary,
+  type SendLeadEmailRequest,
   type SignUpRequest,
 } from '@erp/shared';
 import { encryptSmtpPassword } from '../src/platform/secrets';
+import { DevMailer } from '../src/platform/mail/dev-mailer';
 import {
   RecordingInboundMailReader,
   type InboundMessage,
@@ -243,5 +247,71 @@ describe('CRM Inbound Replies: poll, match, record', () => {
 
     expect(await app.prisma.leadEmailReceipt.count({ where: { leadId: acmeLeadId } })).toBe(1);
     expect(await app.prisma.leadEmailReceipt.count({ where: { leadId: globexLeadId } })).toBe(0);
+  });
+
+  /** The shared company mailbox, as the workspace's Send email box resolves it from the list. */
+  async function companyMailboxId(tenant: Tenant): Promise<string> {
+    const listRes = await tenant.as(app.http.get(MAILBOX_PATHS.mailboxes)).expect(200);
+    const items = listRes.body.items as MailboxConnectionSummary[];
+    return items[0]!.id;
+  }
+
+  it('threads a reply sent from the app under the message it answers', async () => {
+    const acme = await signUp('Acme');
+    await configureCompanyMailbox(acme.companyId);
+    const leadId = await createLead(acme, { email: 'buyer@example.com', assignToOwner: true });
+
+    // The lead replies; the poll records it, leaving an inbound Activity keyed to a receipt that
+    // holds the received Message-ID.
+    reader.queue(MAILBOX, [
+      reply({ uid: 10, fromAddress: 'buyer@example.com', messageId: '<lead-reply-1@example.com>' }),
+    ]);
+    await poll();
+    const inbound = await app.prisma.activity.findFirstOrThrow({ where: { leadId, type: 'email' } });
+
+    const devMailer = app.nest.get(DevMailer);
+    const before = devMailer.sent.length;
+
+    // Answer that reply from the app, naming the inbound Activity it replies to.
+    await acme
+      .as(app.http.post(LEAD_EMAIL_PATHS.sendEmail(leadId)))
+      .send({
+        mailboxConnectionId: await companyMailboxId(acme),
+        subject: 'Re: welcome to Thenearbuy',
+        htmlBody: '<p>Glad to hear it — shall we set up a call?</p>',
+        inReplyToActivityId: inbound.id,
+      } satisfies SendLeadEmailRequest)
+      .expect(200);
+
+    expect(devMailer.sent.length).toBe(before + 1);
+    const sent = devMailer.sent[devMailer.sent.length - 1]!;
+    expect(sent.to).toBe('buyer@example.com');
+    // The received Message-ID becomes In-Reply-To and References, so the recipient's client
+    // threads this under the reply it answers rather than starting a new conversation.
+    expect(sent.inReplyTo).toBe('<lead-reply-1@example.com>');
+    expect(sent.references).toBe('<lead-reply-1@example.com>');
+  });
+
+  it('sends a fresh email with no threading headers when it is not a reply', async () => {
+    const acme = await signUp('Acme');
+    await configureCompanyMailbox(acme.companyId);
+    const leadId = await createLead(acme, { email: 'buyer@example.com' });
+
+    const devMailer = app.nest.get(DevMailer);
+    const before = devMailer.sent.length;
+
+    await acme
+      .as(app.http.post(LEAD_EMAIL_PATHS.sendEmail(leadId)))
+      .send({
+        mailboxConnectionId: await companyMailboxId(acme),
+        subject: 'Quick intro',
+        htmlBody: '<p>Hello there</p>',
+      } satisfies SendLeadEmailRequest)
+      .expect(200);
+
+    expect(devMailer.sent.length).toBe(before + 1);
+    const sent = devMailer.sent[devMailer.sent.length - 1]!;
+    expect(sent.inReplyTo).toBeUndefined();
+    expect(sent.references).toBeUndefined();
   });
 });
