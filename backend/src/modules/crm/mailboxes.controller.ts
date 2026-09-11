@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -17,17 +18,22 @@ import {
   type MailboxConnectionListResponse,
   type MailboxConnectionSummary,
   type MailboxProvider,
+  type MailPollResponse,
 } from '@erp/shared';
 import { ApiException } from '../../http/api-exception';
 import { CurrentSession, Public, type RequestSession } from '../../platform/auth';
 import { RequirePermission } from '../../platform/authorization';
 import { validated, type Valid } from '../../platform/validation';
 import { MailboxesService } from './mailboxes.service';
+import { InboundRepliesService } from './inbound-replies.service';
 import { ConnectSmtpMailboxBody, CreateConnectUrlBody } from './schemas';
 
 @Controller(CRM_ROUTE)
 export class MailboxesController {
-  constructor(private readonly mailboxesService: MailboxesService) {}
+  constructor(
+    private readonly mailboxesService: MailboxesService,
+    private readonly inboundReplies: InboundRepliesService,
+  ) {}
 
   @Post('mailboxes/connect-url')
   @HttpCode(HttpStatus.OK)
@@ -104,6 +110,24 @@ export class MailboxesController {
   @RequirePermission('crm:leads:read')
   async mailDiagnostics(): Promise<MailDeliveryDiagnostics> {
     return this.mailboxesService.mailDiagnostics();
+  }
+
+  /**
+   * Reads replies out of the company mailbox and records them on their leads' timelines.
+   *
+   * `@Public()` because the caller is an external scheduler with no session — the server sleeps
+   * on the hosting it runs on, so a timer inside it cannot be trusted, and the request that
+   * wakes it is also the one that drives the poll. It is gated instead by a shared secret in
+   * the `x-poll-secret` header, and refuses when none is configured rather than running open.
+   * It returns counts, never a mailbox address or a message body.
+   */
+  @Public()
+  @Post('mailboxes/poll')
+  @HttpCode(HttpStatus.OK)
+  async pollInbound(
+    @Headers('x-poll-secret') secret: string | undefined,
+  ): Promise<MailPollResponse> {
+    return this.inboundReplies.poll(secret);
   }
 
   /**

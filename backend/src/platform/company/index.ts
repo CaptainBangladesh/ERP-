@@ -6,5 +6,6 @@
  * this narrow.
  */
 export { CompanyDirectory, type CompanyMailAccount } from './company-directory';
+export { CompanyMailboxes } from './company-mailboxes';
 export { CompanyRecord } from './company-record';
 export { CompanyModule } from './company.module';

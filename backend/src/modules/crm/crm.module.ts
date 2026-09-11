@@ -25,6 +25,12 @@ import { MailboxesController } from './mailboxes.controller';
 import { MailboxesService } from './mailboxes.service';
 import { GoogleMailboxOAuth, MailboxOAuth, StubMailboxOAuth } from './mailbox-oauth';
 import { LiveMailboxSender, MailboxSender, RecordingMailboxSender } from './mailbox-sender';
+import { InboundRepliesService } from './inbound-replies.service';
+import {
+  InboundMailReader,
+  LiveInboundMailReader,
+  RecordingInboundMailReader,
+} from './inbound-mail-reader';
 import { EmailTemplatesController } from './email-templates.controller';
 import { EmailTemplatesService } from './email-templates.service';
 import { CampaignsController } from './campaigns.controller';
@@ -106,6 +112,18 @@ import { PublicLeadEmailController } from './public-lead-email.controller';
         process.env.NODE_ENV === 'test' ? recording : live,
       inject: [LiveMailboxSender, RecordingMailboxSender],
     },
+    LiveInboundMailReader,
+    RecordingInboundMailReader,
+    {
+      // The same test/live split the sender takes: a suite has no IMAP server to reach, so it
+      // binds the recording reader and asserts on what the poll did with the messages it was
+      // handed, rather than opening a socket.
+      provide: InboundMailReader,
+      useFactory: (live: LiveInboundMailReader, recording: RecordingInboundMailReader) =>
+        process.env.NODE_ENV === 'test' ? recording : live,
+      inject: [LiveInboundMailReader, RecordingInboundMailReader],
+    },
+    InboundRepliesService,
     EmailTemplatesService,
     CampaignsService,
     CaptureSourcesService,

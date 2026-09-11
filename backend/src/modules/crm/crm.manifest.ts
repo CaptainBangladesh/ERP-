@@ -28,6 +28,7 @@ export const manifest: ModuleManifest = {
     '20260906000000_activity_assignee',
     '20260906010000_scripts_playbooks',
     '20260906020000_planner_and_notes',
+    '20260906030000_inbound_reply_capture',
   ],
 
   models: [
@@ -40,6 +41,8 @@ export const manifest: ModuleManifest = {
     'LeadAttachment',
     'LeadSubmission',
     'LeadEmailSend',
+    'LeadEmailReceipt',
+    'InboundMailCursor',
     'LeadAssignee',
     'Stage',
     'Deal',

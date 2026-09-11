@@ -1104,6 +1104,15 @@ export const MAILBOX_PATHS = {
    * from the running server, without sending anything.
    */
   diagnostics: `/${CRM_ROUTE}/mailboxes/diagnostics`,
+  /**
+   * Where an external scheduler drives the inbound-reply poll — the app reads the company
+   * mailbox over IMAP and records new replies on their leads' timelines.
+   *
+   * `@Public()` and unauthenticated by necessity: a cron holds no session. It is gated instead
+   * by a shared secret in the `x-poll-secret` header and refuses every request when none is
+   * configured, the same posture the SMTP relay takes. See docs/deployment/hosted-email.md.
+   */
+  poll: `/${CRM_ROUTE}/mailboxes/poll`,
 } as const;
 
 /** How a send will actually be carried, decided by what this deployment has configured. */
@@ -1127,6 +1136,13 @@ export interface MailDeliveryDiagnostics {
   transport: MailTransportKind;
   /** Whether this server can open outbound SMTP sockets at all, and how that was determined. */
   outboundSmtp: MailDiagnosticCheck;
+  /**
+   * Whether this server can open an outbound IMAP socket to *read* replies, and how that was
+   * determined. The inbound counterpart to `outboundSmtp`: a hosting platform can block one
+   * without the other, and a blocked port hangs rather than refuses, so this is the finding
+   * that says whether reply capture can work here at all.
+   */
+  outboundImap: MailDiagnosticCheck;
   /** The HTTPS relay: configured, reachable, and agreeing on the shared secret. */
   relay: MailDiagnosticCheck & { configured: boolean; url: string | null };
   /** The company mailbox this deployment would send from, and whether it can be read. */
@@ -1135,6 +1151,27 @@ export interface MailDeliveryDiagnostics {
   storedPassword: MailDiagnosticCheck;
   /** The environment as the server sees it, which is often not what the operator assumes. */
   environment: { nodeEnv: string; resendConfigured: boolean; deploymentSmtpConfigured: boolean };
+}
+
+/**
+ * What one inbound-reply poll did, in counts only — never an address, a subject or a body.
+ *
+ * The endpoint is driven by an unauthenticated scheduler, so its answer is read from logs and
+ * dashboards rather than by a person who is entitled to the mail. Counts say whether it is
+ * working; anything more would make a public route a place mail content leaks from.
+ */
+export interface MailPollResponse {
+  /** Companies whose mailbox this run read. */
+  companiesPolled: number;
+  /** New messages examined across all of them. */
+  messagesSeen: number;
+  /** Replies matched to a lead and recorded on a timeline. */
+  repliesRecorded: number;
+  /**
+   * One line per company whose poll failed — a host that would not connect, a password that
+   * would not open — without naming the mailbox. Empty when every company polled cleanly.
+   */
+  errors: string[];
 }
 
 export const LEAD_EMAIL_PATHS = {
@@ -1352,6 +1389,11 @@ export const MAILBOX_ERROR_CODES = {
   /** Sending failed at the provider. The message did not go out. */
   sendFailed: 'mailbox_send_failed',
   authStateNotFound: 'auth_state_not_found',
+  /**
+   * The inbound-reply poll was called without the shared secret, or with the wrong one — or
+   * the server has no secret configured, in which case it refuses rather than run open.
+   */
+  pollUnauthorized: 'inbound_poll_unauthorized',
   mailboxNotConnected: 'mailbox_not_connected',
   invalidAuthState: 'invalid_auth_state',
   mailboxForbidden: 'mailbox_forbidden',

@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { CompanyDirectory } from './company-directory';
 import { CompanyRecord } from './company-record';
+import { CompanyMailboxes, CompanyMailboxesRecord } from './company-mailboxes';
 
 /**
  * Global, like `TenancyModule` and `MailModule`, and for the same reason: the tenant root is
@@ -13,7 +14,12 @@ import { CompanyRecord } from './company-record';
  */
 @Global()
 @Module({
-  providers: [CompanyRecord, { provide: CompanyDirectory, useExisting: CompanyRecord }],
-  exports: [CompanyDirectory],
+  providers: [
+    CompanyRecord,
+    { provide: CompanyDirectory, useExisting: CompanyRecord },
+    CompanyMailboxesRecord,
+    { provide: CompanyMailboxes, useExisting: CompanyMailboxesRecord },
+  ],
+  exports: [CompanyDirectory, CompanyMailboxes],
 })
 export class CompanyModule {}

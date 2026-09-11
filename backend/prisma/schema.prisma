@@ -861,6 +861,7 @@ model Lead {
   attachments LeadAttachment[]
   submissions LeadSubmission[]
   emailSends LeadEmailSend[]
+  emailReceipts LeadEmailReceipt[]
   assignees LeadAssignee[]
   playbookEnrollments PlaybookEnrollment[]
   approachPlan ApproachPlan?
@@ -974,6 +975,48 @@ model LeadEmailSend {
   @@index([companyId])
   @@index([companyId, leadId])
   @@map("lead_email_sends")
+}
+
+/// A reply received into the company mailbox and matched back to a lead — the inbound half of
+/// `LeadEmailSend`. Written by the poll in `inbound-replies.service.ts`, one row per message,
+/// and the row is also the dedup key: `@@unique([companyId, messageId])` makes re-polling the
+/// same message a no-op rather than a second Timeline entry.
+model LeadEmailReceipt {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  leadId      String   @map("lead_id") @db.Uuid
+  /// The `email` Activity this reply produced on the Timeline.
+  activityId  String?  @map("activity_id") @db.Uuid
+  /// The reply's RFC 5322 Message-ID, verbatim. The dedup key, paired with the company.
+  messageId   String   @map("message_id")
+  fromAddress String   @map("from_address")
+  subject     String
+  /// When the mail host received the reply, not when this row was written.
+  receivedAt  DateTime @map("received_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, messageId])
+  @@index([companyId])
+  @@index([companyId, leadId])
+  @@map("lead_email_receipts")
+}
+
+/// Where the last poll of a company's mailbox stopped, so the next fetch reads only what arrived
+/// after it. One row per company. `lastSeenUid` is the IMAP UID of the newest message already
+/// considered; UIDs are monotonic within a mailbox, so "greater than this" is the whole of the
+/// "what is new" question and the mailbox is never re-read from the top.
+model InboundMailCursor {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String    @map("company_id") @db.Uuid
+  lastSeenUid  Int       @default(0) @map("last_seen_uid")
+  lastPolledAt DateTime? @map("last_polled_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@unique([companyId])
+  @@map("inbound_mail_cursors")
 }
 
 /// A company's own swimlanes on the Leads board.

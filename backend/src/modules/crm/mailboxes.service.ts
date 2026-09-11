@@ -27,6 +27,7 @@ import {
 } from '../../platform/mail';
 import { decryptSmtpPassword, encryptSmtpPassword } from '../../platform/secrets';
 import { MailboxSender, type SendingMailbox } from './mailbox-sender';
+import { imapHostFor } from './imap-host';
 
 @Injectable()
 export class MailboxesService {
@@ -399,6 +400,15 @@ export class MailboxesService {
         ? await probeOutboundSmtp(host, port)
         : { ok: false, detail: 'No company mailbox is configured, so there is no host to probe.' };
 
+    // The same bare-socket test for the *inbound* side: whether this server can reach the
+    // mailbox over IMAP to read replies. A host can permit one and block the other, so this is
+    // asked separately from the SMTP probe above and answered on the port a poll would use.
+    const outboundImap = !probing
+      ? { ok: false, detail: 'Not probed under test.' }
+      : host
+        ? await probeOutboundImap(imapHostFor(host), 993)
+        : { ok: false, detail: 'No company mailbox is configured, so there is no host to probe.' };
+
     let storedPassword: MailDiagnosticCheck;
     if (!storedSecret) {
       storedPassword = { ok: false, detail: 'No password is stored for this mailbox.' };
@@ -423,6 +433,7 @@ export class MailboxesService {
     return {
       transport,
       outboundSmtp,
+      outboundImap,
       relay: {
         configured: isSmtpRelayConfigured(),
         url: smtpRelayUrl() ?? null,
@@ -619,6 +630,54 @@ async function probeOutboundSmtp(host: string, port: number): Promise<MailDiagno
           'is blocked where this API is hosted — Render blocks ports 25, 465 and 587 on free ' +
           'web services. Mail must go over HTTPS through a relay, or the API must move to a ' +
           'plan that permits outbound SMTP.',
+      }),
+    );
+
+    socket.once('error', (cause: NodeJS.ErrnoException) =>
+      finish({
+        ok: false,
+        detail: `Could not connect to ${host}:${port}: ${cause.message}`,
+      }),
+    );
+
+    socket.connect(port, host);
+  });
+}
+
+/**
+ * The inbound counterpart to `probeOutboundSmtp`: can this server open an IMAP socket to read
+ * replies? Same mechanism — a bare connect, where a timeout is the finding because a blocked
+ * port hangs rather than refuses — with the one difference that matters for the operator: IMAP
+ * (993) and SMTP (465/587) are blocked independently, so "sending works" says nothing about
+ * whether reading will.
+ */
+async function probeOutboundImap(host: string, port: number): Promise<MailDiagnosticCheck> {
+  const TIMEOUT_MS = 8_000;
+
+  return new Promise<MailDiagnosticCheck>((resolve) => {
+    const socket = new Socket();
+    let settled = false;
+
+    const finish = (result: MailDiagnosticCheck) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+
+    socket.setTimeout(TIMEOUT_MS);
+
+    socket.once('connect', () =>
+      finish({ ok: true, detail: `Opened an IMAP connection to ${host}:${port}.` }),
+    );
+
+    socket.once('timeout', () =>
+      finish({
+        ok: false,
+        detail:
+          `Connecting to ${host}:${port} timed out after ${TIMEOUT_MS / 1000}s. Outbound IMAP ` +
+          'appears blocked where this API is hosted, so replies cannot be read here. Reply ' +
+          'capture needs a host that permits outbound IMAP (993).',
       }),
     );
 
