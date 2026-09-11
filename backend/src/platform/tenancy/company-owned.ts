@@ -191,6 +191,13 @@ const CLASSIFICATION: Readonly<Record<string, ModelTenancy>> = {
   LeadAttachment: { kind: 'company-owned' },
   LeadSubmission: { kind: 'company-owned' },
   LeadEmailSend: { kind: 'company-owned' },
+  // The inbound half of lead email: a received reply matched to a lead, and the per-company
+  // IMAP position the poll reads from. Both ordinary company-owned — a reply belongs to the
+  // company whose lead it answers, and the cursor is that company's own bookmark. Nothing
+  // restricted (a colleague who may see the pipeline may read its replies) or immutable (the
+  // cursor advances every poll).
+  LeadEmailReceipt: { kind: 'company-owned' },
+  InboundMailCursor: { kind: 'company-owned' },
   // One row per person a lead is assigned to — the set behind co-ownership. Ordinary
   // company-owned: an assignment belongs to the company whose lead it is, and reassigning is
   // an in-place change, so nothing restricted or immutable.

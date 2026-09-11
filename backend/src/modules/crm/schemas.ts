@@ -886,6 +886,7 @@ export const SendLeadEmailBody = validator({
   templateId: optional(identifier({ missing: '', invalid: 'Invalid template ID.' })),
   subject: optional(text({ missing: '', maxLength: 200, tooLong: 'Subject is too long.' })),
   htmlBody: optional(text({ missing: '', maxLength: 50000, tooLong: 'HTML body is too long.' })),
+  inReplyToActivityId: optional(identifier({ missing: '', invalid: 'Invalid activity ID.' })),
 });
 
 export const EMAIL_TEMPLATE_LIST: ListSpec = {

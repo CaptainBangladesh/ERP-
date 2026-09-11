@@ -619,6 +619,32 @@ export function describeSentEmail(notes: string): { subject: string; preview: st
   return { subject: match[1]!.trim(), preview: (match[2] ?? '').trim() };
 }
 
+/**
+ * A reply that came back in, taken apart for the feed — the inbound twin of `describeSentEmail`.
+ *
+ * `InboundRepliesService` writes an `email` Activity shaped `Reply received: <subject>` then the
+ * start of the body, so what marks correspondence *arriving* is that prefix, the same way a
+ * leading emoji marks an audit event. Returns `undefined` for anything else, which then reads as
+ * written. This is what lets the workspace draw a received reply as its own kind of entry — with
+ * a Reply action — rather than as one more line of email text.
+ */
+export function describeReceivedEmail(notes: string): { subject: string; preview: string } | undefined {
+  const match = /^Reply received:\s*(.+?)(?:\n\n([\s\S]*))?$/u.exec(notes);
+  if (!match) return undefined;
+  return { subject: match[1]!.trim(), preview: (match[2] ?? '').trim() };
+}
+
+/**
+ * The subject a reply goes out under: the original with a single `Re:` in front.
+ *
+ * Any run of existing `Re:` prefixes (a thread several turns deep already carries them) is
+ * stripped first, so a reply to a reply reads `Re: X`, not `Re: Re: Re: X`.
+ */
+export function replySubject(subject: string): string {
+  const bare = subject.replace(/^(?:re:\s*)+/iu, '').trim();
+  return `Re: ${bare}`;
+}
+
 export const ACTIVITY_FIELDS = {
   type: 'type',
   occurredAt: 'occurredAt',
@@ -1104,6 +1130,15 @@ export const MAILBOX_PATHS = {
    * from the running server, without sending anything.
    */
   diagnostics: `/${CRM_ROUTE}/mailboxes/diagnostics`,
+  /**
+   * Where an external scheduler drives the inbound-reply poll — the app reads the company
+   * mailbox over IMAP and records new replies on their leads' timelines.
+   *
+   * `@Public()` and unauthenticated by necessity: a cron holds no session. It is gated instead
+   * by a shared secret in the `x-poll-secret` header and refuses every request when none is
+   * configured, the same posture the SMTP relay takes. See docs/deployment/hosted-email.md.
+   */
+  poll: `/${CRM_ROUTE}/mailboxes/poll`,
 } as const;
 
 /** How a send will actually be carried, decided by what this deployment has configured. */
@@ -1127,6 +1162,13 @@ export interface MailDeliveryDiagnostics {
   transport: MailTransportKind;
   /** Whether this server can open outbound SMTP sockets at all, and how that was determined. */
   outboundSmtp: MailDiagnosticCheck;
+  /**
+   * Whether this server can open an outbound IMAP socket to *read* replies, and how that was
+   * determined. The inbound counterpart to `outboundSmtp`: a hosting platform can block one
+   * without the other, and a blocked port hangs rather than refuses, so this is the finding
+   * that says whether reply capture can work here at all.
+   */
+  outboundImap: MailDiagnosticCheck;
   /** The HTTPS relay: configured, reachable, and agreeing on the shared secret. */
   relay: MailDiagnosticCheck & { configured: boolean; url: string | null };
   /** The company mailbox this deployment would send from, and whether it can be read. */
@@ -1135,6 +1177,27 @@ export interface MailDeliveryDiagnostics {
   storedPassword: MailDiagnosticCheck;
   /** The environment as the server sees it, which is often not what the operator assumes. */
   environment: { nodeEnv: string; resendConfigured: boolean; deploymentSmtpConfigured: boolean };
+}
+
+/**
+ * What one inbound-reply poll did, in counts only — never an address, a subject or a body.
+ *
+ * The endpoint is driven by an unauthenticated scheduler, so its answer is read from logs and
+ * dashboards rather than by a person who is entitled to the mail. Counts say whether it is
+ * working; anything more would make a public route a place mail content leaks from.
+ */
+export interface MailPollResponse {
+  /** Companies whose mailbox this run read. */
+  companiesPolled: number;
+  /** New messages examined across all of them. */
+  messagesSeen: number;
+  /** Replies matched to a lead and recorded on a timeline. */
+  repliesRecorded: number;
+  /**
+   * One line per company whose poll failed — a host that would not connect, a password that
+   * would not open — without naming the mailbox. Empty when every company polled cleanly.
+   */
+  errors: string[];
 }
 
 export const LEAD_EMAIL_PATHS = {
@@ -1352,6 +1415,11 @@ export const MAILBOX_ERROR_CODES = {
   /** Sending failed at the provider. The message did not go out. */
   sendFailed: 'mailbox_send_failed',
   authStateNotFound: 'auth_state_not_found',
+  /**
+   * The inbound-reply poll was called without the shared secret, or with the wrong one — or
+   * the server has no secret configured, in which case it refuses rather than run open.
+   */
+  pollUnauthorized: 'inbound_poll_unauthorized',
   mailboxNotConnected: 'mailbox_not_connected',
   invalidAuthState: 'invalid_auth_state',
   mailboxForbidden: 'mailbox_forbidden',
@@ -1844,6 +1912,12 @@ export interface SendLeadEmailRequest {
   body?: string;
   htmlBody?: string;
   templateId?: string;
+  /**
+   * The inbound-reply Activity this email answers, when it is a reply. The server resolves it to
+   * the received message's stored Message-ID and sets `In-Reply-To`/`References`, so the reply
+   * threads with the original in the recipient's mail client. Omitted for a fresh outbound email.
+   */
+  inReplyToActivityId?: string;
 }
 
 export interface SendLeadEmailResponse {

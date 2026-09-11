@@ -109,3 +109,53 @@ credentials, so it only has to be set up once.
 | `FRONTEND_URL` | Where links in invitations and password resets point. Unset, they fall back to the request headers or `localhost`. |
 | `MAILBOX_SECRET` | Encrypts stored SMTP passwords. Must be identical on every server sharing a database. |
 | `RESEND_API_KEY` | An alternative HTTPS transport, used only when no relay is configured. Resend refuses any sender on a domain not verified in its dashboard, so it suits a company sending from a domain it owns and cannot send from a plain Gmail address. |
+
+## Reading replies back (inbound)
+
+Everything above is about mail *leaving*. Replies come *back* to the company mailbox itself —
+they land in Private Email / Gmail, not in the CRM. To show a reply on the lead it answers, the
+server reads the mailbox over IMAP and records each new reply on the Timeline, beside the message
+that was sent.
+
+Nothing on the mail side changes: it reuses the same company mailbox, over IMAP (port 993)
+instead of SMTP. Two things make it run.
+
+### 1. A secret, so the poll is not open to the world
+
+The poll is triggered over `POST /api/crm/mailboxes/poll`. That route is public — the scheduler
+that drives it holds no session — so it is gated by a shared secret instead. Generate one:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Set it on the API as `INBOUND_POLL_SECRET`, and redeploy. With it unset the poll refuses every
+request rather than running open.
+
+### 2. A scheduler, because the server sleeps
+
+Free hosting sleeps when idle, so a timer inside the server cannot be relied on. Point a free
+external scheduler (e.g. [cron-job.org](https://cron-job.org)) at the poll, every 5–15 minutes:
+
+- **Method**: `POST`
+- **URL**: `https://<your-api>/api/crm/mailboxes/poll`
+- **Header**: `x-poll-secret: <the value from step 1>`
+
+Each call wakes the server and reads anything new. A reply then appears on its lead within one
+polling interval — matched to the lead whose email address it came from. It is read-only: replies
+are shown, not answered from inside the app.
+
+The poll answers with counts only — `{ companiesPolled, messagesSeen, repliesRecorded, errors }`
+— never an address or a body, so it is safe to read from a scheduler's logs.
+
+### Does this host allow IMAP?
+
+Sending is blocked on some hosts (the whole reason for the relay above); reading can be blocked
+independently. `GET /api/crm/mailboxes/diagnostics`, signed in, now also answers `outboundImap` —
+whether this server can open an IMAP socket to the mail host at all. If that is `false`, replies
+cannot be read here and the API needs a host that permits outbound IMAP (993), the same way a
+blocked SMTP port needs the relay.
+
+| Variable | Why it matters |
+| --- | --- |
+| `INBOUND_POLL_SECRET` | Gates the public poll endpoint. Unset, the poll refuses every request. The scheduler sends the same value as `x-poll-secret`. |

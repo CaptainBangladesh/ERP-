@@ -19,6 +19,7 @@ import {
   type ScopedPrisma,
 } from '../../platform/tenancy';
 import { MailboxOAuth } from './mailbox-oauth';
+import { CompanyDirectory, type CompanyMailAccount } from '../../platform/company';
 import {
   checkRelayReachable,
   isSmtpRelayConfigured,
@@ -26,6 +27,7 @@ import {
 } from '../../platform/mail';
 import { decryptSmtpPassword, encryptSmtpPassword } from '../../platform/secrets';
 import { MailboxSender, type SendingMailbox } from './mailbox-sender';
+import { imapHostFor } from './imap-host';
 
 @Injectable()
 export class MailboxesService {
@@ -34,6 +36,14 @@ export class MailboxesService {
     private readonly tenancy: Tenancy,
     private readonly oauth: MailboxOAuth,
     private readonly sender: MailboxSender,
+    /**
+     * The company's owner and its mail account, asked of the platform.
+     *
+     * CRM read `prisma.company` directly for both until the conformance pack refused it:
+     * `Company` is identity's, and querying it bound this module to identity's schema without
+     * either side declaring the edge. See `platform/company`.
+     */
+    private readonly company: CompanyDirectory,
   ) {}
 
   async createConnectUrl(
@@ -133,8 +143,7 @@ export class MailboxesService {
     actor: { userId: string; isOwner?: boolean } | string,
   ): Promise<MailboxConnectionSummary[]> {
     const context = typeof actor === 'string' ? { userId: actor, isOwner: false } : actor;
-    const company = await this.prisma.company.findFirst().catch(() => null);
-    const ownerUserId = company?.ownerUserId;
+    const ownerUserId = (await this.company.ownerUserId()) ?? undefined;
 
     const rows = await this.prisma.mailboxConnection.findMany({
       where: {
@@ -147,52 +156,61 @@ export class MailboxesService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const hasSmtp = rows.some((r: any) => r.provider === 'smtp');
-    if (!hasSmtp) {
-      const company = await this.prisma.company.findFirst().catch(() => null);
-      if (company?.mailSmtpHost && company.mailSmtpPassword && company.mailFromAddress) {
-        try {
-          const autoMailbox = await this.prisma.mailboxConnection.create({
-            data: companyApplied({
-              userId: context.userId,
-              provider: 'smtp',
-              status: 'connected',
-              emailAddress: company.mailFromAddress,
-              displayName: company.mailFromName || company.mailFromAddress,
-              smtpHost: company.mailSmtpHost,
-              smtpPort: company.mailSmtpPort ?? 465,
-              smtpSecure: company.mailSmtpSecure ?? true,
-              smtpUsername: company.mailSmtpUsername || company.mailFromAddress,
-              smtpPassword: company.mailSmtpPassword,
-            }),
-          });
-          rows.push(autoMailbox);
-        } catch {
-          const synthesizedSummary: MailboxConnectionSummary = {
-            id: `company-smtp-${company.id}`,
-            userId: context.userId,
-            provider: 'smtp',
-            emailAddress: company.mailFromAddress,
-            displayName: company.mailFromName || company.mailFromAddress,
-            status: 'connected',
-            connectedAt: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            isShared: true,
-            canManage: Boolean(context.isOwner),
-            smtp: {
-              host: company.mailSmtpHost,
-              port: company.mailSmtpPort ?? 465,
-              secure: company.mailSmtpSecure ?? true,
-              username: company.mailSmtpUsername || company.mailFromAddress,
-            },
-          };
-          return [...rows.map((r: any) => describeMailbox(r, context)), synthesizedSummary];
-        }
-      }
-    }
+    const summaries = rows.map((r: any) => describeMailbox(r, context, ownerUserId));
 
-    return rows.map((r: any) => describeMailbox(r, context, ownerUserId));
+    /**
+     * The company mailbox is derived from the company's mail settings, not stored.
+     *
+     * It used to be written into this table — by whichever of CRM or identity got there
+     * first — and the copy is what made the settings screen and the mailbox list disagree
+     * whenever one of them changed something. Deriving it means there is one place the
+     * company's mail account lives, clearing those settings removes the mailbox with them,
+     * and a module that does not own the settings no longer writes them anywhere.
+     *
+     * A stored SMTP row still wins: that is a mailbox somebody connected here on purpose.
+     */
+    if (rows.some((r: any) => r.provider === 'smtp')) return summaries;
+
+    const derived = await this.companyMailbox(context);
+    return derived ? [...summaries, derived] : summaries;
+  }
+
+  /**
+   * The company's own address, as a mailbox its people can send from.
+   *
+   * `null` whenever the company has not finished configuring mail — an address with no host
+   * or no password cannot send, and offering it would produce a failure at send time in a
+   * place nobody is watching.
+   */
+  private async companyMailbox(context: {
+    userId: string;
+    isOwner?: boolean;
+  }): Promise<MailboxConnectionSummary | null> {
+    const account = await this.company.mailAccount();
+    if (!usableCompanyMail(account)) return null;
+
+    const now = new Date().toISOString();
+    const displayName = account.fromName || account.fromAddress;
+
+    return {
+      id: companyMailboxId(this.tenancy.current()?.companyId),
+      userId: context.userId,
+      provider: 'smtp',
+      emailAddress: account.fromAddress,
+      displayName,
+      status: 'connected',
+      connectedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      isShared: true,
+      canManage: Boolean(context.isOwner),
+      smtp: {
+        host: account.smtpHost,
+        port: account.smtpPort ?? 465,
+        secure: account.smtpSecure ?? true,
+        username: account.smtpUsername || account.fromAddress,
+      },
+    };
   }
 
   async requireMailbox(
@@ -202,9 +220,17 @@ export class MailboxesService {
     const row = await this.prisma.mailboxConnection.findUnique({
       where: { id },
     });
-    if (!row) throw mailboxNotFound();
-    const company = await this.prisma.company.findFirst().catch(() => null);
-    return describeMailbox(row, actor, company?.ownerUserId);
+
+    if (!row) {
+      // The company mailbox has no row to find: it is derived from the company's own mail
+      // settings, so it answers here from the same place the list built it.
+      const derived = isCompanyMailboxId(id) && actor ? await this.companyMailbox(actor) : null;
+      if (derived) return derived;
+      throw mailboxNotFound();
+    }
+
+    const ownerUserId = (await this.company.ownerUserId()) ?? undefined;
+    return describeMailbox(row, actor, ownerUserId);
   }
 
   /**
@@ -275,18 +301,18 @@ export class MailboxesService {
           data: companyApplied({ userId: actor.userId, provider: 'smtp', ...settings }),
         });
 
-    // Also sync to Company record so system mailings (invites, password resets) use the same credentials
-    await this.prisma.company.updateMany({
-      data: {
-        mailFromAddress: candidate.emailAddress,
-        mailFromName: input.displayName.trim() || candidate.emailAddress,
-        mailSmtpHost: candidate.smtpHost,
-        mailSmtpPort: candidate.smtpPort,
-        mailSmtpSecure: candidate.smtpSecure,
-        mailSmtpUsername: candidate.smtpUsername,
-        mailSmtpPassword: candidate.smtpPassword,
-      },
-    }).catch(() => {});
+    // The same credentials become the company's, so system mailings — invitations, password
+    // resets — leave from the address staff see in CRM rather than from the deployment's.
+    // Written through the platform's seam: the column belongs to the tenant root, not here.
+    await this.company.saveMailAccount({
+      fromAddress: candidate.emailAddress,
+      fromName: input.displayName.trim() || candidate.emailAddress,
+      smtpHost: candidate.smtpHost,
+      smtpPort: candidate.smtpPort,
+      smtpSecure: candidate.smtpSecure,
+      smtpUsername: candidate.smtpUsername,
+      smtpPassword: candidate.smtpPassword,
+    });
 
     return describeMailbox(connection, { userId: actor.userId, isOwner: true });
   }
@@ -301,21 +327,21 @@ export class MailboxesService {
     const row = await this.prisma.mailboxConnection.findUnique({ where: { id } });
     if (row) return row as SendingMailbox;
 
-    if (id.startsWith('company-smtp-')) {
-      const company = await this.prisma.company.findFirst();
-      if (company?.mailSmtpHost && company.mailSmtpPassword && company.mailFromAddress) {
+    if (isCompanyMailboxId(id)) {
+      const account = await this.company.mailAccount();
+      if (usableCompanyMail(account)) {
         return {
           id,
           provider: 'smtp',
-          emailAddress: company.mailFromAddress,
-          displayName: company.mailFromName || company.mailFromAddress,
+          emailAddress: account.fromAddress,
+          displayName: account.fromName || account.fromAddress,
           accessToken: null,
           refreshToken: null,
-          smtpHost: company.mailSmtpHost,
-          smtpPort: company.mailSmtpPort ?? 465,
-          smtpSecure: company.mailSmtpSecure ?? true,
-          smtpUsername: company.mailSmtpUsername || company.mailFromAddress,
-          smtpPassword: company.mailSmtpPassword,
+          smtpHost: account.smtpHost,
+          smtpPort: account.smtpPort ?? 465,
+          smtpSecure: account.smtpSecure ?? true,
+          smtpUsername: account.smtpUsername || account.fromAddress,
+          smtpPassword: account.smtpPassword,
         };
       }
     }
@@ -335,15 +361,15 @@ export class MailboxesService {
    * it works.
    */
   async mailDiagnostics(): Promise<MailDeliveryDiagnostics> {
-    const company = await this.prisma.company.findFirst().catch(() => null);
+    const account = await this.company.mailAccount();
     const mailbox = await this.prisma.mailboxConnection
       .findFirst({ where: { provider: 'smtp' } })
       .catch(() => null);
 
-    const host = mailbox?.smtpHost || company?.mailSmtpHost || null;
-    const port = mailbox?.smtpPort ?? company?.mailSmtpPort ?? 465;
-    const address = mailbox?.emailAddress || company?.mailFromAddress || null;
-    const storedSecret = mailbox?.smtpPassword || company?.mailSmtpPassword || null;
+    const host = mailbox?.smtpHost || account?.smtpHost || null;
+    const port = mailbox?.smtpPort ?? account?.smtpPort ?? 465;
+    const address = mailbox?.emailAddress || account?.fromAddress || null;
+    const storedSecret = mailbox?.smtpPassword || account?.smtpPassword || null;
 
     const transport: MailTransportKind = isSmtpRelayConfigured()
       ? 'relay'
@@ -374,6 +400,15 @@ export class MailboxesService {
         ? await probeOutboundSmtp(host, port)
         : { ok: false, detail: 'No company mailbox is configured, so there is no host to probe.' };
 
+    // The same bare-socket test for the *inbound* side: whether this server can reach the
+    // mailbox over IMAP to read replies. A host can permit one and block the other, so this is
+    // asked separately from the SMTP probe above and answered on the port a poll would use.
+    const outboundImap = !probing
+      ? { ok: false, detail: 'Not probed under test.' }
+      : host
+        ? await probeOutboundImap(imapHostFor(host), 993)
+        : { ok: false, detail: 'No company mailbox is configured, so there is no host to probe.' };
+
     let storedPassword: MailDiagnosticCheck;
     if (!storedSecret) {
       storedPassword = { ok: false, detail: 'No password is stored for this mailbox.' };
@@ -398,6 +433,7 @@ export class MailboxesService {
     return {
       transport,
       outboundSmtp,
+      outboundImap,
       relay: {
         configured: isSmtpRelayConfigured(),
         url: smtpRelayUrl() ?? null,
@@ -468,9 +504,37 @@ export class MailboxesService {
       data: { status: 'revoked' },
     });
 
-    const company = await this.prisma.company.findFirst().catch(() => null);
-    return describeMailbox(updated, actor, company?.ownerUserId);
+    const ownerUserId = (await this.company.ownerUserId()) ?? undefined;
+    return describeMailbox(updated, actor, ownerUserId);
   }
+}
+
+/**
+ * The derived company mailbox's identifier.
+ *
+ * A prefix rather than a row id because there is no row: the mailbox is the company's mail
+ * settings seen as a mailbox, and this is what lets a send name it. Scoping means there is
+ * only ever one company in play, so the suffix identifies rather than disambiguates.
+ */
+const COMPANY_MAILBOX_PREFIX = 'company-smtp-';
+
+export function companyMailboxId(companyId: string | undefined): string {
+  return `${COMPANY_MAILBOX_PREFIX}${companyId ?? 'company'}`;
+}
+
+export function isCompanyMailboxId(id: string): boolean {
+  return id.startsWith(COMPANY_MAILBOX_PREFIX);
+}
+
+/** A company mail account with enough filled in to actually send. */
+type UsableCompanyMail = CompanyMailAccount & {
+  fromAddress: string;
+  smtpHost: string;
+  smtpPassword: string;
+};
+
+function usableCompanyMail(account: CompanyMailAccount | null): account is UsableCompanyMail {
+  return Boolean(account?.fromAddress && account.smtpHost && account.smtpPassword);
 }
 
 export function describeMailbox(
@@ -566,6 +630,54 @@ async function probeOutboundSmtp(host: string, port: number): Promise<MailDiagno
           'is blocked where this API is hosted — Render blocks ports 25, 465 and 587 on free ' +
           'web services. Mail must go over HTTPS through a relay, or the API must move to a ' +
           'plan that permits outbound SMTP.',
+      }),
+    );
+
+    socket.once('error', (cause: NodeJS.ErrnoException) =>
+      finish({
+        ok: false,
+        detail: `Could not connect to ${host}:${port}: ${cause.message}`,
+      }),
+    );
+
+    socket.connect(port, host);
+  });
+}
+
+/**
+ * The inbound counterpart to `probeOutboundSmtp`: can this server open an IMAP socket to read
+ * replies? Same mechanism — a bare connect, where a timeout is the finding because a blocked
+ * port hangs rather than refuses — with the one difference that matters for the operator: IMAP
+ * (993) and SMTP (465/587) are blocked independently, so "sending works" says nothing about
+ * whether reading will.
+ */
+async function probeOutboundImap(host: string, port: number): Promise<MailDiagnosticCheck> {
+  const TIMEOUT_MS = 8_000;
+
+  return new Promise<MailDiagnosticCheck>((resolve) => {
+    const socket = new Socket();
+    let settled = false;
+
+    const finish = (result: MailDiagnosticCheck) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+
+    socket.setTimeout(TIMEOUT_MS);
+
+    socket.once('connect', () =>
+      finish({ ok: true, detail: `Opened an IMAP connection to ${host}:${port}.` }),
+    );
+
+    socket.once('timeout', () =>
+      finish({
+        ok: false,
+        detail:
+          `Connecting to ${host}:${port} timed out after ${TIMEOUT_MS / 1000}s. Outbound IMAP ` +
+          'appears blocked where this API is hosted, so replies cannot be read here. Reply ' +
+          'capture needs a host that permits outbound IMAP (993).',
       }),
     );
 

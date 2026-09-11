@@ -8,6 +8,7 @@ import { StubSocialNetworkAdapter } from '../src/modules/marketing/adapters/stub
 import { DmFlowsService } from '../src/modules/marketing/dm-flows.service';
 import { CrmBridgeService } from '../src/modules/marketing/crm-bridge.service';
 import { crmIntakeOver } from './harness/crm-intake';
+import { quotaLedgerDouble } from './harness/quota-ledger';
 import { MARKETING_ERROR_CODES } from '@erp/shared';
 import { ApiException } from '../src/http/api-exception';
 
@@ -102,6 +103,9 @@ describe('Social API Rate Limits, Permissions & Messaging Windows (Ticket 10)', 
           return Promise.resolve(mockSocialAccounts.find((a) => a.id === where.id) || null);
         }),
       },
+      // Read on every publish guard, not only by the benchmarking paths — the posts and the
+      // competitor reads spend one window between them.
+      socialQuotaLedger: quotaLedgerDouble(),
       scheduledPost: {
         // The quota query since ticket 11: published rows by publish time, plus failed rows
         // that reached the network. A stub that still filtered on `createdAt` would agree with
